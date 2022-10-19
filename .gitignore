@@ -1,0 +1,11 @@
+__pycache__/
+**.pyc
+Solidity.interp
+SolidityLexer.interp
+SolidityLexer.py
+SolidityLexer.tokens
+SolidityListener.py
+SolidityParser.py
+Solidity.tokens
+venv
+.DS_Store/
