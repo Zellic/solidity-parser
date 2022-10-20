@@ -8,7 +8,11 @@ See setup.sh
 
 # Usage
 
-python3 main.py example/AaveToken.sol
+`python3 main.py example/AaveToken.sol` to directly run the package
+<br>
+OR
+<br>
+`python3 setup.py install` to install the package and use it as a library
 
 # Notes
 
