@@ -1,11 +1,11 @@
 from antlr4 import InputStream, CommonTokenStream, TerminalNode
 
-from grammar.v070.SolidityLexer import SolidityLexer
-from grammar.v070.SolidityParser import SolidityParser
-from src.collectors.v000 import TopLevelObjectCollector, TopLevelObject
+from solidity_parser.grammar.v060.SolidityLexer import SolidityLexer
+from solidity_parser.grammar.v060.SolidityParser import SolidityParser
+from solidity_parser.collectors.v000 import TopLevelObjectCollector, TopLevelObject
 
 
-class TopLevelObjectCollectorV070(TopLevelObjectCollector):
+class TopLevelObjectCollectorV060(TopLevelObjectCollector):
     TOP_LEVEL_OBJECT_TYPES = [SolidityParser.StructDefinitionContext, SolidityParser.EnumDefinitionContext,
                               SolidityParser.ContractDefinitionContext]
 
@@ -41,7 +41,7 @@ class TopLevelObjectCollectorV070(TopLevelObjectCollector):
 
         result = []
         for su in source_units:
-            if type(su) in TopLevelObjectCollectorV070.TOP_LEVEL_OBJECT_TYPES:
+            if type(su) in TopLevelObjectCollectorV060.TOP_LEVEL_OBJECT_TYPES:
                 self.reset()
                 self.visit(su)
                 result.append(TopLevelObject(su.identifier().Identifier(), self.collect_lines()))

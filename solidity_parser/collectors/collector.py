@@ -1,6 +1,6 @@
-from src.collectors.v060 import TopLevelObjectCollectorV060
-from src.collectors.v070 import TopLevelObjectCollectorV070
-from src.collectors.v080 import TopLevelObjectCollectorV080
+from solidity_parser.collectors.v060 import TopLevelObjectCollectorV060
+from solidity_parser.collectors.v070 import TopLevelObjectCollectorV070
+from solidity_parser.collectors.v080 import TopLevelObjectCollectorV080
 
 
 # not the best shld prob make this a bit nicer...

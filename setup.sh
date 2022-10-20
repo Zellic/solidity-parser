@@ -9,6 +9,6 @@ if [[ "$VIRTUAL_ENV" == "" ]]; then
 else
   echo "Looks like youre already in a venv :)"
 \fi
-java -jar vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 grammar/v060/Solidity.g4 -o grammar/v060/
-java -jar vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 grammar/v070/Solidity.g4 -o grammar/v070/
-java -jar vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 grammar/v080/SolidityParser.g4 grammar/v080/SolidityLexer.g4 -o grammar/v080/
+java -jar vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 solidity_parser/grammar/v060/Solidity.g4 -o solidity_parser/grammar/v060/
+java -jar vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 solidity_parser/grammar/v070/Solidity.g4 -o solidity_parser/grammar/v070/
+java -jar vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 solidity_parser/grammar/v080/SolidityParser.g4 solidity_parser/grammar/v080/SolidityLexer.g4 -o solidity_parser/grammar/v080/

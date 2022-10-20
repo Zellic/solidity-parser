@@ -1,6 +1,6 @@
 import sys
 
-from src.collectors.collector import collect_top_level_objects, get_minor_ver
+from solidity_parser.collectors.collector import collect_top_level_objects, get_minor_ver
 
 if __name__ == "__main__":
     input_src = open(sys.argv[1], 'r').read()
