@@ -1,8 +1,8 @@
 from antlr4 import InputStream, CommonTokenStream, TerminalNode
 
-from grammar.v080.SolidityLexer import SolidityLexer
-from grammar.v080.SolidityParser import SolidityParser
-from src.collectors.v000 import TopLevelObjectCollector, TopLevelObject
+from solidity_parser.grammar.v080.SolidityLexer import SolidityLexer
+from solidity_parser.grammar.v080.SolidityParser import SolidityParser
+from solidity_parser.collectors.v000 import TopLevelObjectCollector, TopLevelObject
 
 
 class TopLevelObjectCollectorV080(TopLevelObjectCollector):
