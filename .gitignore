@@ -15,3 +15,4 @@ Solidity.py
 venv
 .DS_Store/
 .idea
+build
