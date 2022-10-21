@@ -14,14 +14,17 @@ def get_minor_ver(txt):
     return int(f'{vers[1]}')
 
 
-def collect_top_level_objects(stream, vers):
+def collect_top_level_objects(stream, vers, debug=False):
     if vers < 7:
-        print(f'Minor version {vers} detected, using V060')
+        if debug:
+            print(f'Minor version {vers} detected, using V060')
         return TopLevelObjectCollectorV060().collect(stream)
     elif 8 > vers >= 7:
-        print(f'Minor version {vers} detected, using V070')
+        if debug:
+            print(f'Minor version {vers} detected, using V070')
         return TopLevelObjectCollectorV070().collect(stream)
     elif vers >= 8:
-        print(f'Minor version  {vers} detected, using V080')
+        if debug:
+            print(f'Minor version  {vers} detected, using V080')
         return TopLevelObjectCollectorV080().collect(stream)
     return None
