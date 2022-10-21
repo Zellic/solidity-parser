@@ -6,7 +6,11 @@ from solidity_parser.collectors.v080 import TopLevelObjectCollectorV080
 # not the best shld prob make this a bit nicer...
 def get_minor_ver(txt):
     ind = txt.find('pragma solidity')
+    if ind == -1:
+        return None
     ind2 = txt.find(';', ind)
+    if ind2 == -1:
+        return None
     vers = txt[ind + len('pragma solidity') + 1:ind2]
     remove = ['^', '~', '>=', '>', '<', '<=', '=', ' ', '.']
     for r in remove:
