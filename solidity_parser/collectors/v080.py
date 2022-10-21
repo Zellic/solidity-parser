@@ -57,6 +57,8 @@ class TopLevelObjectCollectorV080(TopLevelObjectCollector):
             if type(su) in TopLevelObjectCollectorV080.TOP_LEVEL_OBJECT_TYPES:
                 self.reset()
                 self.visit(su)
-                result.append(TopLevelObject(su.identifier().Identifier(), self.collect_lines()))
+                if su.identifier() is None:
+                    continue
+                result.append(TopLevelObject(str(su.identifier().Identifier()), self.collect_lines()))
 
         return result
