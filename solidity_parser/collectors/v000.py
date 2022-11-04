@@ -72,6 +72,7 @@ class TopLevelObjectCollector:
 
 
 class TopLevelObject:
-    def __init__(self, name, content):
+    def __init__(self, name, content, type):
         self.name = name
         self.content = content
+        self.type = type

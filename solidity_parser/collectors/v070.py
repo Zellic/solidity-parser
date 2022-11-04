@@ -6,8 +6,11 @@ from solidity_parser.collectors.v000 import TopLevelObjectCollector, TopLevelObj
 
 
 class TopLevelObjectCollectorV070(TopLevelObjectCollector):
-    TOP_LEVEL_OBJECT_TYPES = [SolidityParser.StructDefinitionContext, SolidityParser.EnumDefinitionContext,
-                              SolidityParser.ContractDefinitionContext]
+    TOP_LEVEL_OBJECT_TYPES = {
+        SolidityParser.ContractDefinitionContext: 'contract',
+        SolidityParser.StructDefinitionContext: 'struct',
+        SolidityParser.EnumDefinitionContext: 'enum',
+    }
 
     def __init__(self):
         super().__init__()
@@ -41,11 +44,25 @@ class TopLevelObjectCollectorV070(TopLevelObjectCollector):
 
         result = []
         for su in source_units:
-            if type(su) in TopLevelObjectCollectorV070.TOP_LEVEL_OBJECT_TYPES:
+            if type(su) in TopLevelObjectCollectorV070.TOP_LEVEL_OBJECT_TYPES.keys():
                 self.reset()
                 self.visit(su)
                 if su.identifier() is None:
                     continue
-                result.append(TopLevelObject(str(su.identifier().Identifier()), self.collect_lines()))
+
+                type_str = ''
+                if type(su) is SolidityParser.ContractDefinitionContext:
+                    c_kw = su.ContractKeyword()
+                    i_kw = su.InterfaceKeyword()
+                    l_kw = su.LibraryKeyword()
+                    if c_kw is not None:
+                        type_str = c_kw
+                    elif i_kw is not None:
+                        type_str = i_kw
+                    elif l_kw is not None:
+                        type_str = l_kw
+                else:
+                    type_str = TopLevelObjectCollectorV070.TOP_LEVEL_OBJECT_TYPES[type(su)]
+                result.append(TopLevelObject(str(su.identifier().Identifier()), self.collect_lines(), str(type_str)))
 
         return result
