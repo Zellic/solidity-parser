@@ -22,6 +22,5 @@ OR
 
 Solidity versions>=0.8 use language targeted code in the grammar (Java), this prevents
 the generation of ANTLR bindings into python. The solution for this was modifying the grammar files
-themselves which means the Solidity grammar in this repo is custom for versions>=0.8.
----
+themselves which means the Solidity grammar in this repo is custom for versions>=0.8.<br><br>
 The grammar for solidity versions 0.7/0.6 have now also been modified to allow extraction of the `contract` or `interface` or `library` keyword.
