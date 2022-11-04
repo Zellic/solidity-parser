@@ -2,6 +2,10 @@
 
 Parses and pretty-prints the top level objects from Solidity files
 
+# Requirements
+requirements.txt
+recent jdk
+
 # Setup
 
 See setup.sh
@@ -12,7 +16,7 @@ See setup.sh
 <br>
 OR
 <br>
-`python3 setup.py install` to install the package and use it as a library (run setup.sh before doing this)
+`pip install .` to install the package and use it as a library (run setup.sh before doing this)
 
 # Notes
 

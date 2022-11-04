@@ -36,8 +36,12 @@ importDirective
 importDeclaration
   : identifier ('as' identifier)? ;
 
+ContractKeyword : 'contract' ;
+InterfaceKeyword : 'interface' ;
+LibraryKeyword : 'library' ;
+
 contractDefinition
-  : 'abstract'? ( 'contract' | 'interface' | 'library' ) identifier
+  : 'abstract'? ( ContractKeyword | InterfaceKeyword | LibraryKeyword ) identifier
     ( 'is' inheritanceSpecifier (',' inheritanceSpecifier )* )?
     '{' contractPart* '}' ;
 
