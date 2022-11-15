@@ -240,7 +240,7 @@ expression
   | expression '[' expression? ']'
   | expression '[' expression? ':' expression? ']'
   | expression '.' identifier
-  | expression '{' nameValueList '}'
+  | expression '{' nameValueList '}' // TODO wut is this
   | expression '(' functionCallArguments ')'
   | PayableKeyword '(' expression ')'
   | '(' expression ')'
