@@ -235,44 +235,47 @@ Ufixed
   : 'ufixed' | ( 'ufixed' [0-9]+ 'x' [0-9]+ ) ;
 
 expression
-  : expression ('++' | '--')
-  | 'new' typeName
-  | expression '[' expression? ']'
-  | expression '[' expression? ':' expression? ']'
-  | expression '.' identifier
-  | expression '{' nameValueList '}' // TODO wut is this
-  | expression '(' functionCallArguments ')'
-  | PayableKeyword '(' expression ')'
-  | '(' expression ')'
-  | ('++' | '--') expression
-  | ('+' | '-') expression
-  | ('after' | 'delete') expression
-  | '!' expression
-  | '~' expression
-  | expression '**' expression
-  | expression ('*' | '/' | '%') expression
-  | expression ('+' | '-') expression
-  | expression ('<<' | '>>') expression
-  | expression '&' expression
-  | expression '^' expression
-  | expression '|' expression
-  | expression ('<' | '>' | '<=' | '>=') expression
-  | expression ('==' | '!=') expression
-  | expression '&&' expression
-  | expression '||' expression
-  | expression '?' expression ':' expression
-  | expression ('=' | '|=' | '^=' | '&=' | '<<=' | '>>=' | '+=' | '-=' | '*=' | '/=' | '%=') expression
-  | primaryExpression ;
+  : expression ('++' | '--') # UnaryPostOp
+  | 'new' typeName # NewType
+  | expression '[' expression? ']' # ArrayLoad
+  | expression '[' expression? ':' expression? ']' # ArraySlice
+  | expression '.' identifier # MemberLoad
+//  | expression '{' nameValueList '}' #NVL // TODO wut is this
+//  | expression '(' functionCallArguments ')' # FC
+  | expression ( '{' nameValueList? '}' )? '(' functionCallArguments ')' # FuncCallExpr
+  | PayableKeyword '(' expression ')' # PayableExpr
+  | '(' expression ')' # BracketExpr
+  | ('++' | '--') expression # UnaryPreOp
+  | ('+' | '-') expression # UnaryPreOp
+  | ('after' | 'delete') expression # ReservedKeyExpr
+  | '!' expression # LogicOp
+  | '~' expression # LogicOp
+  | expression '**' expression # BinaryExpr
+  | expression ('*' | '/' | '%') expression # BinaryExpr
+  | expression ('+' | '-') expression # BinaryExpr
+  | expression ('<<' | '>>') expression # BinaryExpr
+  | expression '&' expression # BinaryExpr
+  | expression '^' expression # BinaryExpr
+  | expression '|' expression # BinaryExpr
+  | expression ('<' | '>' | '<=' | '>=') expression # BinaryExpr
+  | expression ('==' | '!=') expression # BinaryExpr
+  | expression '&&' expression # BinaryExpr
+  | expression '||' expression # BinaryExpr
+  | expression '?' expression ':' expression # BinaryExpr
+  | expression ('=' | '|=' | '^=' | '&=' | '<<=' | '>>=' | '+=' | '-=' | '*=' | '/=' | '%=') expression # BinaryExpr
+  | primaryExpression  # Primary;
 
 primaryExpression
   : BooleanLiteral
   | numberLiteral
   | hexLiteral
   | stringLiteral
-  | identifier ('[' ']')?
+  | identifier arrayBrackets?
   | TypeKeyword
   | tupleExpression
-  | typeNameExpression ('[' ']')? ;
+  | typeNameExpression arrayBrackets? ;
+
+arrayBrackets : ('[' ']') ;
 
 expressionList
   : expression (',' expression)* ;

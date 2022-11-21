@@ -10,12 +10,14 @@ from solidity_parser.ast.builder import Builder
 from solidity_parser.collectors.collector import collect_top_level_objects, get_minor_ver
 # from solidity_parser.ast.nodes import Contract, ContractType
 
+
 def fname(node):
     id = node.functionDescriptor().identifier()
     if id is not None:
         return id.Identifier().getText(), False
     else:
         return '<' + node.functionDescriptor().getText() + '>', True
+
 
 def visit(node, parent=None):
     if isinstance(node, SolidityParser.FunctionDefinitionContext):
@@ -26,7 +28,7 @@ def visit(node, parent=None):
             if code is not None:
                 b = Builder()
                 ast = b.make_ast(code)
-                print(ast)
+                print(list(ast))
     elif not isinstance(node, TerminalNode):
         for c in node.children:
             visit(c, node)

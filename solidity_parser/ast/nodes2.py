@@ -26,27 +26,36 @@ class Expr(Node):
 
 
 @dataclass
-class NamedArgs(Expr):  # nameValue in grammar
-    args: List
-
-
-@dataclass
-class ListedArgs(Expr):
-    args: List[Expr]
+class NamedArg(Expr):
+    name: Ident
+    value: Expr
 
 
 ############## EXPRS ####################
 
 @dataclass
-class Inc(Expr):  # var++
-    # TODO, figure out exact type
-    expr: Expr
+class Literal(Expr):
+    value: 'typing.Any'
 
 
 @dataclass
-class Dec(Expr):  # var--
+class UnitLiteral(Literal):
+    unit: str
+
+
+@dataclass
+class UnaryOp(Expr):  # var++
     # TODO, figure out exact type
     expr: Expr
+    op: str  # e.g. ++, --, +, -
+    pre: bool  # pre or post
+
+
+@dataclass
+class BinaryOp(Expr):
+    left: Expr
+    right: Expr
+    op: str
 
 
 @dataclass
@@ -68,15 +77,16 @@ class GetArraySlice(Expr):
 
 
 @dataclass
-class GetField(Expr):
+class GetMember(Expr):
     obj_base: Expr
-    field_name: Ident
+    name: Ident
 
 
 @dataclass
 class CallFunction(Expr):
-    obj_base: Expr
-    args: Expr  # (ListedArgs | NamedArgs)
+    member_load: Expr
+    modifiers: List
+    args: List
 #########################################
 
 
@@ -135,13 +145,15 @@ class While(Stmt):
 
 @dataclass
 class For(Stmt):
-    initialiser: VarDecl # TODO might also be ExprStmt
+    initialiser: Stmt # TODO might also be ExprStmt or VarDecl
     condition: Expr
     advancement: Expr
     body: Stmt
 
+@dataclass
+class Emit(Stmt):
+    call: CallFunction
 # TODO inline assembly stmt
-
 
 @dataclass
 class DoWhile(Stmt):
@@ -157,6 +169,7 @@ class Break(Stmt):
     pass
 
 
+@dataclass
 class Return(Stmt):
     value: Expr
 
