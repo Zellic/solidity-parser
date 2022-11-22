@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-
-from typing import List
+from enum import Enum
+from typing import List, Any
 
 
 class Node:
@@ -12,9 +12,10 @@ class Ident(Node):
     text: str
 
 
-@dataclass
-class Location(Node):
-    text: str
+class Location(Enum):
+    MEMORY = 'memory'
+    STORAGE = 'storage'
+    CALLDATA = 'calldata'
 
 
 class Stmt(Node):
@@ -33,21 +34,38 @@ class NamedArg(Expr):
 
 ############## EXPRS ####################
 
+class Unit(Enum):
+    WEI = 'wei'
+    SZABO = 'szabo'
+    FINNEY = 'finney'
+    ETHER = 'either'
+    SECONDS = 'seconds'
+    MINUTES = 'minutes'
+    HOURS = 'hour'
+    DAYS = 'days'
+    WEEKS = 'weeks'
+    YEARS = 'years'
+
+
 @dataclass
 class Literal(Expr):
-    value: 'typing.Any'
+    value: Any
+    unit: Unit = None
 
 
-@dataclass
-class UnitLiteral(Literal):
-    unit: str
+class UnaryOpCode(Enum):
+    INC = '++'
+    DEC = '--'
+    SIGN_POS = '+'
+    SIGN_NEG = '-'
+    BOOL_NEG = '!'
+    BIT_NEG = '~'
 
 
 @dataclass
 class UnaryOp(Expr):  # var++
-    # TODO, figure out exact type
     expr: Expr
-    op: str  # e.g. ++, --, +, -
+    op: UnaryOpCode
     pre: bool  # pre or post
 
 
@@ -84,7 +102,7 @@ class GetMember(Expr):
 
 @dataclass
 class CallFunction(Expr):
-    member_load: Expr
+    callee: Expr
     modifiers: List
     args: List
 #########################################
@@ -98,7 +116,9 @@ class VarDecl(Stmt):
 
 
 class Parameter(VarDecl):
-    pass
+    var_type: Ident
+    var_loc: Location
+    var_name: Ident
 
 
 @dataclass
