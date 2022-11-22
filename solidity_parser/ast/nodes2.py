@@ -109,13 +109,20 @@ class CallFunction(Expr):
 
 
 @dataclass
-class VarDecl(Stmt):
+class Var(Node):
     var_type: Ident
     var_loc: Location
     var_name: Ident
 
 
-class Parameter(VarDecl):
+@dataclass
+class VarDecl(Stmt):
+    variables: List[Var]
+    value: Expr
+
+
+@dataclass
+class Parameter(Node):
     var_type: Ident
     var_loc: Location
     var_name: Ident
@@ -132,11 +139,6 @@ class Block(Stmt):
 
 
 @dataclass
-class VarDecl(Stmt):
-    value: Expr
-
-
-@dataclass
 class If(Stmt):
     condition: Expr
     true_branch: Stmt
@@ -147,6 +149,7 @@ class If(Stmt):
 @dataclass
 class Catch(Stmt):
     ident: Ident
+    parameters: List[Parameter]
     body: Block
 
 
@@ -154,6 +157,7 @@ class Catch(Stmt):
 class Try(Stmt):
     expr: Expr
     return_parameters: List[Parameter]
+    body: Block
     catch_clauses: List[Catch]
 
 
@@ -194,6 +198,6 @@ class Return(Stmt):
     value: Expr
 
 
-class ThrowStmt(Stmt):
+class Throw(Stmt):
     pass
 
