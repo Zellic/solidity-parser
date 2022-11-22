@@ -9,37 +9,46 @@ class Builder:
         self.builders = {
             SolidityParser.StatementContext: self._first,
             SolidityParser.IfStatementContext: self._if,
-            # SolidityParser.TryStatementContext: self._try,
+            # TODO: SolidityParser.TryStatementContext: self._try,
             SolidityParser.WhileStatementContext: self._while,
             SolidityParser.ForStatementContext: self._for,
             SolidityParser.BlockContext: self._block,
-            # SolidityParser.DoWhileStatementContext: self._dowhile,
-            # SolidityParser.ContinueKeyword: self._continue,
-            # SolidityParser.BreakKeyword: self._break,
+            # TODO: inline assembly
+            SolidityParser.DoWhileStatementContext: self._dowhile,
+            SolidityParser.ContinueKeyword: self._continue,
+            SolidityParser.BreakKeyword: self._break,
             SolidityParser.ReturnStatementContext: self._return,
-            # SolidityParser.ThrowStatementContext: self._throw,
+            # Not valid: SolidityParser.ThrowStatementContext: self._throw,
             SolidityParser.SimpleStatementContext: self._first,
-            SolidityParser.ExpressionStatementContext: self._exprStmt,
+            SolidityParser.ExpressionStatementContext: self._expr_stmt,
             SolidityParser.EmitStatementContext: self._emit,
 
             # Exprs
             SolidityParser.ExpressionContext: self.make_expr,
+            SolidityParser.UnaryPostOpContext: self._unary_post_op,
+            SolidityParser.ArrayLoadContext: self._array_load,
+            # TODO: arrayslice
+            SolidityParser.MemberLoadContext: self._member_load,
+            # this is a generic function call expression
+            SolidityParser.FuncCallExprContext: self._function_call_expr,
+            # TODO: payable expr
+            SolidityParser.BracketExprContext: self._first,
+            SolidityParser.UnaryPreOpContext: self._unary_pre_op,
+            SolidityParser.LogicOpContext: self._unary_pre_op,
+            SolidityParser.BinaryExprContext: self._binary_expr,
+            SolidityParser.PrimaryContext: self._first,
+
+            SolidityParser.PrimaryExpressionContext: self._primary,
+
+            # misc
+
             SolidityParser.IdentifierContext: self._identifier,
             SolidityParser.FunctionCallContext: self._function_call,
             SolidityParser.NameValueContext: self._name_value,
             SolidityParser.NameValueListContext: self._all,
             SolidityParser.ExpressionListContext: self._all,
-            SolidityParser.ArrayLoadContext: self._array_load,
-            SolidityParser.BinaryExprContext: self._binary_expr,
-            SolidityParser.UnaryPreOpContext: self._unary_pre_op,
-            SolidityParser.PrimaryContext: self._first,
-            SolidityParser.PrimaryExpressionContext: self._primary,
-
-            SolidityParser.MemberLoadContext: self._member_load,
             # this is used for emit stmts only
             SolidityParser.FunctionCallContext: self._function_call,
-            # this is a generic function call expression
-            SolidityParser.FuncCallExprContext: self._function_call_expr,
         }
 
     def make_ast(self, code: SolidityParser.BlockContext):
@@ -67,7 +76,7 @@ class Builder:
         return self._make(expr)
 
     def _first(self, rule: antlr4.ParserRuleContext):
-        for c in rule.getChildren():
+        for c in self.get_grammar_children(rule):
             return self._make(c)
         return None
 
@@ -75,7 +84,10 @@ class Builder:
         if rule is None:
             return []
         else:
-            return self.map_helper(self._make, rule.getChildren(self.is_grammar_rule))
+            return self.map_helper(self._make, self.get_grammar_children(rule))
+
+    def get_grammar_children(self, rule):
+        return rule.getChildren(self.is_grammar_rule)
 
     def is_grammar_rule(self, rule):
         return isinstance(rule, antlr4.ParserRuleContext)
@@ -109,12 +121,27 @@ class Builder:
     def _block(self, block: SolidityParser.BlockContext):
         return self.map_helper(self.make_stmt, block.statement())
 
+    def _dowhile(self, stmt: SolidityParser.DoWhileStatementContext):
+        return nodes2.DoWhile(
+            self.make_stmt(stmt.statement()),
+            self.make_expr(stmt.expression())
+        )
+
+    def _continue(self, _):
+        return nodes2.Continue()
+
+    def _break(self, _):
+        return nodes2.Break()
+
     def _return(self, stmt: SolidityParser.ReturnStatementContext):
         return nodes2.Return(
             self.make_expr(stmt.expression())
         )
 
-    def _exprStmt(self, stmt: SolidityParser.ExpressionStatementContext):
+    def _var_decl(self, stmt: SolidityParser.VariableDeclarationContext):
+        pass
+
+    def _expr_stmt(self, stmt: SolidityParser.ExpressionStatementContext):
         return nodes2.ExprStmt(
             self.make_expr(stmt.expression())
         )
@@ -153,28 +180,19 @@ class Builder:
             self._all(expr.nameValueList()),
             self._function_call_args(expr.functionCallArguments())
         )
-    def _unary_pre_op(self, expr: SolidityParser.UnaryPreOpContext):
-        child1 = expr.getChild(0)
-        child2 = expr.getChild(1)
 
-        expr: SolidityParser.ExpressionContext
-        pre: bool
-        op: str
-
-        # check whether its expr++ or ++expr
-        if isinstance(child1, SolidityParser.ExpressionContext):
-            pre = False
-            expr = child1
-            op = child2.getText()
-        else:
-            pre = True
-            expr = child2
-            op = child1.getText()
-
+    def _unary_pre_op(self, expr: antlr4.ParserRuleContext):
         return nodes2.UnaryOp(
-            self.make_expr(expr),
-            op,
-            pre
+            self.make_expr(expr.getChild(1)),
+            nodes2.UnaryOpCode(expr.getChild(0).getText()),
+            True
+        )
+
+    def _unary_post_op(self, expr: antlr4.ParserRuleContext):
+        return nodes2.UnaryOp(
+            self.make_expr(expr.getChild(0)),
+            nodes2.UnaryOpCode(expr.getChild(1).getText()),
+            False
         )
 
     def _type_name(self, type_name: SolidityParser.TypeNameContext):
@@ -233,8 +251,8 @@ class Builder:
             value = int(literal.HexNumber().getText())
 
         if literal.NumberUnit() is not None:
-            unit = literal.NumberUnit().getText()
-            return nodes2.UnitLiteral(value, unit)
+            unit = nodes2.Unit(literal.NumberUnit().getText().upper())
+            return nodes2.Literal(value, unit)
         else:
             return nodes2.Literal(value)
 
