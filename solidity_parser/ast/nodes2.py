@@ -69,11 +69,55 @@ class UnaryOp(Expr):  # var++
     pre: bool  # pre or post
 
 
+class BinaryOpCode(Enum):
+    EXPONENTIATE = '**'
+    MUL = '*'
+    DIV = '/'
+    MOD = '%'
+    ADD = '+'
+    SUB = '-'
+
+    LSHIFT = '<<'
+    RSHIFT = '>>'
+    BIT_AND = '&'
+    BIT_XOR = '^'
+    BIT_OR = '|'
+
+    LT = '<'
+    GT = '>'
+    LTEQ = '<='
+    GTEQ = '>='
+    EQ = '=='
+    NEQ = '!='
+
+    BOOL_AND = '&&'
+    BOOL_OR = '||'
+
+    ASSIGN = '='
+    ASSIGN_OR = '|='
+    ASSIGN_BIT_NEG = '^='
+    ASSIGN_BIT_AND = '&='
+    ASSIGN_LSHIFT = '<<='
+    ASSIGN_RSHIFT = '>>='
+    ASSIGN_ADD = '+='
+    ASSIGN_SUB = '-='
+    ASSIGN_MUL = '*='
+    ASSIGN_DIV = '/='
+    ASSIGN_MOD = '%='
+
+
 @dataclass
 class BinaryOp(Expr):
     left: Expr
     right: Expr
     op: str
+
+
+@dataclass
+class TernaryOp(Expr):
+    condition: Expr
+    left: Expr
+    right: Expr
 
 
 @dataclass
@@ -200,4 +244,101 @@ class Return(Stmt):
 
 class Throw(Stmt):
     pass
+
+
+#### Types
+
+class Type:
+    pass
+
+
+@dataclass
+class UserType(Type):
+    name: Ident
+
+
+@dataclass
+class ArrayType:
+    base_type: Type
+
+
+@dataclass
+class FixedLengthArrayType(ArrayType):
+    size: int
+
+
+@dataclass
+class VariableLengthArrayType(ArrayType):
+    size: Expr
+
+
+@dataclass
+class AddressType(Type):
+    payable: bool
+
+
+@dataclass
+class ByteType(Type):
+    pass
+
+
+@dataclass
+class IntType(Type):
+    signed: bool
+    size: int
+
+
+class BoolType(Type):
+    pass
+
+
+class StringType(Type):
+    pass
+
+
+class VarType(Type):
+    pass
+
+
+@dataclass
+class MappingType(Type):
+    src: Type
+    dst: Type
+
+
+class Modifier:
+    pass
+
+
+class VisibilityModifier(Modifier, Enum):
+    EXTERNAL = 'external'
+    PUBLIC = 'public'
+    INTERNAL = 'internal'
+    PRIVATE = 'private'
+    VIRTUAL = 'virtual'
+
+
+class MutabilityModifier(Modifier, Enum):
+    PURE = 'pure'
+    CONSTANT = 'constant'
+    VIEW = 'view'
+    PAYABLE = 'payable'
+
+
+@dataclass
+class InvocationModifier(Modifier):
+    name: Ident
+    arguments: List[Expr]
+
+
+@dataclass
+class OverrideSpecifier(Modifier):
+    arguments: List[UserType]
+
+
+@dataclass
+class FunctionType(Type):
+    parameters: List[Parameter]
+    modifiers: List[Modifier]
+    return_parameters: List[Parameter]
 
