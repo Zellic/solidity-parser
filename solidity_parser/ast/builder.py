@@ -5,32 +5,6 @@ import inspect
 
 
 class Builder:
-    def check_parser_method(self, name, method):
-        # parsers are methods with the form
-        #  _f(self, rule) where rule is a subtype of antlr4.ParserRuleContext
-
-        if not name.startswith('_'):
-            return None
-
-        (args, _, _, _, _, _, annotations) = inspect.getfullargspec(method)
-
-        if len(args) != 2:
-            return None
-
-        if args[0] != 'self':
-            return None
-
-        rule_param_name = args[1]
-
-        if rule_param_name not in annotations:
-            return None
-
-        rule_param_type = annotations[rule_param_name]
-
-        if not issubclass(rule_param_type, antlr4.ParserRuleContext):
-            return None
-
-        return rule_param_type, method
 
     def __init__(self):
         # builders that don't need their own specific handling that can be parsed using
@@ -48,7 +22,11 @@ class Builder:
             SolidityParser.NameValueListContext: self.make_all,
             SolidityParser.ExpressionListContext: self.make_all,
             SolidityParser.ReturnParametersContext: self.make_first,
-            SolidityParser.ParameterListContext: self.make_all
+            SolidityParser.ParameterListContext: self.make_all,
+
+            SolidityParser.TypeNameExpressionContext: self.make_first,
+
+            SolidityParser.ModifierListContext: self.make_all,
         }
 
         # these parsers are the ones that begin with _ in this class and have
@@ -58,6 +36,31 @@ class Builder:
         discovered_builders = dict([p for p in discovered_builders if p is not None])
 
         self.builders = {**discovered_builders, **custom_builders}
+
+    def check_parser_method(self, name, method):
+        # parsers are methods with the form
+        #  _f(self, rule) where rule is a subtype of antlr4.ParserRuleContext
+
+        if not name.startswith('_'):
+            return None
+
+        (args, _, _, _, _, _, annotations) = inspect.getfullargspec(method)
+
+        # match (self, rule) method signature
+        if len(args) != 2 or args[0] != 'self':
+            return None
+
+        rule_param_name = args[1]
+
+        if rule_param_name not in annotations:
+            return None
+
+        rule_param_type = annotations[rule_param_name]
+
+        if not issubclass(rule_param_type, antlr4.ParserRuleContext):
+            return None
+
+        return rule_param_type, method
 
     def map_helper(self, func, xs):
         # helper to switch between list comprehension for debugging and
@@ -91,7 +94,7 @@ class Builder:
     def make_first(self, rule: antlr4.ParserRuleContext):
         for c in self.get_grammar_children(rule):
             return self.make(c)
-        return None
+        raise NotImplementedError()
 
     def make_all(self, rule: antlr4.ParserRuleContext):
         if rule is None:
@@ -244,8 +247,26 @@ class Builder:
         )
 
     def _type_name(self, type_name: SolidityParser.TypeNameContext):
-        # TODO: split into different subtypes?
-        return nodes2.Ident(type_name.getText())
+        if type_name.expression() is not None:
+            return nodes2.VariableLengthArrayType(
+                self.make(type_name.typeName()),
+                self.make_expr(type_name.expression())
+            )
+        else:
+            return self.make_first(type_name)
+
+    def _mapping_type(self, mapping_type: SolidityParser.MappingContext):
+        return nodes2.MappingType(
+            self.make(mapping_type.mappingKey()),
+            self.make(mapping_type.typeName())
+        )
+
+    def _function_type_name(self, function_type: SolidityParser.FunctionTypeNameContext):
+        return nodes2.FunctionType(
+            self.make(function_type.parameterList()),
+            self.make(function_type.modifierList()),
+            self.make(function_type.returnParameters())
+        )
 
     def _new_obj(self, expr: SolidityParser.NewTypeContext):
         return nodes2.New(
@@ -259,15 +280,25 @@ class Builder:
         )
 
     def _binary_expr(self, expr: SolidityParser.BinaryExprContext):
-        op = expr.getChild(1).getText()  # middle child
-
         return nodes2.BinaryOp(
             self.make_expr(expr.expression(0)),
             self.make_expr(expr.expression(1)),
-            op
+            nodes2.BinaryOpCode(expr.getChild(1).getText())
+        )
+
+    def _ternary_expr(self, expr: SolidityParser.TernaryExprContext):
+        return nodes2.TernaryOp(
+            self.make_expr(expr.expression(0)),
+            self.make_expr(expr.expression(1)),
+            self.make_expr(expr.expression(2)),
         )
 
     def _primary(self, expr: SolidityParser.PrimaryExpressionContext):
+        # most of the subrules for primary are just other rules
+        # but the ones with arrayBrackets? need them added on the end
+        # if expr.getChildCount() == 1:
+        #     return self.make_first(expr)
+        #
         if expr.BooleanLiteral() is not None:
             return nodes2.Literal(bool(expr.getText()))
         elif expr.numberLiteral() is not None:
@@ -285,10 +316,11 @@ class Builder:
         elif expr.tupleExpression() is not None:
             return self._tuple_expr(expr.tupleExpression())
         elif expr.typeNameExpression() is not None:
-            # TODO: make more specific types, for now use ident
-            dims = 1 if expr.arrayBrackets() is not None else 0
-            base_ident = self.make(expr.typeNameExpression())
-            return self._array_identifier(base_ident, dims)
+            base_type = self.make(expr.typeNameExpression())
+            if expr.arrayBrackets():
+                return nodes2.ArrayType(base_type)
+            else:
+                return base_type
         else:
             raise NotImplementedError(type(expr.getChild(0)).__name__)
 
@@ -342,3 +374,52 @@ class Builder:
             self.make(clause.parameterList()),
             self.make_stmt(clause.block())
         )
+
+    def _elementary_type_name(self, name: SolidityParser.ElementaryTypeNameContext):
+        if name.AddressType():
+            payable = name.AddressType().PayableKeyword() is not None
+            return nodes2.AddressType(payable)
+        elif name.BoolType():
+            return nodes2.BoolType()
+        elif name.StringType():
+            return nodes2.StringType()
+        elif name.VarType():
+            return nodes2.VarType()
+        elif name.Int():
+            size_str = name.Int().getText()[3:]
+            size = int(size_str) if size_str else 256
+            return nodes2.IntType(True, size)
+        elif name.Uint():
+            size_str = name.Uint().getText()[4:]
+            size = int(size_str) if size_str else 256
+            return nodes2.IntType(False, size)
+        elif name.Byte():
+            if name.Byte().getText() == 'byte':
+                return nodes2.ByteType()
+            elif name.Byte().getText() == 'bytes':
+                return nodes2.FixedLengthArrayType(nodes2.ByteType(), 1)
+            else:
+                size_str = name.Byte().getText()[5:]
+                size = int(size_str)
+                return nodes2.FixedLengthArrayType(nodes2.ByteType, size)
+        else:
+            raise NotImplementedError('fixed/ufixed')
+
+    def _user_defined_type(self, name: SolidityParser.UserDefinedTypeNameContext):
+        return nodes2.UserType(nodes2.Ident(name.getText()))
+
+    def _modifier_invocation(self, modifier: SolidityParser.ModifierInvocationContext):
+        return nodes2.InvocationModifier(
+            self.make(modifier.identifier()),
+            self.make(modifier.expressionList())
+        )
+
+    def _state_mutability(self, modifier: SolidityParser.StateMutabilityContext):
+        return nodes2.MutabilityModifier(modifier.getText())
+
+    def _visibility_modifier(self, modifier: SolidityParser.VisibilityModifierContext):
+        return nodes2.VisibilityModifier(modifier.getText())
+
+    def _override_specifier(self, modifier: SolidityParser.OverrideSpecifierContext):
+        return nodes2.OverrideSpecifier(self.make_all(modifier))
+
