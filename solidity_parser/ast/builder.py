@@ -133,7 +133,7 @@ class Builder:
         # grammar specifies expressionStatement for the condition part, but
         # it should be an expression on its own
         condition = self.make_stmt(stmt.expressionStatement())
-        condition = condition.expression() if condition is not None else None
+        condition = condition.expr if condition is not None else None
 
         return nodes2.For(
             self.make_stmt(stmt.simpleStatement()),
