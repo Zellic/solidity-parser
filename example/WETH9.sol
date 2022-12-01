@@ -30,7 +30,19 @@ contract WETH9 {
     function() external payable {
         deposit();
     }
+  function map(uint[] memory self, function (uint) pure returns (uint) f)
+    internal
+    pure
+    returns (uint[] memory r)
+  {
+    r = new uint[](self.length);
+    for (uint i = 0; i < self.length; i++) {
+      r[i] = f(self[i]);
+    }
+  }
+
     function deposit() public payable {
+        uint256 currentValidNonce = _nonces[owner];
         balanceOf[msg.sender] += msg.value;
         emit Deposit(msg.sender, msg.value);
     }

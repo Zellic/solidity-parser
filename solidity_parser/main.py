@@ -9,7 +9,7 @@ from solidity_parser.ast.builder import Builder
 
 from solidity_parser.collectors.collector import collect_top_level_objects, get_minor_ver
 # from solidity_parser.ast.nodes import Contract, ContractType
-
+import prettyprinter as pp
 
 def fname(node):
     id = node.functionDescriptor().identifier()
@@ -28,7 +28,7 @@ def visit(node, parent=None):
             if code is not None:
                 b = Builder()
                 ast = b.make_ast(code)
-                print(list(ast))
+                pp.pprint(list(ast))
     elif not isinstance(node, TerminalNode):
         for c in node.children:
             visit(c, node)
@@ -37,6 +37,7 @@ def visit(node, parent=None):
 if __name__ == "__main__":
     # c = Contract('weth9', ContractType.CONTRACT, False, [])
     # print(c)
+    pp.install_extras()
     input_src = open(
         # sys.argv[1],
         '../example/WETH9.sol',
