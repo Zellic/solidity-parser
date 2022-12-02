@@ -345,10 +345,7 @@ class Builder:
     def _string_literal(self, literal: SolidityParser.StringLiteralContext):
         total_str = ''
         for str_frag in literal.StringLiteralFragment():
-            for dqsc in str_frag.DoubleQuotedStringCharacter():
-                total_str += dqsc.getText()
-            for sqsc in str_frag.SingleQuotedStringCharacter():
-                total_str += sqsc.getText()
+            total_str += str_frag.getText()[1:-1]
         return nodes2.Literal(total_str)
 
     def _tuple_expr(self, expr: SolidityParser.TupleExpressionContext):
