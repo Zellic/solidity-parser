@@ -14,7 +14,6 @@ class Builder:
             # TODO: inline assembly
             SolidityParser.SimpleStatementContext: self.make_first,
             SolidityParser.ExpressionContext: self.make_expr,
-            # TODO: arrayslice
             # TODO: payable expr
             SolidityParser.BracketExprContext: self.make_first,
             SolidityParser.LogicOpContext: self._unary_pre_op,
@@ -73,6 +72,11 @@ class Builder:
     def make(self, rule: antlr4.ParserRuleContext):
         # Default case
         if rule is None:
+            return None
+
+        # this can happen with rule labels like in array slice if the
+        # subrule doesn't match
+        if isinstance(rule, antlr4.Token):
             return None
 
         # find the appropriate _<type> creation method based on
@@ -166,15 +170,12 @@ class Builder:
         return nodes2.Throw()
 
     def _location(self, loc: SolidityParser.StorageLocationContext):
-        if loc is None:
-            return None
-        else:
-            return nodes2.Location(loc.getText())
+        return nodes2.Location(loc.getText())
 
     def _var(self, stmt: SolidityParser.VariableDeclarationContext):
         return nodes2.Var(
             self.make(stmt.typeName()),
-            self._location(stmt.storageLocation()),
+            self.make(stmt.storageLocation()),
             self.make(stmt.identifier())
         )
 
@@ -222,14 +223,14 @@ class Builder:
         return nodes2.CallFunction(
             self.make_expr(expr.expression()),
             [],
-            self._function_call_args(expr.functionCallArguments())
+            self.make(expr.functionCallArguments())
         )
 
     def _function_call_expr(self, expr: SolidityParser.FuncCallExprContext):
         return nodes2.CallFunction(
             self.make_expr(expr.expression()),
             self.make_all(expr.nameValueList()),
-            self._function_call_args(expr.functionCallArguments())
+            self.make(expr.functionCallArguments())
         )
 
     def _unary_pre_op(self, expr: SolidityParser.UnaryPreOpContext):
@@ -271,6 +272,13 @@ class Builder:
     def _new_obj(self, expr: SolidityParser.NewTypeContext):
         return nodes2.New(
             self.make(expr.typeName())
+        )
+
+    def _array_slice(self, expr: SolidityParser.ArraySliceContext):
+        return nodes2.GetArraySlice(
+            self.make_expr(expr.base),
+            self.make_expr(expr.start),
+            self.make_expr(expr.end)
         )
 
     def _array_load(self, expr: SolidityParser.ArrayLoadContext):
@@ -361,7 +369,7 @@ class Builder:
     def _parameter(self, stmt: SolidityParser.ParameterContext):
         return nodes2.Parameter(
             self.make(stmt.typeName()),
-            self._location(stmt.storageLocation()),
+            self.make(stmt.storageLocation()),
             self.make(stmt.identifier())
         )
 
@@ -398,7 +406,7 @@ class Builder:
             else:
                 size_str = name.Byte().getText()[5:]
                 size = int(size_str)
-                return nodes2.FixedLengthArrayType(nodes2.ByteType, size)
+                return nodes2.FixedLengthArrayType(nodes2.ByteType(), size)
         else:
             raise NotImplementedError('fixed/ufixed')
 
@@ -419,4 +427,3 @@ class Builder:
 
     def _override_specifier(self, modifier: SolidityParser.OverrideSpecifierContext):
         return nodes2.OverrideSpecifier(self.make_all(modifier))
-

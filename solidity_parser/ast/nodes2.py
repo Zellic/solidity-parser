@@ -110,7 +110,7 @@ class BinaryOpCode(Enum):
 class BinaryOp(Expr):
     left: Expr
     right: Expr
-    op: str
+    op: BinaryOpCode
 
 
 @dataclass

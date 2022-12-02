@@ -256,7 +256,7 @@ expression
   : expression ('++' | '--') # UnaryPostOp
   | 'new' typeName # NewType
   | expression '[' expression? ']' # ArrayLoad
-  | expression '[' expression? ':' expression? ']' # ArraySlice
+  | base=expression '[' start=expression? ':' end=expression? ']' # ArraySlice
   | expression '.' identifier # MemberLoad
 //  | expression '{' nameValueList '}' #NVL // TODO wut is this
 //  | expression '(' functionCallArguments ')' # FC
