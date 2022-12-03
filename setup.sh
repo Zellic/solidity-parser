@@ -9,6 +9,12 @@ if [[ "$VIRTUAL_ENV" == "" ]]; then
 else
   echo "Looks like youre already in a venv :)"
 fi
-java -jar vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 solidity_parser/grammar/v060/Solidity.g4 -o solidity_parser/grammar/v060/
-java -jar vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 solidity_parser/grammar/v070/Solidity.g4 -o solidity_parser/grammar/v070/
-java -jar vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 solidity_parser/grammar/v080/SolidityParser.g4 solidity_parser/grammar/v080/SolidityLexer.g4 -o solidity_parser/grammar/v080/
+pushd ./solidity_parser/grammar/v060/
+java -jar ../../../vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 Solidity.g4 -o ./
+popd
+pushd ./solidity_parser/grammar/v070/
+java -jar ../../../vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 Solidity.g4 -o ./
+popd
+pushd solidity_parser/grammar/v080/ # fucking broken shit if in subdir, workaround
+java -jar ../../../vendor/antlr-4.11.1-complete.jar -Dlanguage=Python3 SolidityLexer.g4 SolidityParser.g4 -o ./
+popd
