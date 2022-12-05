@@ -258,8 +258,8 @@ expression
   | expression '[' expression? ']' # ArrayLoad
   | base=expression '[' start=expression? ':' end=expression? ']' # ArraySlice
   | expression '.' identifier # MemberLoad
-//  | expression '{' nameValueList '}' #NVL // TODO wut is this
-//  | expression '(' functionCallArguments ')' # FC
+//  | expression '{' nameValueList '}'
+//  | expression '(' functionCallArguments ')'
   | expression ( '{' nameValueList? '}' )? '(' functionCallArguments ')' # FuncCallExpr
   | PayableKeyword '(' expression ')' # PayableExpr
   | '(' expression ')' # BracketExpr

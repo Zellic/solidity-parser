@@ -5,11 +5,12 @@ from antlr4 import InputStream, CommonTokenStream, TerminalNode
 from solidity_parser.grammar.v060.SolidityLexer import SolidityLexer
 from solidity_parser.grammar.v060.SolidityParser import SolidityParser
 
-from solidity_parser.ast.builder import Builder
-
 from solidity_parser.collectors.collector import collect_top_level_objects, get_minor_ver
 # from solidity_parser.ast.nodes import Contract, ContractType
 import prettyprinter as pp
+
+from solidity_parser.ast.parsers.parsers6 import ParserV6
+from solidity_parser.ast.parsers.parsers7 import ParserV7
 
 def fname(node):
     id = node.functionDescriptor().identifier()
@@ -26,8 +27,8 @@ def visit(node, parent=None):
             print(name)
             code = node.block()
             if code is not None:
-                b = Builder()
-                ast = b.make_ast(code)
+                p = ParserV7()
+                ast = p.make(code)
                 pp.pprint(list(ast))
     elif not isinstance(node, TerminalNode):
         for c in node.children:
@@ -42,11 +43,11 @@ if __name__ == "__main__":
         # sys.argv[1],
         '../example/WETH9.sol',
         'r').read()
-    # minor_vers = get_minor_ver(input_src)
-    # for obj in collect_top_level_objects(input_src, minor_vers):
-        # print(f'=== {obj.name} ===')
-        # print(obj.content)
-        # print(obj)
+    minor_vers = get_minor_ver(input_src)
+    for obj in collect_top_level_objects(input_src, minor_vers):
+        print(f'=== {obj.name} ===')
+        print(obj.content)
+        print(obj)
     data = InputStream(input_src)
     lexer = SolidityLexer(data)
     stream = CommonTokenStream(lexer)

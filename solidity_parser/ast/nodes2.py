@@ -35,6 +35,7 @@ class NamedArg(Expr):
 ############## EXPRS ####################
 
 class Unit(Enum):
+    GWEI = 'gwei'
     WEI = 'wei'
     SZABO = 'szabo'
     FINNEY = 'finney'
