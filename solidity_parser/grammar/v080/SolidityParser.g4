@@ -344,8 +344,8 @@ expression:
 	| expression callArgumentList # FunctionCall
 	| Payable callArgumentList # PayableConversion
 	| Type LParen typeName RParen # MetaType
-	| (Inc | Dec | Not | BitNot | Delete | Sub) expression # UnaryPrefixOperation
-	| expression (Inc | Dec) # UnarySuffixOperation
+	| op=(Inc | Dec | Not | BitNot | Delete | Sub) expression # UnaryPrefixOperation
+	| expression op=(Inc | Dec) # UnarySuffixOperation
 	|<assoc=right> expression Exp expression # ExpOperation
 	| expression (Mul | Div | Mod) expression # MulDivModOperation
 	| expression (Add | Sub) expression # AddSubOperation
