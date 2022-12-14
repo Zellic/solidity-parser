@@ -1,9 +1,9 @@
 import sys
-from .common import ParserBase, get_all_subparsers
-from .. import nodes2
+from solidity_parser.ast.parsers.common import ParserBase, get_all_subparsers
+from solidity_parser.ast import nodes2
 
 
-class ParserV6(ParserBase):
+class Parser060(ParserBase):
     def __init__(self):
         super().__init__({
             **get_all_subparsers(sys.modules[__name__]),
@@ -289,7 +289,7 @@ def _hex_literal(parser, literal: 'HexLiteralContext'):
     total_hex_str = ''
     for hex_frag in literal.HexLiteralFragment():
         total_hex_str += hex_frag.HexDigits().getText()
-    return nodes2.Literal(int(total_hex_str))
+    return nodes2.Literal(int(total_hex_str, 16))
 
 
 def _string_literal(parser, literal: 'StringLiteralContext'):

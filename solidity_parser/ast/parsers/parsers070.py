@@ -1,16 +1,16 @@
 import sys
-from . import parsers6
-from .parsers6 import custom_parsers as v6customer_parsers
-from .common import ParserBase, get_all_subparsers
-from .. import nodes2
+from solidity_parser.ast import nodes2
+from solidity_parser.ast.parsers import parsers060
+from solidity_parser.ast.parsers.parsers060 import custom_parsers as custom_parsers060
+from solidity_parser.ast.parsers.common import ParserBase, get_all_subparsers
 
 
-class ParserV7(ParserBase):
+class Parser070(ParserBase):
     def __init__(self):
         super().__init__({
             # v6 subparsers (base)
-            **get_all_subparsers(parsers6),
-            **v6customer_parsers(),
+            **get_all_subparsers(parsers060),
+            **custom_parsers060(),
             # v7 specific ones
             **get_all_subparsers(sys.modules[__name__])
         })

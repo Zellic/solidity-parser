@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Any
-
+from typing import List, Any, Tuple
+from collections import namedtuple
 
 class Node:
     pass
@@ -127,6 +127,16 @@ class New(Expr):  # new X
 
 
 @dataclass
+class NewInlineArray(Expr):
+    elements: List[Expr]
+
+
+@dataclass
+class PayableConversion(Expr):
+    args: List[Expr]
+
+
+@dataclass
 class GetArrayValue(Expr):
     array_base: Expr
     index: Expr
@@ -149,7 +159,7 @@ class GetMember(Expr):
 class CallFunction(Expr):
     callee: Expr
     modifiers: List
-    args: List
+    args: List[Expr]
 #########################################
 
 
@@ -181,6 +191,7 @@ class ExprStmt(Stmt):
 @dataclass
 class Block(Stmt):
     stmts: List[Stmt]
+    unchecked: bool = False
 
 
 @dataclass
@@ -219,10 +230,22 @@ class For(Stmt):
     advancement: Expr
     body: Stmt
 
+
 @dataclass
 class Emit(Stmt):
     call: CallFunction
-# TODO inline assembly stmt
+
+
+@dataclass
+class Revert(Stmt):
+    call: CallFunction
+
+
+@dataclass
+class AssemblyStmt(Stmt):
+    # TODO: full assembly code representation
+    code: str
+
 
 @dataclass
 class DoWhile(Stmt):
@@ -343,3 +366,122 @@ class FunctionType(Type):
     modifiers: List[Modifier]
     return_parameters: List[Parameter]
 
+
+@dataclass
+class ImportDirective(Node):
+    path: str
+
+
+@dataclass
+class UnitImportDirective(ImportDirective):
+    alias: Ident
+
+
+@dataclass
+class SymbolAlias(Node):
+    symbol: Ident
+    alias: Ident
+
+
+@dataclass
+class SymbolImportDirective(ImportDirective):
+    aliases: List[SymbolAlias]
+
+
+# Same as InvocationModifier
+# @dataclass
+# class InheritSpecifier(Node):
+#     name: Ident
+#     args: List[Expr]
+
+
+@dataclass
+class ContractPart(Node):
+    pass
+
+
+class SpecialFunctionKind(Enum):
+    CONSTRUCTOR = '<<constructor>>'
+    RECEIVE = '<<receive>>'
+    FALLBACK = '<<fallback>>'
+
+
+@dataclass
+class FunctionDefinition(ContractPart):
+    name: Ident
+    args: List[Parameter]
+    modifiers: List[Modifier]
+    returns: List[Parameter]
+    code: Block
+
+
+@dataclass
+class ModifierDefinition(ContractPart):
+    name: Ident
+    args: List[Parameter]
+    modifiers: List[Modifier]
+    code: Block
+
+@dataclass
+class StructMember(Node):
+    member_type: Type
+    name: Ident
+
+
+@dataclass
+class StructDefinition(ContractPart):
+    name: Ident
+    members: List[StructMember]
+
+
+@dataclass
+class EnumDefinition(ContractPart):
+    name: Ident
+    values: List[Ident]
+
+
+@dataclass
+class StateVariableDeclaration(ContractPart):
+    var_type: Type
+    modifiers: List[Modifier]
+    name: Ident
+    initial_value: Expr
+
+
+@dataclass
+class EventParameter(Node):
+    param_type: Type
+    name: Ident
+    indexed: bool
+
+
+@dataclass
+class EventDefinition(ContractPart):
+    name: Ident
+    anonymous: bool
+    parameters: List[EventParameter]
+
+
+@dataclass
+class ErrorParameter(Node):
+    error_type: Type
+    name: Ident
+
+
+@dataclass
+class ErrorDefinition(ContractPart):
+    name: Ident
+    parameters: List[ErrorParameter]
+
+
+@dataclass
+class UsingDirective(ContractPart):
+    library_name: Ident
+    override_type: Type
+
+
+@dataclass
+class Contract(Node):
+    name: Ident
+    inherits: List[InvocationModifier]
+    parts: List[ContractPart]
