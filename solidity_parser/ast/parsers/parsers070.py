@@ -32,7 +32,7 @@ def _number_literal(parser, literal: 'NumberLiteralContext'):
     unit = None
 
     if literal.NumberUnit() is not None:
-        unit = nodes2.Unit(literal.NumberUnit().getText().upper())
+        unit = nodes2.Unit(literal.NumberUnit().getText().lower())
     elif literal.Gwei():
         unit = nodes2.Unit.GWEI
     elif literal.Finney():

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: agpl-3.0
-//pragma solidity 0.6.10;
+pragma solidity 0.8.10;
 
 import {ERC20} from "../open-zeppelin/ERC20.sol";
 import {ITransferHook} from "../interfaces/ITransferHook.sol";
@@ -10,7 +10,7 @@ import {VersionedInitializable} from "../utils/VersionedInitializable.sol";
 * @notice implementation of the AAVE token contract
 * @author Aave
 */
-contract AaveToken is ERC20, VersionedInitializable {
+contract AaveToken is ERC20(1), VersionedInitializable {
 
     /// @dev snapshot of a value on a specific block, used for balances
     struct Snapshot {

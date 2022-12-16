@@ -60,7 +60,8 @@ if __name__ == "__main__":
     source_units = tree.children
 
     p = Parser080()
-    p.make_all_rules(source_units)
 
-    # for su in source_units:
-    #     visit(su)
+    for su in source_units:
+        # visit(su)
+        u = p.make(su)
+        pp.pprint(u)

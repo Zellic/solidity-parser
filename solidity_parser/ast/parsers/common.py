@@ -1,4 +1,5 @@
 import antlr4
+from antlr4.tree.Tree import TerminalNode
 import inspect
 
 
@@ -13,7 +14,7 @@ class ParserBase:
 
         # this can happen with rule labels like in array slice if the
         # optional subrule in the grammar doesn't match
-        if isinstance(rule, antlr4.Token):
+        if isinstance(rule, antlr4.Token) or isinstance(rule, TerminalNode):
             return None
 
         # find the appropriate _<type> creation method based on
