@@ -279,7 +279,7 @@ def _number_literal(parser, literal: 'NumberLiteralContext'):
         value = int(literal.HexNumber().getText())
 
     if literal.NumberUnit() is not None:
-        unit = nodes2.Unit(literal.NumberUnit().getText().upper())
+        unit = nodes2.Unit(literal.NumberUnit().getText().lower())
         return nodes2.Literal(value, unit)
     else:
         return nodes2.Literal(value)

@@ -39,7 +39,7 @@ class Unit(Enum):
     WEI = 'wei'
     SZABO = 'szabo'
     FINNEY = 'finney'
-    ETHER = 'either'
+    ETHER = 'ether'
     SECONDS = 'seconds'
     MINUTES = 'minutes'
     HOURS = 'hour'
@@ -67,7 +67,7 @@ class UnaryOpCode(Enum):
 class UnaryOp(Expr):  # var++
     expr: Expr
     op: UnaryOpCode
-    pre: bool  # pre or post
+    is_pre: bool  # pre or post
 
 
 class BinaryOpCode(Enum):
@@ -191,7 +191,7 @@ class ExprStmt(Stmt):
 @dataclass
 class Block(Stmt):
     stmts: List[Stmt]
-    unchecked: bool = False
+    is_unchecked: bool = False
 
 
 @dataclass
@@ -298,7 +298,7 @@ class VariableLengthArrayType(ArrayType):
 
 @dataclass
 class AddressType(Type):
-    payable: bool
+    is_payable: bool
 
 
 @dataclass
@@ -308,7 +308,7 @@ class ByteType(Type):
 
 @dataclass
 class IntType(Type):
-    signed: bool
+    is_signed: bool
     size: int
 
 
@@ -321,6 +321,10 @@ class StringType(Type):
 
 
 class VarType(Type):
+    pass
+
+
+class AnyType(Type):
     pass
 
 
@@ -347,6 +351,7 @@ class MutabilityModifier(Modifier, Enum):
     CONSTANT = 'constant'
     VIEW = 'view'
     PAYABLE = 'payable'
+    IMMUTABLE = 'immutable'
 
 
 @dataclass
@@ -367,8 +372,17 @@ class FunctionType(Type):
     return_parameters: List[Parameter]
 
 
+class SourceUnit(Node):
+    pass
+
+
 @dataclass
-class ImportDirective(Node):
+class PragmaDirective(SourceUnit):
+    directive: str
+
+
+@dataclass
+class ImportDirective(SourceUnit):
     path: str
 
 
@@ -388,13 +402,6 @@ class SymbolImportDirective(ImportDirective):
     aliases: List[SymbolAlias]
 
 
-# Same as InvocationModifier
-# @dataclass
-# class InheritSpecifier(Node):
-#     name: Ident
-#     args: List[Expr]
-
-
 @dataclass
 class ContractPart(Node):
     pass
@@ -407,7 +414,7 @@ class SpecialFunctionKind(Enum):
 
 
 @dataclass
-class FunctionDefinition(ContractPart):
+class FunctionDefinition(SourceUnit, ContractPart):
     name: Ident
     args: List[Parameter]
     modifiers: List[Modifier]
@@ -422,6 +429,7 @@ class ModifierDefinition(ContractPart):
     modifiers: List[Modifier]
     code: Block
 
+
 @dataclass
 class StructMember(Node):
     member_type: Type
@@ -429,13 +437,13 @@ class StructMember(Node):
 
 
 @dataclass
-class StructDefinition(ContractPart):
+class StructDefinition(SourceUnit, ContractPart):
     name: Ident
     members: List[StructMember]
 
 
 @dataclass
-class EnumDefinition(ContractPart):
+class EnumDefinition(SourceUnit, ContractPart):
     name: Ident
     values: List[Ident]
 
@@ -449,16 +457,23 @@ class StateVariableDeclaration(ContractPart):
 
 
 @dataclass
+class ConstantVariableDeclaration(SourceUnit):
+    var_type: Type
+    name: Ident
+    initial_value: Expr
+
+
+@dataclass
 class EventParameter(Node):
     param_type: Type
     name: Ident
-    indexed: bool
+    is_indexed: bool
 
 
 @dataclass
 class EventDefinition(ContractPart):
     name: Ident
-    anonymous: bool
+    is_anonymous: bool
     parameters: List[EventParameter]
 
 
@@ -469,7 +484,7 @@ class ErrorParameter(Node):
 
 
 @dataclass
-class ErrorDefinition(ContractPart):
+class ErrorDefinition(SourceUnit, ContractPart):
     name: Ident
     parameters: List[ErrorParameter]
 
@@ -481,7 +496,28 @@ class UsingDirective(ContractPart):
 
 
 @dataclass
-class Contract(Node):
+class InheritSpecifier(Node):
     name: Ident
-    inherits: List[InvocationModifier]
+    args: List[Expr]
+
+
+@dataclass
+class ContractDefinition(SourceUnit):
+    name: Ident
+    is_abstract: bool
+    inherits: List[InheritSpecifier]
     parts: List[ContractPart]
+
+
+@dataclass
+class InterfaceDefinition(SourceUnit):
+    name: Ident
+    inherits: List[InheritSpecifier]
+    parts: List[ContractPart]
+
+
+@dataclass
+class LibraryDefinition(SourceUnit):
+    name: Ident
+    parts: List[ContractPart]
+

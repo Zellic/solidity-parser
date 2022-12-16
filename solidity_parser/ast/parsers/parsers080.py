@@ -1,5 +1,5 @@
 import sys
-from solidity_parser.ast.parsers.common import ParserBase, get_subparsers_from_methods, get_all_subparsers
+from solidity_parser.ast.parsers.common import ParserBase, get_subparsers_from_methods, get_all_subparsers, map_helper
 import solidity_parser.ast.parsers.parsers060 as parsers060
 from solidity_parser.grammar.v080.SolidityParser import SolidityParser
 from solidity_parser.ast import nodes2
@@ -44,15 +44,26 @@ def custom_parsers():
         'LiteralContext': ParserBase.make_first,
         'PrimaryExpressionContext': ParserBase.make_first,
 
+        'ParameterListContext': ParserBase.make_all,
+
         # Top level directives
         'SourceUnitContext': ParserBase.make_first,
         # Imports
-        'SymbolAliasesContext': ParserBase.make_all
+        'SymbolAliasesContext': ParserBase.make_all,
+        'InheritanceSpecifierListContext': ParserBase.make_all,
+        'ContractBodyElementContext': ParserBase.make_first,
     }
 
 
+def _pragma_directive(parser, pragma_directive: SolidityParser.PragmaDirectiveContext):
+    total_str = ''
+    for token in pragma_directive.PragmaToken():
+        total_str += token.getText()
+    return nodes2.PragmaDirective(total_str)
+
+
 def _import_directive(parser, directive: SolidityParser.ImportDirectiveContext):
-    path = directive.path().getText()
+    path = parser.make(directive.path())
 
     if directive.Mul():
         # import * as symbolName from "filename";
@@ -74,14 +85,280 @@ def _import_directive(parser, directive: SolidityParser.ImportDirectiveContext):
             return nodes2.ImportDirective(path)
 
 
+def _path(parser, path: SolidityParser.PathContext):
+    # "abc" -> abc
+    return path.getText()[1:-1]
+
+
 def _import_alias(parser, import_alias: SolidityParser.ImportAliasesContext):
+    symbol = parser.make(import_alias.symbol)
     return nodes2.SymbolAlias(
-        parser.make(import_alias.symbol),
-        parser.make(import_alias.alias)
+        symbol,
+        # set the alias to the symbol itself if no alias is specified
+        parser.make(import_alias.alias) if import_alias.alias else symbol
     )
 
 
 def _contract_definition(parser, contract_definition: SolidityParser.ContractDefinitionContext):
+    return nodes2.ContractDefinition(
+        parser.make(contract_definition.identifier()),
+        contract_definition.Abstract() is not None,
+        parser.make(contract_definition.inheritanceSpecifierList()),
+        parser.make_all_rules(contract_definition.contractBodyElement())
+    )
+
+
+def _interface_definition(parser, interface_definition: SolidityParser.InterfaceDefinitionContext):
+    return nodes2.InterfaceDefinition(
+        parser.make(interface_definition.identifier()),
+        parser.make(interface_definition.inheritanceSpecifierList()),
+        parser.make_all_rules(interface_definition.contractBodyElement())
+    )
+
+
+def _library_definition(parser, library_definition: SolidityParser.LibraryDefinitionContext):
+    return nodes2.LibraryDefinition(
+        parser.make(library_definition.identifier()),
+        parser.make_all_rules(library_definition.contractBodyElement())
+    )
+
+
+def _inheritance_specifier(parser, inheritance_specifier: SolidityParser.InheritanceSpecifierContext):
+    return nodes2.InheritSpecifier(
+        parser.make(inheritance_specifier.identifierPath()),
+        parser.make(inheritance_specifier.callArgumentList())
+    )
+
+
+def _constructor_definition(parser, constructor_definition: SolidityParser.ConstructorDefinitionContext):
+    modifiers = []
+
+    if constructor_definition.Payable():
+        modifiers.append(nodes2.MutabilityModifier.PAYABLE)
+    if constructor_definition.Internal():
+        modifiers.append(nodes2.VisibilityModifier.INTERNAL)
+    if constructor_definition.Public():
+        modifiers.append(nodes2.VisibilityModifier.PUBLIC)
+
+    modifiers += parser.make_all_rules(constructor_definition.modifierInvocation())
+
+    return nodes2.FunctionDefinition(
+        nodes2.SpecialFunctionKind.CONSTRUCTOR,
+        parser.make(constructor_definition.arguments),
+        modifiers,
+        [],
+        parser.make(constructor_definition.block()),
+    )
+
+
+def _function_definition(parser, function_definition: SolidityParser.FunctionDefinitionContext):
+    if function_definition.Fallback():
+        name = nodes2.SpecialFunctionKind.FALLBACK
+    elif function_definition.Receive():
+        name = nodes2.SpecialFunctionKind.RECEIVE
+    else:
+        name = parser.make(function_definition.identifier())
+
+    modifiers = []
+
+    if function_definition.Virtual():
+        modifiers.append(nodes2.VisibilityModifier.VIRTUAL)
+
+    modifiers += parser.make_all_rules(function_definition.visibility())
+    modifiers += parser.make_all_rules(function_definition.stateMutability())
+    modifiers += parser.make_all_rules(function_definition.modifierInvocation())
+    modifiers += parser.make_all_rules(function_definition.overrideSpecifier())
+
+    return nodes2.FunctionDefinition(
+        name,
+        parser.make(function_definition.arguments),
+        modifiers,
+        parser.make(function_definition.returnParameters),
+        parser.make(function_definition.block())
+    )
+
+
+def _constant_variable_declaration(parser, constant_variable_declaration: SolidityParser.ConstantVariableDeclarationContext):
+    return nodes2.ConstantVariableDeclaration(
+        parser.make(constant_variable_declaration.typeName()),
+        parser.make(constant_variable_declaration.identifier()),
+        parser.make(constant_variable_declaration.expression())
+    )
+
+
+def _modifier_definition(parser, modifier_definition: SolidityParser.ModifierDefinitionContext):
+    modifiers = []
+
+    if modifier_definition.Virtual():
+        modifiers.append(nodes2.VisibilityModifier.VIRTUAL)
+
+    modifiers += parser.make_all_rules(modifier_definition.overrideSpecifier())
+
+    return nodes2.ModifierDefinition(
+        parser.make(modifier_definition.identifier()),
+        parser.make(modifier_definition.parameterList()),
+        modifiers,
+        parser.make(modifier_definition.block())
+    )
+
+
+def _fallback_function_definition(parser, fallback_function_definition: SolidityParser.FallbackFunctionDefinitionContext):
+    modifiers = []
+
+    if fallback_function_definition.External():
+        modifiers.append(nodes2.VisibilityModifier.EXTERNAL)
+
+    if fallback_function_definition.Virtual():
+        modifiers.append(nodes2.VisibilityModifier.VIRTUAL)
+
+    modifiers += parser.make_all_rules(fallback_function_definition.stateMutability())
+    modifiers += parser.make_all_rules(fallback_function_definition.modifierInvocation())
+    modifiers += parser.make_all_rules(fallback_function_definition.overrideSpecifier())
+
+    return nodes2.FunctionDefinition(
+        nodes2.SpecialFunctionKind.FALLBACK,
+        parser.make(fallback_function_definition.parameterList(0)),
+        modifiers,
+        parser.make(fallback_function_definition.returnParameters),
+        parser.make(fallback_function_definition.block())
+    )
+
+
+def _receive_function_definition(parser, receive_function_definition: SolidityParser.ReceiveFunctionDefinitionContext):
+    modifiers = []
+
+    if receive_function_definition.External():
+        modifiers.append(nodes2.VisibilityModifier.EXTERNAL)
+
+    if receive_function_definition.Payable():
+        modifiers.append(nodes2.MutabilityModifier.PAYABLE)
+
+    if receive_function_definition.Virtual():
+        modifiers.append(nodes2.VisibilityModifier.VIRTUAL)
+
+    modifiers += parser.make_all_rules(receive_function_definition.modifierInvocation())
+    modifiers += parser.make_all_rules(receive_function_definition.overrideSpecifier())
+
+    return nodes2.FunctionDefinition(
+        nodes2.SpecialFunctionKind.RECEIVE,
+        [],
+        modifiers,
+        parser.make(receive_function_definition.returnParameters),
+        parser.make(receive_function_definition.block())
+    )
+
+
+def _struct_definition(parser, struct_definition: SolidityParser.StructDefinitionContext):
+    return nodes2.StructDefinition(
+        parser.make(struct_definition.identifier()),
+        parser.make_all_rules(struct_definition.structMember())
+    )
+
+
+def _struct_member(parser, struct_member: SolidityParser.StructMemberContext):
+    return nodes2.StructMember(
+        parser.make(struct_member.typeName()),
+        parser.make(struct_member.identifier())
+    )
+
+
+def _enum_definition(parser, enum_definition: SolidityParser.EnumDefinitionContext):
+    return nodes2.EnumDefinition(
+        parser.make(enum_definition.name),
+        parser.make_all_rules(enum_definition.enumValues)
+    )
+
+
+def _state_variable_declaration(parser, state_variable_declaration: SolidityParser.StateVariableDeclarationContext):
+    modifiers = []
+    if state_variable_declaration.Public():
+        modifiers.append(nodes2.VisibilityModifier.PUBLIC)
+
+    if state_variable_declaration.Private():
+        modifiers.append(nodes2.VisibilityModifier.PRIVATE)
+
+    if state_variable_declaration.Internal():
+        modifiers.append(nodes2.VisibilityModifier.INTERNAL)
+
+    if state_variable_declaration.Constant():
+        modifiers.append(nodes2.MutabilityModifier.CONSTANT)
+
+    if state_variable_declaration.Immutable():
+        modifiers.append(nodes2.MutabilityModifier.IMMUTABLE)
+
+    modifiers += parser.make_all_rules(state_variable_declaration.overrideSpecifier())
+
+    return nodes2.StateVariableDeclaration(
+        parser.make(state_variable_declaration.typeName()),
+        modifiers,
+        parser.make(state_variable_declaration.identifier()),
+        parser.make(state_variable_declaration.expression())
+    )
+
+
+def _error_definition(parser, error_definition: SolidityParser.ErrorDefinitionContext):
+    return nodes2.EnumDefinition(
+        parser.make(error_definition.identifier()),
+        parser.make_all_rules(error_definition.errorParameter())
+    )
+
+
+def _error_parameter(parser, error_parameter: SolidityParser.ErrorParameterContext):
+    return nodes2.ErrorParameter(
+        parser.make(error_parameter.typeName()),
+        parser.make(error_parameter.identifier())
+    )
+
+
+def _using_directive(parser, using_directive: SolidityParser.UsingDirectiveContext):
+    if using_directive.Mul():
+        override_type = nodes2.AnyType
+    else:
+        override_type = parser.make(using_directive.typeName())
+
+    return nodes2.UsingDirective(
+        parser.make(using_directive.identifierPath()),
+        override_type
+    )
+
+
+def _override_specifier(parser, override_specific: SolidityParser.OverrideSpecifierContext):
+    overrides = parser.make_all_rules(override_specific.identifierPath())
+
+    return nodes2.OverrideSpecifier(
+        map_helper(lambda override: nodes2.UserType(override), overrides)
+    )
+
+
+def _visibility(parser, visibility: SolidityParser.VisibilityContext):
+    return nodes2.VisibilityModifier(visibility.getText())
+
+
+def _state_mutability(parser, state_mutability: SolidityParser.StateMutabilityContext):
+    return nodes2.MutabilityModifier(state_mutability.getText())
+
+
+def _modifier_invocation(parser, modifier_invocation: SolidityParser.ModifierInvocationContext):
+    return nodes2.InvocationModifier(
+        parser.make(modifier_invocation.identifierPath()),
+        parser.make(modifier_invocation.callArgumentList())
+    )
+
+
+def _event_definition(parser, event_definition: SolidityParser.EventDefinitionContext):
+    return nodes2.EventDefinition(
+        parser.make(event_definition.identifier()),
+        event_definition.Anonymous() is not None,
+        parser.make_all_rules(event_definition.eventParameter())
+    )
+
+
+def _event_parameter(parser, event_parameter: SolidityParser.EventParameterContext):
+    return nodes2.EventParameter(
+        parser.make(event_parameter.typeName()),
+        parser.make(event_parameter.identifier()),
+        event_parameter.Indexed() is not None
+    )
 
 
 def _block(parser, block: SolidityParser.BlockContext):
@@ -104,6 +381,15 @@ def _named_argument(parser, named_arg: SolidityParser.NamedArgumentContext):
         parser.make(named_arg.name),
         parser.make(named_arg.value)
     )
+
+
+def _parameter_declaration(parser, parameter_declaration: SolidityParser.ParameterDeclarationContext):
+    return nodes2.Parameter(
+        parser.make(parameter_declaration.typeName()),
+        parser.make(parameter_declaration.dataLocation()),
+        parser.make(parameter_declaration.identifier())
+    )
+
 
 def _call_argument_list(parser, arg_list: SolidityParser.CallArgumentListContext):
     return parser.make_all(arg_list)
@@ -304,7 +590,7 @@ def _number_literal(parser, literal: SolidityParser.NumberLiteralContext):
         value = int(literal.HexNumber().getText())
 
     if literal.NumberUnit():
-        unit = nodes2.Unit(literal.NumberUnit().getText().upper())
+        unit = nodes2.Unit(literal.NumberUnit().getText().lower())
         return nodes2.Literal(value, unit)
     else:
         return nodes2.Literal(value)
