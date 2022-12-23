@@ -29,9 +29,10 @@ versionOperator
   : '^' | '~' | '>=' | '>' | '<' | '<=' | '=' ;
 
 importDirective
-  : 'import' StringLiteralFragment ('as' identifier)? ';'
-  | 'import' ('*' | identifier) ('as' identifier)? 'from' StringLiteralFragment ';'
-  | 'import' '{' importDeclaration ( ',' importDeclaration )* '}' 'from' StringLiteralFragment ';' ;
+  : 'import' StringLiteralFragment ('as' identifier)? ';' # ModuleImport
+  | 'import' ('*' | symbol=identifier) ('as' unitAlias=identifier)? 'from' StringLiteralFragment ';' # AliasImport
+  | 'import' '{' importDeclaration ( ',' importDeclaration )* '}' 'from' StringLiteralFragment ';' # SymbolImport
+  ;
 
 importDeclaration
   : identifier ('as' identifier)? ;
@@ -40,8 +41,10 @@ ContractKeyword : 'contract' ;
 InterfaceKeyword : 'interface' ;
 LibraryKeyword : 'library' ;
 
+Abstract : 'abstract' ;
+
 contractDefinition
-  : 'abstract'? ( ContractKeyword | InterfaceKeyword | LibraryKeyword ) identifier
+  : Abstract? ( ContractKeyword | InterfaceKeyword | LibraryKeyword ) identifier
     ( 'is' inheritanceSpecifier (',' inheritanceSpecifier )* )?
     '{' contractPart* '}' ;
 
@@ -219,7 +222,7 @@ identifierList
   : '(' ( identifier? ',' )* identifier? ')' ;
 
 elementaryTypeName
-  : AddressType
+  : addressType
   | BoolType
   | StringType
   | VarType
@@ -229,7 +232,7 @@ elementaryTypeName
   | Fixed
   | Ufixed ;
 
-AddressType: 'address' PayableKeyword? ;
+addressType: 'address' PayableKeyword? ;
 
 BoolType: 'bool' ;
 
@@ -258,14 +261,15 @@ expression
   | expression '[' expression? ']' # ArrayLoad
   | base=expression '[' start=expression? ':' end=expression? ']' # ArraySlice
   | expression '.' identifier # MemberLoad
-//  | expression '{' nameValueList '}'
-//  | expression '(' functionCallArguments ')'
+//  | expression '{' nameValueList '}' # FCNamedExpr
+//  | expression '(' functionCallArguments ')' # FCArgExpr
   | expression ( '{' nameValueList? '}' )? '(' functionCallArguments ')' # FuncCallExpr
   | PayableKeyword '(' expression ')' # PayableExpr
   | '(' expression ')' # BracketExpr
   | ('++' | '--') expression # UnaryPreOp
   | ('+' | '-') expression # UnaryPreOp
-  | ('after' | 'delete') expression # ReservedKeyExpr
+  | 'delete' expression # DeleteExpr
+  | 'after' expression # ReservedKeyExpr
   | '!' expression # LogicOp
   | '~' expression # LogicOp
   | expression '**' expression # BinaryExpr

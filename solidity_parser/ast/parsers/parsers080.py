@@ -1,5 +1,6 @@
 import sys
 from solidity_parser.ast.parsers.common import ParserBase, get_subparsers_from_methods, get_all_subparsers, map_helper
+from solidity_parser.ast.parsers.errors import ParsingException, assert_invalid_path, unsupported_feature
 import solidity_parser.ast.parsers.parsers060 as parsers060
 from solidity_parser.grammar.v080.SolidityParser import SolidityParser
 from solidity_parser.ast import nodes2
@@ -43,6 +44,8 @@ def custom_parsers():
         'AssignmentContext': _binary_expr,
         'LiteralContext': ParserBase.make_first,
         'PrimaryExpressionContext': ParserBase.make_first,
+        'InlineArrayContext': ParserBase.make_first,
+        'TupleContext': ParserBase.make_first,
 
         'ParameterListContext': ParserBase.make_all,
 
@@ -59,7 +62,8 @@ def _pragma_directive(parser, pragma_directive: SolidityParser.PragmaDirectiveCo
     total_str = ''
     for token in pragma_directive.PragmaToken():
         total_str += token.getText()
-    return nodes2.PragmaDirective(total_str)
+    # TODO: how to split?
+    return nodes2.PragmaDirective(None, None)
 
 
 def _import_directive(parser, directive: SolidityParser.ImportDirectiveContext):
@@ -124,8 +128,9 @@ def _library_definition(parser, library_definition: SolidityParser.LibraryDefini
 
 
 def _inheritance_specifier(parser, inheritance_specifier: SolidityParser.InheritanceSpecifierContext):
+    type_name = parser.make(inheritance_specifier.identifierPath())
     return nodes2.InheritSpecifier(
-        parser.make(inheritance_specifier.identifierPath()),
+        nodes2.UserType(type_name),
         parser.make(inheritance_specifier.callArgumentList())
     )
 
@@ -312,7 +317,7 @@ def _error_parameter(parser, error_parameter: SolidityParser.ErrorParameterConte
 
 def _using_directive(parser, using_directive: SolidityParser.UsingDirectiveContext):
     if using_directive.Mul():
-        override_type = nodes2.AnyType
+        override_type = nodes2.AnyType()
     else:
         override_type = parser.make(using_directive.typeName())
 
@@ -477,7 +482,7 @@ def _member_access(parser, expr: SolidityParser.MemberAccessContext):
     )
 
 def _function_call_options(parser, expr: SolidityParser.FunctionCallOptionsContext):
-    raise NotImplementedError()
+    raise NotImplementedError('Unknown expression')
 
 def _function_call(parser, expr: SolidityParser.FunctionCallContext):
     return nodes2.CallFunction(
@@ -564,10 +569,6 @@ def _inline_array(parser, expr: SolidityParser.InlineArrayExpressionContext):
     )
 
 
-def _tuple(parser, expr: SolidityParser.TupleContext):
-    return parser.make_first(expr.tupleExpression())
-
-
 def _identifier(parser, ident: SolidityParser.IdentifierContext):
     return nodes2.Ident(ident.getText())
 
@@ -587,7 +588,7 @@ def _number_literal(parser, literal: SolidityParser.NumberLiteralContext):
     if literal.DecimalNumber():
         value = float(literal.DecimalNumber().getText())
     else:
-        value = int(literal.HexNumber().getText())
+        value = int(literal.HexNumber().getText(), 16)
 
     if literal.NumberUnit():
         unit = nodes2.Unit(literal.NumberUnit().getText().lower())
@@ -643,6 +644,6 @@ def _elementary_type_name(parser, name: SolidityParser.ElementaryTypeNameContext
         size = int(size_str)
         return nodes2.FixedLengthArrayType(nodes2.ByteType(), size)
     elif name.Fixed() or name.Ufixed():
-        raise NotImplementedError('fixed/unfixed type')
+        return unsupported_feature('fixed/unfixed type')
     else:
-        raise NotImplementedError('unknown elementary type')
+        return assert_invalid_path()

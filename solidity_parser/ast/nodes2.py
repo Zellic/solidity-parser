@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Any, Tuple
-from collections import namedtuple
+from typing import List, Any, Union
+
 
 class Node:
     pass
@@ -42,7 +42,7 @@ class Unit(Enum):
     ETHER = 'ether'
     SECONDS = 'seconds'
     MINUTES = 'minutes'
-    HOURS = 'hour'
+    HOURS = 'hours'
     DAYS = 'days'
     WEEKS = 'weeks'
     YEARS = 'years'
@@ -52,6 +52,11 @@ class Unit(Enum):
 class Literal(Expr):
     value: Any
     unit: Unit = None
+
+
+@dataclass
+class Delete(Expr):
+    value: Expr
 
 
 class UnaryOpCode(Enum):
@@ -201,7 +206,6 @@ class If(Stmt):
     false_branch: Stmt
 
 
-# TODO figure out right structure
 @dataclass
 class Catch(Stmt):
     ident: Ident
@@ -225,7 +229,7 @@ class While(Stmt):
 
 @dataclass
 class For(Stmt):
-    initialiser: Stmt # TODO might also be ExprStmt or VarDecl
+    initialiser: Stmt  # TODO might also be ExprStmt or VarDecl
     condition: Expr
     advancement: Expr
     body: Stmt
@@ -378,7 +382,8 @@ class SourceUnit(Node):
 
 @dataclass
 class PragmaDirective(SourceUnit):
-    directive: str
+    name: str
+    value: Union[str, Expr]
 
 
 @dataclass
@@ -520,4 +525,3 @@ class InterfaceDefinition(SourceUnit):
 class LibraryDefinition(SourceUnit):
     name: Ident
     parts: List[ContractPart]
-

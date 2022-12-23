@@ -243,7 +243,7 @@ structDefinition: Struct name=identifier LBrace members=structMember+ RBrace;
  * The declaration of a named struct member.
  */
 structMember: type=typeName name=identifier Semicolon;
-/**
+/**a
  * Definition of an enum. Can occur at top-level within a source unit or within a contract, library or interface.
  */
 enumDefinition:	Enum name=identifier LBrace enumValues+=identifier (Comma enumValues+=identifier)* RBrace;

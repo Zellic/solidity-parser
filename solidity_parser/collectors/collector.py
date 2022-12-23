@@ -11,7 +11,7 @@ def get_minor_ver(txt):
     ind2 = txt.find(';', ind)
     if ind2 == -1:
         return None
-    vers = txt[ind + len('pragma solidity') + 1:ind2]
+    vers = txt[ind + len('pragma solidity') + 1:ind2].strip()
     remove = ['^', '~', '>=', '>', '<', '<=', '=', ' ', '.']
     for r in remove:
         vers = vers.replace(r, '')

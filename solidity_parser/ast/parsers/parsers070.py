@@ -16,6 +16,11 @@ class Parser070(ParserBase):
         })
 
 
+def _pragma_value(parser, pragma_value: 'PragmaValueContext'):
+    # This overrides the v6 rule by the same name
+    return pragma_value.getText()
+
+
 def _unicode_string_literal(parser, literal: 'UnicodeStringLiteralContext'):
     total_str = ''
     for str_frag in literal.UnicodeStringLiteralFragment():
@@ -27,7 +32,7 @@ def _number_literal(parser, literal: 'NumberLiteralContext'):
     if literal.DecimalNumber() is not None:
         value = float(literal.DecimalNumber().getText())
     else:
-        value = int(literal.HexNumber().getText())
+        value = int(literal.HexNumber().getText(), 16)
 
     unit = None
 
