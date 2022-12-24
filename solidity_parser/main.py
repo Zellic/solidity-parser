@@ -59,12 +59,20 @@ def get_contracts_from_descriptors(input_files):
             # print(file_name)
             source_codes_str = descriptors[0]['SourceCode']
 
-            # source_code_str is either the source code of the contract or a json
-            # object containing source codes for the contracts...
-            try:
-                source_codes = json.loads(source_codes_str)
-            except json.decoder.JSONDecodeError:
-                source_codes = [source_codes_str]
+            if source_codes_str[0] == '{' and source_codes_str[1] == '{' and source_codes_str[-1] == '}' and \
+                    source_codes_str[-2] == '}':
+                # some weird descriptor object with {{ sources: { "a.sol", {content: "src" }, ... } ... }}
+                source_codes_str_inner = source_codes_str[1:-1]
+                descriptors2 = json.loads(source_codes_str_inner)
+
+                source_codes = [content_desc['content'] for (name, content_desc) in descriptors2['sources'].items()]
+            else:
+                # source_code_str is either the source code of the contract or a json
+                # object containing source codes for the contracts...
+                try:
+                    source_codes = json.loads(source_codes_str)
+                except json.decoder.JSONDecodeError:
+                    source_codes = [source_codes_str]
 
             for sc in source_codes:
                 minor_vers = get_minor_ver(sc)
@@ -72,7 +80,7 @@ def get_contracts_from_descriptors(input_files):
                     yield file_name, minor_vers, sc
 
 
-def try_parse_contract(file_name, version, contract_source):
+def try_parse_contract(file_name, version, contract_source, idx):
     contract_input = InputStream(contract_source)
 
     if version < 7:
@@ -101,25 +109,33 @@ def try_parse_contract(file_name, version, contract_source):
         for su in source_units:
             u = ast_parser.make(su)
             # pp.pprint(u)
-        print("pass")
+        print(f"pass, idx:{idx}")
     except Exception as e:
-        print(f"piss: {file_name} {version}")
+        print(f"piss: {file_name} {version} idx={idx}")
         print(contract_source)
+        if idx is not None:
+            with open(f"../example/errors/Contract{idx}.sol", "w", encoding='utf-8') as text_file:
+                text_file.write(contract_source)
         raise e
 
 
 if __name__ == '__main__':
     base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
     all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
+    # all_files = ['C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only\\contracts\\30\\00\\30002861577da4ea6aa23966964172ad75dca9c7']
+    start_idx = 365
 
+    idx = 0
     for info in get_contracts_from_descriptors(all_files):
-        try_parse_contract(*info)
+        if idx >= start_idx:
+            try_parse_contract(*info, idx=idx)
+        idx += 1
 
     # input_src = open(
-    #     '../example/FunctionsTest.sol',
+    #     '../example/ByteInst.sol',
     #     'r').read()
     #
-    # try_parse_contract('ft', 7, input_src)
+    # try_parse_contract('ft', 5, input_src, None)
 
 
 

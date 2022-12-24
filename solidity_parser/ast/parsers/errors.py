@@ -9,6 +9,13 @@ def unsupported_feature(detail):
     raise ParsingException(f'Grammar feature not supported: {detail}')
 
 
+def invalid_solidity(detail):
+    # Error state that represents a parse tree that is valid but code that the ast producer rejects on the grounds
+    # that it is not valid solidity code. This can happen as the antlr grammars accept more input than the language
+    # actually allows
+    raise ParsingException(f'Invalid solidity code: {detail}')
+
+
 # TODO attach parsing context
 class ParsingException(Exception):
     pass

@@ -340,8 +340,9 @@ expression:
 	expression LBrack index=expression? RBrack # IndexAccess
 	| expression LBrack start=expression? Colon end=expression? RBrack # IndexRangeAccess
 	| expression Period (identifier | Address) # MemberAccess
-	| expression LBrace (namedArgument (Comma namedArgument)*)? RBrace # FunctionCallOptions
-	| expression callArgumentList # FunctionCall
+//	| expression LBrace (namedArgument (Comma namedArgument)*)? RBrace # FunctionCallOptions
+//	| expression callArgumentList # FunctionCall
+	| expression ( LBrace (namedArgument (Comma namedArgument)*)? RBrace )? callArgumentList # FuncCallExpr
 	| Payable callArgumentList # PayableConversion
 	| Type LParen typeName RParen # MetaType
 	| op=(Inc | Dec | Not | BitNot | Delete | Sub) expression # UnaryPrefixOperation
