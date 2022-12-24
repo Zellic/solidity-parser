@@ -248,7 +248,7 @@ def _receive_function_definition(parser, receive_function_definition: SolidityPa
         nodes2.SpecialFunctionKind.RECEIVE,
         [],
         modifiers,
-        parser.make(receive_function_definition.returnParameters),
+        [],
         parser.make(receive_function_definition.block())
     )
 
@@ -436,8 +436,17 @@ def _try(parser, stmt: 'TryStatementContext'):
         parser.make(stmt.expression()),
         parser.make(stmt.parameterList()),
         parser.make(stmt.block()),
-        parser.make_all(stmt.catchClause())
+        parser.make_all_rules(stmt.catchClause())
     )
+
+
+def _catch_clause(parser, catch_clause: 'CatchClauseContext'):
+    return nodes2.Catch(
+        parser.make(catch_clause.identifier()),
+        parser.make(catch_clause.parameterList()),
+        parser.make(catch_clause.block())
+    )
+
 
 def _emit(parser, stmt: SolidityParser.EmitStatementContext):
     return nodes2.Emit(
@@ -481,19 +490,27 @@ def _member_access(parser, expr: SolidityParser.MemberAccessContext):
         parser.make(expr.identifier())
     )
 
-def _function_call_options(parser, expr: SolidityParser.FunctionCallOptionsContext):
-    raise NotImplementedError('Unknown expression')
+# def _function_call_options(parser, expr: SolidityParser.FunctionCallOptionsContext):
+#     raise NotImplementedError('Unknown expression')
 
-def _function_call(parser, expr: SolidityParser.FunctionCallContext):
+
+def _func_call_expr(parser, func_call_expr: SolidityParser.FuncCallExprContext):
     return nodes2.CallFunction(
-        parser.make(expr.expression()),
-        [],
-        parser.make(expr.callArgumentList())
+        parser.make(func_call_expr.expression()),
+        parser.make_all_rules(func_call_expr.namedArgument()),
+        parser.make(func_call_expr.callArgumentList())
     )
+
 
 def _payable_conversion(parser, expr: SolidityParser.PayableConversionContext):
     return nodes2.PayableConversion(
         parser.make(expr.callArgumentList())
+    )
+
+
+def _meta_type(parser, meta_type: SolidityParser.MetaTypeContext):
+    return nodes2.CreateMetaType(
+        parser.make(meta_type.typeName())
     )
 
 
@@ -532,6 +549,7 @@ def _unary_prefix_operation(parser, expr: SolidityParser.UnaryPrefixOperationCon
         nodes2.UnaryOpCode(expr.op.text),
         True
     )
+
 
 def _unary_suffix_operation(parser, expr: SolidityParser.UnarySuffixOperationContext):
     return nodes2.UnaryOp(

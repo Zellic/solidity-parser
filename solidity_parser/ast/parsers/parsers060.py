@@ -1,6 +1,6 @@
 import sys
 from solidity_parser.ast.parsers.common import ParserBase, get_all_subparsers, map_helper
-from solidity_parser.ast.parsers.errors import ParsingException, unsupported_feature, assert_invalid_path
+from solidity_parser.ast.parsers.errors import ParsingException, unsupported_feature, assert_invalid_path, invalid_solidity
 from solidity_parser.ast import nodes2
 
 from solidity_parser.grammar.v060.SolidityParser import SolidityParser
@@ -53,7 +53,7 @@ def _try(parser, stmt: 'TryStatementContext'):
         parser.make(stmt.expression()),
         parser.make(stmt.returnParameters()),
         parser.make(stmt.block()),
-        parser.make_all(stmt.catchClause())
+        parser.make_all_rules(stmt.catchClause())
     )
 
 
@@ -201,7 +201,12 @@ def _unary_pre_op(parser, expr: 'UnaryPreOpContext'):
 
 
 def _delete_expr(parser, expr: 'DeleteExprContext'):
-    return nodes2.Delete(parser.make(expr.expression()))
+    return nodes2.UnaryOp(
+        parser.make(expr.expression()),
+        nodes2.UnaryOpCode.DELETE,
+        True # Doesn't matter for this
+    )
+
 
 def _unary_logic_op(parser, expr: 'LogicOpContext'):
     return nodes2.UnaryOp(
@@ -375,10 +380,10 @@ def _elementary_type_name(parser, name: 'ElementaryTypeNameContext'):
         size_str = name.Uint().getText()[4:]
         size = int(size_str) if size_str else 256
         return nodes2.IntType(False, size)
+    elif name.AByte():
+        return nodes2.ByteType()
     elif name.Byte():
-        if name.Byte().getText() == 'byte':
-            return nodes2.ByteType()
-        elif name.Byte().getText() == 'bytes':
+        if name.Byte().getText() == 'bytes':
             return nodes2.FixedLengthArrayType(nodes2.ByteType(), 1)
         else:
             size_str = name.Byte().getText()[5:]
@@ -423,8 +428,11 @@ def _version(parser, version: 'VersionContext'):
 
 def _version_constraint(parser, version_constraint: 'VersionConstraintContext'):
     # Set these up as expressions rather than their own node types
-    operator_str = version_constraint.versionOperator().getText()
-    operator = nodes2.BinaryOpCode(operator_str)
+    if version_constraint.versionOperator():
+        operator_str = version_constraint.versionOperator().getText()
+        operator = nodes2.BinaryOpCode(operator_str)
+    else:
+        operator = nodes2.BinaryOpCode.EQ
 
     version_literal = version_constraint.VersionLiteral().getText()
 
@@ -494,7 +502,10 @@ def _contract_definition(parser, contract_definition: 'ContractDefinitionContext
     elif contract_definition.InterfaceKeyword():
         return nodes2.InterfaceDefinition(name, inheritance_specifiers, parts)
     elif contract_definition.LibraryKeyword():
-        return nodes2.LibraryDefinition(name, inheritance_specifiers, parts)
+        if inheritance_specifiers:
+            return invalid_solidity('inheritance specifiers for library definition')
+        else:
+            return nodes2.LibraryDefinition(name, parts)
     else:
         raise NotImplemented('invalid contract type')
 

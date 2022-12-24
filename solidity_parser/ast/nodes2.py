@@ -54,11 +54,6 @@ class Literal(Expr):
     unit: Unit = None
 
 
-@dataclass
-class Delete(Expr):
-    value: Expr
-
-
 class UnaryOpCode(Enum):
     INC = '++'
     DEC = '--'
@@ -66,6 +61,7 @@ class UnaryOpCode(Enum):
     SIGN_NEG = '-'
     BOOL_NEG = '!'
     BIT_NEG = '~'
+    DELETE = 'delete'
 
 
 @dataclass
@@ -525,3 +521,8 @@ class InterfaceDefinition(SourceUnit):
 class LibraryDefinition(SourceUnit):
     name: Ident
     parts: List[ContractPart]
+
+
+@dataclass
+class CreateMetaType(Expr):
+    base_type: Type
