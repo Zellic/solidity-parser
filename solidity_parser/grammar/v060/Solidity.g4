@@ -81,7 +81,9 @@ functionDefinition
   : functionDescriptor parameterList modifierList returnParameters? ( ';' | block ) ;
 
 functionDescriptor
-  : 'function' ( identifier | ReceiveKeyword | FallbackKeyword )?
+    // The original grammar didn't contain ConstructorKeyword after 'function' but contract2244(0.4.15)
+    // had an example of 'function constructor' so I added it here to parse - Bibl
+  : 'function' ( identifier | ReceiveKeyword | FallbackKeyword | ConstructorKeyword )?
   | ConstructorKeyword
   | FallbackKeyword
   | ReceiveKeyword ;
@@ -267,6 +269,7 @@ expression
 //  | expression '{' nameValueList '}' # FCNamedExpr
 //  | expression '(' functionCallArguments ')' # FCArgExpr
   | expression ( '{' nameValueList? '}' )? '(' functionCallArguments ')' # FuncCallExpr
+  | TypeKeyword '(' typeName ')' # MetaType
   | PayableKeyword '(' expression ')' # PayableExpr
   | '(' expression ')' # BracketExpr
   | ('++' | '--') expression # UnaryPreOp
@@ -296,7 +299,6 @@ primaryExpression
   | hexLiteral
   | stringLiteral
   | identifier arrayBrackets?
-  | TypeKeyword
   | tupleExpression
   | typeNameExpression arrayBrackets? ;
 

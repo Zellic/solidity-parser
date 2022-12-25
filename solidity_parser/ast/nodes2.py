@@ -276,6 +276,11 @@ class Type:
     pass
 
 
+class InferredType(Type):
+    # represents a type in the code that wasn't explicitly identified and is meant to be inferred
+    pass
+
+
 @dataclass
 class UserType(Type):
     name: Ident
