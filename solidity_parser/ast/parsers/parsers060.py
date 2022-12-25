@@ -30,6 +30,7 @@ def custom_parsers():
         'TypeNameExpressionContext': ParserBase.make_first,
 
         'ModifierListContext': ParserBase.make_all,
+        'IdentifierListContext': ParserBase.make_all,
 
         'SourceUnitContext': ParserBase.make_first,
         'PragmaNameContext': ParserBase.make_first,
@@ -133,9 +134,11 @@ def _emit(parser, stmt: 'EmitStatementContext'):
 
 def _var_decl_stmt(parser, stmt: 'VariableDeclarationStatementContext'):
     if stmt.identifierList() is not None:
-        raise NotImplementedError('var is unsupported')
-
-    if stmt.variableDeclaration() is not None:
+        # e.g: var (, mantissa, exponent) = unpackPrice(price); which is deprecated in 0.4.20
+        # desugar it into multiple variables, TODO: figure out the types in a later type inference pass
+        names = parser.make(stmt.identifierList())
+        variables = [nodes2.Var(nodes2.InferredType(), None, name) for name in names]
+    elif stmt.variableDeclaration() is not None:
         variables = [parser.make(stmt.variableDeclaration())]
     else:
         variables = parser.make_all(stmt.variableDeclarationList())
@@ -183,6 +186,12 @@ def _function_call_expr(parser, expr: 'FuncCallExprContext'):
         parser.make(expr.expression()),
         parser.make_all(expr.nameValueList()),
         parser.make(expr.functionCallArguments())
+    )
+
+
+def _meta_type(parser, meta_type: 'MetaTypeContext'):
+    return nodes2.CreateMetaType(
+        parser.make(meta_type.typeName())
     )
 
 
@@ -289,8 +298,6 @@ def _ternary_expr(parser, expr: 'TernaryExprContext'):
 def _primary(parser, expr: 'PrimaryExpressionContext'):
     if expr.BooleanLiteral() is not None:
         return nodes2.Literal(bool(expr.getText()))
-    elif expr.TypeKeyword() is not None:
-        raise NotImplementedError('type keyword')
     elif expr.typeNameExpression() is not None:
         base_type = parser.make(expr.typeNameExpression())
         if expr.arrayBrackets():
@@ -323,7 +330,7 @@ def _number_literal(parser, literal: 'NumberLiteralContext'):
 def _hex_literal(parser, literal: 'HexLiteralContext'):
     total_hex_str = ''
     for hex_frag in literal.HexLiteralFragment():
-        total_hex_str += hex_frag.HexDigits().getText()
+        total_hex_str += hex_frag.getText()[4:-1] # remove 'hex' and (" or ') from start and end
     return nodes2.Literal(int(total_hex_str, 16))
 
 
