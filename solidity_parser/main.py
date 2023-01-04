@@ -20,6 +20,8 @@ from solidity_parser.ast.parsers.parsers060 import Parser060
 from solidity_parser.ast.parsers.parsers070 import Parser070
 from solidity_parser.ast.parsers.parsers080 import Parser080
 
+from solidity_parser.ast import solnodes
+
 import os
 import json
 from json import JSONDecoder
@@ -123,19 +125,42 @@ if __name__ == '__main__':
     base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
     all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
     # all_files = ['C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only\\contracts\\30\\00\\30002861577da4ea6aa23966964172ad75dca9c7']
-    start_idx = 10516
-
-    idx = 0
-    for info in get_contracts_from_descriptors(all_files):
-        if idx >= start_idx:
-            try_parse_contract(*info, idx=idx)
-        idx += 1
-
-    # input_src = open(
-    #     '../example/ModifierVirtual.sol',
-    #     'r').read()
+    # start_idx = 10516
+    # start_idx = 0
     #
+    # idx = 0
+    # for info in get_contracts_from_descriptors(all_files):
+    #     if idx >= start_idx:
+    #         try_parse_contract(*info, idx=idx)
+    #     idx += 1
+
+    input_src = open(
+        '../example/cryptokitties.sol',
+        'r').read()
+
     # try_parse_contract('ft', 8, input_src, None)
+
+    lexer = SolidityLexer060(InputStream(input_src))
+    stream = CommonTokenStream(lexer)
+    parser = SolidityParser060(stream)
+    ast_parser = Parser060()
+
+    tree = parser.sourceUnit()
+    source_units = tree.children
+
+    for su in source_units:
+        u = ast_parser.make(su)
+
+        if hasattr(u, 'parts'):
+            parts = u.parts
+
+            for p in parts:
+                if isinstance(p, solnodes.FunctionDefinition):
+                    arg_string = ', '.join(map(str, p.args))
+                    return_string = ', '.join(map(str, p.returns))
+                    print(f"FUNC {u.name}.{p.name} takes ({arg_string}) and returns ({return_string})")
+
+                    # pp.pprint(p.code)
 
 
 

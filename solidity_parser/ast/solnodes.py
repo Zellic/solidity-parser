@@ -1,21 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Any, Union
+from typing import List, Any, Union, Optional
 
 
 class Node:
     pass
-
-
-@dataclass
-class Ident(Node):
-    text: str
-
-
-class Location(Enum):
-    MEMORY = 'memory'
-    STORAGE = 'storage'
-    CALLDATA = 'calldata'
 
 
 class Stmt(Node):
@@ -26,15 +15,155 @@ class Expr(Node):
     pass
 
 
+class Type:
+    """ Base class for all Solidity types """
+    pass
+
+
+@dataclass
+class ArrayType:
+    """ Single dimension array type with no size attributes """
+    base_type: Type
+
+    def __str__(self): return f"{self.base_type}[]"
+
+
+@dataclass
+class FixedLengthArrayType(ArrayType):
+    """ Array type with a known length that is determined at compile time """
+    size: int
+
+    def __str__(self): return f"{self.base_type}[{self.size}]"
+
+
+@dataclass
+class VariableLengthArrayType(ArrayType):
+    """ Array type with a length that is determined at runtime"""
+    size: Expr
+
+    def __str__(self): return f"{self.base_type}[{self.size}]"
+
+
+@dataclass
+class AddressType(Type):
+    """ Solidity address/address payable type """
+    is_payable: bool
+
+    def __str__(self): return f"address{' payable' if self.is_payable else ''}"
+
+
+@dataclass
+class ByteType(Type):
+    """ Single 8bit byte type """
+
+    def __str__(self): return "byte"
+
+
+@dataclass
+class IntType(Type):
+    """ Solidity native integer type of various bit length and signedness"""
+
+    is_signed: bool
+    """ Whether the type is a signed int or unsigned int """
+    size: int
+    """ Size of the type in bits """
+
+    def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}"
+
+
+class BoolType(Type):
+    """ Solidity native boolean type"""
+
+    def __str__(self): return "bool"
+
+
+class StringType(Type):
+    """ Solidity native string type"""
+
+    def __str__(self): return "string"
+
+
+class VarType(Type):
+    """ Type that wasn't explicitly identified in the code
+
+    This type should not be used without running a subsequent type inference pass.
+
+    An example variable declaration that would use this type symbol: 'var (, mantissa, exponent) = ... '
+    """
+
+    # I've only seen this once in ~10000 contracts where a contract used the 'var' keyword
+
+    def __str__(self): return "var"
+
+
+class AnyType(Type):
+    """ Type that is used only in 'using' declarations to specify that the declaration is overriding all possible types
+
+    For example in the declaration 'using SomeLibrary for *', the overriden type here is AnyType(every type
+    that is imported from SomeLibrary)
+    """
+
+    def __str__(self): return "*"
+
+
+@dataclass
+class MappingType(Type):
+    """ Type that represents a function mapping definition
+
+    For example in the mapping '(uint => Campaign)', src would be 'unit' and the dst would be 'Campaign'
+    """
+    src: Type
+    dst: Type
+
+    def __str__(self): return f"({self.src} => {self.dst})"
+
+
+class Location(Enum):
+    """ Solidity reference type storage locations
+
+    These are used to specify in what type of memory context/area a struct/array/mapping is stored
+    """
+
+    MEMORY = 'memory'
+    """ An location that does not persist between function calls """
+
+    STORAGE = 'storage'
+    """ A location persists between function calls
+    
+    Contract state variables are stored here also
+    """
+
+    CALLDATA = 'calldata'
+    """ A location that contains the function call arguments for external function call parameters """
+
+    def __str__(self): return self.value
+
+
+@dataclass
+class Ident(Expr):
+    """ String identifier node """
+    text: str
+
+    def __str__(self): return self.text
+
+
+@dataclass
+class UserType(Type):
+    """ Type invoked using a valid Solidity reference, e.g. a class, contract, library, enum, etc name"""
+    name: Ident
+
+    def __str__(self): return str(self.name)
+
+
 @dataclass
 class NamedArg(Expr):
+    """ A name-value pair used for calling functions with options """
     name: Ident
     value: Expr
 
 
-############## EXPRS ####################
-
 class Unit(Enum):
+    """ Solidity numerical unit types """
     GWEI = 'gwei'
     WEI = 'wei'
     SZABO = 'szabo'
@@ -50,11 +179,15 @@ class Unit(Enum):
 
 @dataclass
 class Literal(Expr):
+    """ Constant value expression that can have an optional unit associated with it
+
+    The value may be a python primitive, e.g. an integer, boolean, string, tuple, etc """
     value: Any
     unit: Unit = None
 
 
 class UnaryOpCode(Enum):
+    """ Single operand operation types"""
     INC = '++'
     DEC = '--'
     SIGN_POS = '+'
@@ -65,13 +198,16 @@ class UnaryOpCode(Enum):
 
 
 @dataclass
-class UnaryOp(Expr):  # var++
+class UnaryOp(Expr):
+    """ Single operand expression """
     expr: Expr
     op: UnaryOpCode
-    is_pre: bool  # pre or post
+    is_pre: bool
+    """ Whether the operation is pre or post, e.g. ++x or x++ """
 
 
 class BinaryOpCode(Enum):
+    """ Binary/two operand operation types, including assignment types """
     EXPONENTIATE = '**'
     MUL = '*'
     DIV = '/'
@@ -110,6 +246,7 @@ class BinaryOpCode(Enum):
 
 @dataclass
 class BinaryOp(Expr):
+    """ Binary/two operand expression """
     left: Expr
     right: Expr
     op: BinaryOpCode
@@ -117,34 +254,55 @@ class BinaryOp(Expr):
 
 @dataclass
 class TernaryOp(Expr):
+    """ Choice expression that evaluates the given condition and returns one of the two given expressions
+
+    If the condition evaluates to false then the left expression is returned, otherwise the right one is
+    """
     condition: Expr
     left: Expr
     right: Expr
 
 
 @dataclass
-class New(Expr):  # new X
+class New(Expr):
+    """ New object allocation expression without constructor invocation
+
+    Note that this expression only represents the 'new X' part of a new objects creation 'new X(a,b)'.
+    This expression must then be used as the base object in a constructor call to instantiate it.
+
+    """
     type_name: Ident
 
 
 @dataclass
 class NewInlineArray(Expr):
+    """ Solidity 8 inline array creation
+
+    An inline array is one where the elements are explicitly stated in the definition, for example:
+    'int[5]   foo2 = [1, 0, 0, 0, 0];'
+    """
     elements: List[Expr]
 
 
 @dataclass
 class PayableConversion(Expr):
+    """ Converts an address to a payable address
+
+    For example: 'payable(address(myAddressHex))'
+    """
     args: List[Expr]
 
 
 @dataclass
 class GetArrayValue(Expr):
+    """ Gets the value at the given index from the given array """
     array_base: Expr
     index: Expr
 
 
 @dataclass
 class GetArraySlice(Expr):
+    """ Gets a subarray at the given start and end indices from the given array """
     array_base: Expr
     start_index: Expr
     end_index: Expr
@@ -152,23 +310,25 @@ class GetArraySlice(Expr):
 
 @dataclass
 class GetMember(Expr):
+    """ Gets a member field or method from a given object """
     obj_base: Expr
     name: Ident
 
 
 @dataclass
 class CallFunction(Expr):
+    """ Invokes a function """
     callee: Expr
+    """ This callee is most likely a GetMember expression but can be any callable """
     modifiers: List
     args: List[Expr]
-#########################################
 
 
 @dataclass
 class Var(Node):
-    var_type: Ident
-    var_loc: Location
+    var_type: Type
     var_name: Ident
+    var_loc: Optional[Location] = None
 
 
 @dataclass
@@ -182,6 +342,9 @@ class Parameter(Node):
     var_type: Ident
     var_loc: Location
     var_name: Ident
+
+    def __str__(self):
+        return f"{self.var_type} { self.var_loc.value +  ' ' if self.var_loc else ''}{self.var_name}"
 
 
 @dataclass
@@ -270,75 +433,6 @@ class Throw(Stmt):
     pass
 
 
-#### Types
-
-class Type:
-    pass
-
-
-class InferredType(Type):
-    # represents a type in the code that wasn't explicitly identified and is meant to be inferred
-    pass
-
-
-@dataclass
-class UserType(Type):
-    name: Ident
-
-
-@dataclass
-class ArrayType:
-    base_type: Type
-
-
-@dataclass
-class FixedLengthArrayType(ArrayType):
-    size: int
-
-
-@dataclass
-class VariableLengthArrayType(ArrayType):
-    size: Expr
-
-
-@dataclass
-class AddressType(Type):
-    is_payable: bool
-
-
-@dataclass
-class ByteType(Type):
-    pass
-
-
-@dataclass
-class IntType(Type):
-    is_signed: bool
-    size: int
-
-
-class BoolType(Type):
-    pass
-
-
-class StringType(Type):
-    pass
-
-
-class VarType(Type):
-    pass
-
-
-class AnyType(Type):
-    pass
-
-
-@dataclass
-class MappingType(Type):
-    src: Type
-    dst: Type
-
-
 class Modifier:
     pass
 
@@ -368,13 +462,6 @@ class InvocationModifier(Modifier):
 @dataclass
 class OverrideSpecifier(Modifier):
     arguments: List[UserType]
-
-
-@dataclass
-class FunctionType(Type):
-    parameters: List[Parameter]
-    modifiers: List[Modifier]
-    return_parameters: List[Parameter]
 
 
 class SourceUnit(Node):
@@ -418,10 +505,13 @@ class SpecialFunctionKind(Enum):
     RECEIVE = '<<receive>>'
     FALLBACK = '<<fallback>>'
 
+    def __str__(self):
+        return self.value
+
 
 @dataclass
 class FunctionDefinition(SourceUnit, ContractPart):
-    name: Ident
+    name: Union[Ident, SpecialFunctionKind]
     args: List[Parameter]
     modifiers: List[Modifier]
     returns: List[Parameter]
@@ -503,7 +593,7 @@ class UsingDirective(ContractPart):
 
 @dataclass
 class InheritSpecifier(Node):
-    name: Ident
+    name: UserType
     args: List[Expr]
 
 
@@ -531,3 +621,10 @@ class LibraryDefinition(SourceUnit):
 @dataclass
 class CreateMetaType(Expr):
     base_type: Type
+
+
+@dataclass
+class FunctionType(Type):
+    parameters: List[Parameter]
+    modifiers: List[Modifier]
+    return_parameters: List[Parameter]

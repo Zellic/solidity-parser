@@ -7,10 +7,10 @@ class ParserBase:
     def __init__(self, subparsers):
         self.subparsers = subparsers  # the magic beans
 
-    def make(self, rule: antlr4.ParserRuleContext):
+    def make(self, rule: antlr4.ParserRuleContext, default=None):
         # Default case
         if rule is None:
-            return None
+            return default
 
         # this can happen with rule labels like in array slice if the
         # optional subrule in the grammar doesn't match
