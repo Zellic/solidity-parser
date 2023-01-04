@@ -186,8 +186,8 @@ locals[
 	Modifier name=identifier
 	(LParen (arguments=parameterList)? RParen)?
 	(
-		{$virtualSet}? Virtual {$virtualSet = True;}
-		| {$overrideSpecifierSet}? overrideSpecifier {$overrideSpecifierSet = True;}
+		{not $virtualSet}? Virtual {$virtualSet = True;}
+		| {not $overrideSpecifierSet}? overrideSpecifier {$overrideSpecifierSet = True;}
 	)*
 	(Semicolon | body=block);
 

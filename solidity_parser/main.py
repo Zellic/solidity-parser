@@ -123,7 +123,7 @@ if __name__ == '__main__':
     base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
     all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
     # all_files = ['C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only\\contracts\\30\\00\\30002861577da4ea6aa23966964172ad75dca9c7']
-    start_idx = 2243
+    start_idx = 10516
 
     idx = 0
     for info in get_contracts_from_descriptors(all_files):
@@ -132,10 +132,10 @@ if __name__ == '__main__':
         idx += 1
 
     # input_src = open(
-    #     '../example/ByteInst.sol',
+    #     '../example/ModifierVirtual.sol',
     #     'r').read()
     #
-    # try_parse_contract('ft', 5, input_src, None)
+    # try_parse_contract('ft', 8, input_src, None)
 
 
 
