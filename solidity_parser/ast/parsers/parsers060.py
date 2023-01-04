@@ -331,7 +331,13 @@ def _hex_literal(parser, literal: 'HexLiteralContext'):
     total_hex_str = ''
     for hex_frag in literal.HexLiteralFragment():
         total_hex_str += hex_frag.getText()[4:-1] # remove 'hex' and (" or ') from start and end
-    return nodes2.Literal(int(total_hex_str, 16))
+
+    if total_hex_str == '':
+        value = 0x0
+    else:
+        value = int(total_hex_str, 16)
+
+    return nodes2.Literal(value)
 
 
 def _string_literal(parser, literal: 'StringLiteralContext'):
