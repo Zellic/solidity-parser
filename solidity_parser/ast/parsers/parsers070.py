@@ -1,8 +1,10 @@
 import sys
-from solidity_parser.ast import nodes2
+from solidity_parser.ast import solnodes
 from solidity_parser.ast.parsers import parsers060
 from solidity_parser.ast.parsers.parsers060 import custom_parsers as custom_parsers060
 from solidity_parser.ast.parsers.common import ParserBase, get_all_subparsers
+
+from solidity_parser.grammar.v070.SolidityParser import SolidityParser
 
 
 class Parser070(ParserBase):
@@ -16,19 +18,19 @@ class Parser070(ParserBase):
         })
 
 
-def _pragma_value(parser, pragma_value: 'PragmaValueContext'):
+def _pragma_value(parser, pragma_value: SolidityParser.PragmaValueContext):
     # This overrides the v6 rule by the same name
     return pragma_value.getText()
 
 
-def _unicode_string_literal(parser, literal: 'UnicodeStringLiteralContext'):
+def _unicode_string_literal(parser, literal: SolidityParser.UnicodeStringLiteralContext):
     total_str = ''
     for str_frag in literal.UnicodeStringLiteralFragment():
         total_str += str_frag.getText()[1:-1]
-    return nodes2.Literal(total_str)
+    return solnodes.Literal(total_str)
 
 
-def _number_literal(parser, literal: 'NumberLiteralContext'):
+def _number_literal(parser, literal: SolidityParser.NumberLiteralContext):
     if literal.DecimalNumber() is not None:
         value = float(literal.DecimalNumber().getText())
     else:
@@ -37,17 +39,12 @@ def _number_literal(parser, literal: 'NumberLiteralContext'):
     unit = None
 
     if literal.NumberUnit() is not None:
-        unit = nodes2.Unit(literal.NumberUnit().getText().lower())
+        unit = solnodes.Unit(literal.NumberUnit().getText().lower())
     elif literal.Gwei():
-        unit = nodes2.Unit.GWEI
+        unit = solnodes.Unit.GWEI
     elif literal.Finney():
-        unit = nodes2.Unit.FINNEY
+        unit = solnodes.Unit.FINNEY
     elif literal.Szabo():
-        unit = nodes2.Unit.SZABO
+        unit = solnodes.Unit.SZABO
 
-    return nodes2.Literal(value, unit)
-
-# This got changed, but v6 code handles it
-# def _identifier(parser, ident: 'IdentifierContext'):
-#     return nodes2.Ident(ident.getText())
-
+    return solnodes.Literal(value, unit)
