@@ -20,7 +20,7 @@ from solidity_parser.ast.parsers.parsers060 import Parser060
 from solidity_parser.ast.parsers.parsers070 import Parser070
 from solidity_parser.ast.parsers.parsers080 import Parser080
 
-from solidity_parser.ast import solnodes
+from solidity_parser.ast import solnodes, symtab
 
 import os
 import json
@@ -120,6 +120,21 @@ def try_parse_contract(file_name, version, contract_source, idx):
                 text_file.write(contract_source)
         raise e
 
+def dfs(node, scope=None):
+    if scope is None:
+        scope = node.scope
+
+    for (key,val) in vars(node).items():
+        if isinstance(val, solnodes.Ident):
+            print(f"{val} @ {val.line_no} => {scope.find(str(val)) is not None}")
+
+        if isinstance(val, solnodes.Node):
+            if hasattr(val, 'scope'):
+                scope = val.scope
+            dfs(val, scope)
+        elif isinstance(val, list):
+            for x in val:
+                dfs(x, scope)
 
 if __name__ == '__main__':
     base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
@@ -135,32 +150,57 @@ if __name__ == '__main__':
     #     idx += 1
 
     input_src = open(
-        '../example/cryptokitties.sol',
+        '../example/AaveToken.sol',
         'r').read()
 
     # try_parse_contract('ft', 8, input_src, None)
 
-    lexer = SolidityLexer060(InputStream(input_src))
+    lexer = SolidityLexer080(InputStream(input_src))
     stream = CommonTokenStream(lexer)
-    parser = SolidityParser060(stream)
-    ast_parser = Parser060()
+    parser = SolidityParser080(stream)
+    ast_parser = Parser080()
 
     tree = parser.sourceUnit()
     source_units = tree.children
 
-    for su in source_units:
-        u = ast_parser.make(su)
+    symtab_builder = symtab.Builder()
 
-        if hasattr(u, 'parts'):
-            parts = u.parts
+    ast_nodes = list(map(ast_parser.make, source_units))
 
-            for p in parts:
-                if isinstance(p, solnodes.FunctionDefinition):
-                    arg_string = ', '.join(map(str, p.args))
-                    return_string = ', '.join(map(str, p.returns))
-                    print(f"FUNC {u.name}.{p.name} takes ({arg_string}) and returns ({return_string})")
+    symtab_builder.process_file('AaveToken.sol', ast_nodes)
 
-                    # pp.pprint(p.code)
+    # for su in source_units:
+    #     u = ast_parser.make(su)
+    #
+    #     if isinstance(u, solnodes.ContractDefinition) and str(u.name) == 'ClockAuctionBase':
+    #         symtab_builder.process_source_unit(u)
+
+    root_scope = symtab_builder.root_scope
+
+    # scope_in_bid_func = root_scope.find('ClockAuctionBase').find('_bid')
+
+    # im in bid function, now I see the symbol 'Auction' => find it for me pls
+
+    # auction_sym = scope_in_bid_func.find('Auction')
+    #
+    print(root_scope)
+
+    dfs(ast_nodes[4])
+
+
+        # if hasattr(u, 'parts'):
+        #     parts = u.parts
+
+            # for p in parts:
+            #     if isinstance(p, solnodes.FunctionDefinition):
+            #         arg_string = ', '.join(map(str, p.args))
+            #         return_string = ', '.join(map(str, p.returns))
+            #         print(f"FUNC {u.name}.{p.name} takes ({arg_string}) and returns ({return_string})")
+            #
+            #         pp.pprint(p.code)
+            #
+            #
+            #         break
 
 
 
