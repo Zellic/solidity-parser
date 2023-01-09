@@ -4,7 +4,8 @@ from typing import List, Any, Union, Optional
 
 
 class Node:
-    pass
+    line_no: int
+    "Line number attribute, note: this is not a dataclass, this is set dynamically in common.make"
 
 
 class Stmt(Node):
@@ -344,7 +345,7 @@ class Parameter(Node):
     var_name: Ident
 
     def __str__(self):
-        return f"{self.var_type} { self.var_loc.value +  ' ' if self.var_loc else ''}{self.var_name}"
+        return f"{self.var_type} { self.var_loc.value +  ' ' if self.var_loc else ''}{self.var_name if self.var_name else '<unnamed>'}"
 
 
 @dataclass

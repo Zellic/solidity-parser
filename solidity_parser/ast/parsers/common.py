@@ -1,6 +1,7 @@
 import antlr4
 from antlr4.tree.Tree import TerminalNode
 import inspect
+from solidity_parser.ast.solnodes import Node
 
 
 class ParserBase:
@@ -24,7 +25,12 @@ class ParserBase:
 
         if subparser_lookup_key in self.subparsers:
             subparser = self.subparsers[subparser_lookup_key]
-            return subparser(self, rule)
+            parsed_rule = subparser(self, rule)
+
+            if isinstance(parsed_rule, Node):
+                parsed_rule.line_no = rule.start.line
+
+            return parsed_rule
         else:
             raise KeyError('No parser for ' + subparser_lookup_key)
 

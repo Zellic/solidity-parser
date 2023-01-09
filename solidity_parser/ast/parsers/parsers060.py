@@ -17,7 +17,6 @@ class Parser060(ParserBase):
 def custom_parsers():
     return {
         'StatementContext': ParserBase.make_first,
-        'BlockContext': ParserBase.make_all,
         # TODO: inline assembly
         'SimpleStatementContext': ParserBase.make_first,
         'BracketExprContext': ParserBase.make_first,
@@ -40,6 +39,10 @@ def custom_parsers():
         'EventParameterListContext': ParserBase.make_all,
     }
 
+def _block(parser, block: SolidityParser.BlockContext):
+    return solnodes.Block(
+        parser.make_all(block)
+    )
 
 def _if(parser, stmt: SolidityParser.IfStatementContext):
     return solnodes.If(
