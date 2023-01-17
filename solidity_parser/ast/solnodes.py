@@ -1,11 +1,24 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Any, Union, Optional
+from abc import ABC, abstractmethod
 
 
 class Node:
-    line_no: int
-    "Line number attribute, note: this is not a dataclass, this is set dynamically in common.make"
+    location: str
+    "LineNumber:LinePosition, this is set dynamically in common.make"
+
+    def get_children(self):
+        for val in vars(self).values():
+            if isinstance(val, Node):
+                yield val
+            elif isinstance(val, list):
+                yield from [v for v in val if isinstance(v, Node)]
+
+    def get_all_children(self):
+        for direct_child in self.get_children():
+            yield direct_child
+            yield from direct_child.get_all_children()
 
 
 class Stmt(Node):
@@ -16,13 +29,16 @@ class Expr(Node):
     pass
 
 
-class Type:
+class Type(Node, ABC):
     """ Base class for all Solidity types """
-    pass
+
+    @abstractmethod
+    def __str__(self):
+        pass
 
 
 @dataclass
-class ArrayType:
+class ArrayType(Type):
     """ Single dimension array type with no size attributes """
     base_type: Type
 
@@ -434,7 +450,7 @@ class Throw(Stmt):
     pass
 
 
-class Modifier:
+class Modifier(Node):
     pass
 
 
@@ -478,6 +494,11 @@ class PragmaDirective(SourceUnit):
 @dataclass
 class ImportDirective(SourceUnit):
     path: str
+
+
+@dataclass
+class GlobalImportDirective(ImportDirective):
+    pass
 
 
 @dataclass

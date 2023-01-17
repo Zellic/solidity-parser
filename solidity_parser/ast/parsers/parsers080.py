@@ -85,7 +85,7 @@ def _import_directive(parser, directive: SolidityParser.ImportDirectiveContext):
             return solnodes.UnitImportDirective(path, alias)
         else:
             # import "filename"
-            return solnodes.ImportDirective(path)
+            return solnodes.GlobalImportDirective(path)
 
 
 def _path(parser, path: SolidityParser.PathContext):

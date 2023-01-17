@@ -26,6 +26,9 @@ import os
 import json
 from json import JSONDecoder
 
+from pathlib import Path
+
+from solidity_parser.filesys import VirtualFileSystem
 
 def fname(node):
     # id = node.functionDescriptor().identifier()
@@ -120,23 +123,66 @@ def try_parse_contract(file_name, version, contract_source, idx):
                 text_file.write(contract_source)
         raise e
 
-def dfs(node, scope=None):
-    if scope is None:
-        scope = node.scope
+def get_ast(file_path):
+    input_src = open(file_path, 'r').read()
+    version = get_minor_ver(input_src)
 
+    if version < 7:
+        grammar_parser_type = SolidityParser060
+        grammar_lexer_type = SolidityLexer060
+        ast_parser = Parser060()
+    elif 8 > version >= 7:
+        grammar_parser_type = SolidityParser070
+        grammar_lexer_type = SolidityLexer070
+        ast_parser = Parser070()
+    elif version >= 8:
+        grammar_parser_type = SolidityParser080
+        grammar_lexer_type = SolidityLexer080
+        ast_parser = Parser080()
+    else:
+        raise KeyError(f"dingle error, v{version}")
+
+    contract_input = InputStream(input_src)
+    lexer = grammar_lexer_type(contract_input)
+    stream = CommonTokenStream(lexer)
+    parser = grammar_parser_type(stream)
+
+    parse_tree = parser.sourceUnit()
+    source_units = parse_tree.children
+
+    ast_nodes = list(map(ast_parser.make, source_units))
+
+    return ast_nodes
+
+
+def type_of(node):
+    if isinstance(node, solnodes.GetMember):
+        if isinstance(node.obj_base, solnodes.Ident):
+            print(node)
+            print(node.scope.find(node.obj_base.text))
+def dfs(node):
     for (key,val) in vars(node).items():
-        if isinstance(val, solnodes.Ident):
-            print(f"{val} @ {val.line_no} => {scope.find(str(val)) is not None}")
+
+        if isinstance(val, solnodes.GetMember):
+            type_of(val)
+
+        # if isinstance(val, solnodes.Ident):
+        #     if not hasattr(val, 'location'):
+        #         print(f"{val} has no location")
+        #     elif not val.scope.find(str(val)):
+        #         print(f"{val.scope.find_first_ancestor(lambda x: isinstance(x, symtab.FileScope)).get_names()} {val} @ {val.location} => {val.scope.find(str(val)) is not None}")
 
         if isinstance(val, solnodes.Node):
-            if hasattr(val, 'scope'):
-                scope = val.scope
-            dfs(val, scope)
+            dfs(val)
         elif isinstance(val, list):
             for x in val:
-                dfs(x, scope)
+                dfs(x)
 
 if __name__ == '__main__':
+    vfs = VirtualFileSystem('')
+    print(vfs.compute_source_unit_name("./util/./util.sol", "lib/src/../contract.sol"))
+
+if __name__ == '__main__1':
     base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
     all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
     # all_files = ['C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only\\contracts\\30\\00\\30002861577da4ea6aa23966964172ad75dca9c7']
@@ -149,25 +195,42 @@ if __name__ == '__main__':
     #         try_parse_contract(*info, idx=idx)
     #     idx += 1
 
-    input_src = open(
-        '../example/AaveToken.sol',
-        'r').read()
+    # input_src = open(
+    #     '../example/AaveToken.sol',
+    #     'r').read()
 
     # try_parse_contract('ft', 8, input_src, None)
 
-    lexer = SolidityLexer080(InputStream(input_src))
-    stream = CommonTokenStream(lexer)
-    parser = SolidityParser080(stream)
-    ast_parser = Parser080()
+    # lexer = SolidityLexer080(InputStream(input_src))
+    # stream = CommonTokenStream(lexer)
+    # parser = SolidityParser080(stream)
+    # ast_parser = Parser080()
+    #
+    # tree = parser.sourceUnit()
+    # source_units = tree.children
 
-    tree = parser.sourceUnit()
-    source_units = tree.children
+    symtab_builder = symtab.Builder2()
 
-    symtab_builder = symtab.Builder()
+    # ast_nodes = list(map(ast_parser.make, source_units))
 
-    ast_nodes = list(map(ast_parser.make, source_units))
+    # file_path = Path('../example/AaveToken.sol').resolve()
+    # symtab_builder.process_file(file_path, ast_nodes)
 
-    symtab_builder.process_file('AaveToken.sol', ast_nodes)
+    base_dir = '../example/Aave/'
+    base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
+
+    # base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/mocks'
+    file_paths = [os.path.join(dirpath, f) for (dirpath, dirnames, filenames) in os.walk(base_dir) for f in filenames if f.endswith('.sol')]
+
+    all_ast_nodes = []
+    for fp in file_paths:
+        # if not fp.endswith('ProxyOFTV2.sol'):
+        #     continue
+        ast_nodes = get_ast(fp)
+        full_path = Path(fp).resolve()
+        symtab_builder.process_file(full_path, ast_nodes)
+        all_ast_nodes = all_ast_nodes + ast_nodes
+
 
     # for su in source_units:
     #     u = ast_parser.make(su)
@@ -177,15 +240,34 @@ if __name__ == '__main__':
 
     root_scope = symtab_builder.root_scope
 
+    # print(root_scope)
+
+    # file_scope = root_scope.follow_find('<path:C:\\>', '<path:Users>', '<path:Bilal>',
+    #                              '<path:zellicworkspace>', '<path:solidity-parser>',
+    #                              '<path:example>', '<path:Aave>', '<path:main>', '<file:AaveToken.sol>')
+    # print(root_scope)
+    # contract_scope = file_scope.find_local('AaveToken')
+    # This text is 'ITransferHook'
+    # itransferhook_type = contract_scope.find_local('_aaveGovernance').value.var_type.text
+    # scope that is valid at this decl
+    # aavegovernance_state_var_decl_scope: symtab.Scope = contract_scope
+
+    # print(aavegovernance_state_var_decl_scope.find(itransferhook_type))
+    # print(root_scope)
+    # print(contract_scope.find('VersionedInitializable').resolve('VersionedInitializable'))
+
     # scope_in_bid_func = root_scope.find('ClockAuctionBase').find('_bid')
 
     # im in bid function, now I see the symbol 'Auction' => find it for me pls
 
     # auction_sym = scope_in_bid_func.find('Auction')
     #
-    print(root_scope)
+    # print(root_scope)
 
-    dfs(ast_nodes[4])
+    for n in all_ast_nodes:
+        if n and isinstance(n, solnodes.ContractDefinition) and n.name.text == 'StargateComposed':
+            dfs(n)
+    # print(len(all_ast_nodes))
 
 
         # if hasattr(u, 'parts'):
