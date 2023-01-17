@@ -462,7 +462,7 @@ def _module_import(parser, module_import: SolidityParser.ModuleImportContext):
     if alias:
         return solnodes.UnitImportDirective(path, parser.make(alias))
     else:
-        return solnodes.ImportDirective(path)
+        return solnodes.GlobalImportDirective(path)
 
 
 def _alias_import(parser, alias_import: SolidityParser.AliasImportContext):

@@ -28,7 +28,7 @@ class ParserBase:
             parsed_rule = subparser(self, rule)
 
             if isinstance(parsed_rule, Node):
-                parsed_rule.line_no = rule.start.line
+                parsed_rule.location = f'{rule.start.line}:{rule.start.start}'
 
             return parsed_rule
         else:
