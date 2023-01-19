@@ -23,7 +23,7 @@ class TestVirtualFileSystem(unittest.TestCase):
         ['//l', '']
     ])
     def test_remove_last_path_segment(self, input, expected):
-        result = filesys.VirtualFileSystem.remove_last_path_segment(input)
+        result = filesys.VirtualFileSystem._remove_last_path_segment(input)
         self.assertEqual(expected, result)
 
     @parameterized.expand([
@@ -45,12 +45,12 @@ class TestVirtualFileSystem(unittest.TestCase):
         ['../../.././../util.sol', 'lib/src/../contract.sol', 'util.sol']
     ])
     def test_compute_source_unit_name(self, path, importer, expected):
-        result = self.vfs.compute_source_unit_name(path, importer)
+        result = self.vfs._compute_source_unit_name(path, importer)
         self.assertEqual(expected, result)
 
     def test_remap_import(self):
         self.vfs.add_import_remapping(None, 'github.com/ethereum/dapp-bin/', 'dapp-bin/')
-        result = self.vfs.remap_import('github.com/ethereum/dapp-bin/library/math.sol', None)
+        result = self.vfs._remap_import('github.com/ethereum/dapp-bin/library/math.sol', None)
         self.assertEqual('dapp-bin/library/math.sol', result)
 
     def test_remap_for_source_unit_name(self):
@@ -58,7 +58,7 @@ class TestVirtualFileSystem(unittest.TestCase):
         self.vfs.add_import_remapping(None, '/project/', 'b')
         # /project/contract.sol is added via CLI and imports './util.sol' as util
 
-        result = self.vfs.compute_source_unit_name('./util.sol', '/project/contract.sol')
+        result = self.vfs._compute_source_unit_name('./util.sol', '/project/contract.sol')
         self.assertEqual('b/util.sol', result)
 
     def test_lookup_import_calls_import_callback(self):

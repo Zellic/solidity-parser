@@ -1,13 +1,12 @@
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union
 from collections import namedtuple
+from solidity_parser.ast import solnodes, helper as ast_helper
 
 import os
 import logging
 import jsons
-from solidity_parser.ast import solnodes, helper as ast_helper
 
 
 @dataclass
@@ -39,39 +38,16 @@ class VirtualFileSystem:
             cwd = os.getcwd()
         self.cwd = cwd
 
-        self.base_path = self.norm_vfs_path(base_path)
+        self.base_path = self._norm_vfs_path(base_path)
 
         if include_paths is None:
             include_paths = []
-        include_paths = [self.norm_vfs_path(p) for p in include_paths]
+        include_paths = [self._norm_vfs_path(p) for p in include_paths]
         self.include_paths = include_paths
 
         self.import_remaps: List[ImportMapping] = []
 
         self.sources: Dict[str, LoadedSource] = {}
-
-    def absolute_path(self, path: str, reference: str) -> str:
-        if path[0] == '.':
-            return path
-        # remove file name
-        result = Path(reference)
-        if result.is_file():
-            result = result.parent
-
-        for part in Path(path).parts:
-            if str(part) == '..':
-                result = result.parent
-            elif str*(part) != '.':
-                result /= part
-        return result.resolve(strict=False)
-
-    ######### public methods #########
-
-    def _add_loaded_source(self, source_unit_name: str, source_code: str) -> LoadedSource:
-        ast = ast_helper.make_ast(source_code)
-        loaded_source = LoadedSource(source_code, ast)
-        self.sources[source_unit_name] = loaded_source
-        return loaded_source
 
     def process_cli_input_file(self, file_path):
         # CLI load method
@@ -90,7 +66,7 @@ class VirtualFileSystem:
         self.import_remaps.append(ImportMapping(context, prefix, target))
 
     def lookup_import_path(self, import_path: str, importer_source_unit_name: str = None) -> LoadedSource:
-        import_source_name = self.compute_source_unit_name(import_path, importer_source_unit_name)
+        import_source_name = self._compute_source_unit_name(import_path, importer_source_unit_name)
 
         if import_source_name in self.sources:
             return self.sources[import_source_name]
@@ -106,13 +82,17 @@ class VirtualFileSystem:
 
         raise f"Can't import {import_path} from {importer_source_unit_name}"
 
-
-    ##################################
+    def _add_loaded_source(self, source_unit_name: str, source_code: str) -> LoadedSource:
+        logging.getLogger('VFS').info(f'Parsing {source_unit_name}')
+        ast = ast_helper.make_ast(source_code)
+        loaded_source = LoadedSource(source_code, ast)
+        self.sources[source_unit_name] = loaded_source
+        return loaded_source
 
     def _read_file(self, path: str, is_cli_path=True) -> str:
         # A path that was input from the command line has a CWD. This VFS can simulate being run from another CWD
         # so if required, we can use the supplied CWD as the base for relative file references
-        if is_cli_path and VirtualFileSystem.is_relative_import(path):
+        if is_cli_path and VirtualFileSystem._is_relative_import(path):
             path = Path(self.cwd, path)
         else:
             path = Path(path)
@@ -121,34 +101,21 @@ class VirtualFileSystem:
         with path.open(mode='r', encoding='utf-8') as f:
             return f.read()
 
-    @staticmethod
-    def _path_to_generic_string(path: Union[Path, str]) -> str:
-        if isinstance(path, Path):
-            path = str(path).replace('\\', '/')
-        return path
-
     def _cli_path_to_source_name(self, input_file_path) -> str:
         """Computes the source name for a source file supplied via command line invocation of solc"""
-        norm_path = self.norm_vfs_path(input_file_path)
+        norm_path: Union[str, Path] = self._norm_vfs_path(input_file_path)
         prefixes = [self.base_path] + self.include_paths
 
         for prefix in prefixes:
             # make the path relative to the prefix
-            stripped_path = self.strip_prefix(prefix, norm_path)
+            stripped_path = self._strip_prefix(prefix, norm_path)
             if stripped_path is not None:
                 norm_path = stripped_path
                 break
 
         return self._path_to_generic_string(norm_path)
 
-    def strip_prefix(self, prefix, path) -> str:
-        # these both need to be absolute paths and normalised
-        try:
-            return Path(path).relative_to(prefix)
-        except ValueError:
-            return None
-
-    def norm_vfs_path(self, path: Union[str, Path]) -> str:
+    def _norm_vfs_path(self, path: Union[str, Path]) -> str:
         """Path normalisation according to solidity lang docs"""
         normp = Path(self.cwd, path).resolve(strict=False)
 
@@ -170,7 +137,7 @@ class VirtualFileSystem:
 
         for prefix in prefixes:
             possible_path = Path(prefix, su_norm)
-            canonical_path = self.norm_vfs_path(possible_path)
+            canonical_path = self._norm_vfs_path(possible_path)
             if os.path.exists(canonical_path):
                 candidates.append(canonical_path)
 
@@ -184,7 +151,7 @@ class VirtualFileSystem:
         contents = self._read_file(candidates[0], is_cli_path=False)
         return contents
 
-    def remap_import(self, source_unit_name: str, importer_source_unit_name: str) -> str:
+    def _remap_import(self, source_unit_name: str, importer_source_unit_name: str) -> str:
         """Takes a source unit name and checks if it should be remapped
         Note: do not pass an import path as the source unit name
         """
@@ -196,17 +163,17 @@ class VirtualFileSystem:
             # prefix must match the beginning of the source unit name resulting from the import
             if source_unit_name.startswith(mapping.prefix):
                 # target is the value the prefix is replaced with
-                return self.clean_path(mapping.target, source_unit_name[len(mapping.prefix):])
+                return self._clean_path([mapping.target, source_unit_name[len(mapping.prefix):]])
 
         return source_unit_name
 
-    def compute_source_unit_name(self, path: str, importer_source_unit_name: str) -> str:
-        if not self.is_relative_import(path):
-            return self.remap_import(path, importer_source_unit_name)
+    def _compute_source_unit_name(self, path: str, importer_source_unit_name: str) -> str:
+        if not self._is_relative_import(path):
+            return self._remap_import(path, importer_source_unit_name)
 
         # Prefix is initialized with the source unit name of the importing source unit.
         # The last path segment with preceding slashes is removed from the prefix.
-        prefix = self.remove_last_path_segment(importer_source_unit_name)
+        prefix = self._remove_last_path_segment(importer_source_unit_name)
 
         # Then, the leading part of the normalized import path, consisting only of / and . characters is considered.
         # For every .. segment found in this part the last path segment with preceding slashes is removed from
@@ -226,7 +193,7 @@ class VirtualFileSystem:
             if char(import_path_index) == '.':
                 if char(import_path_index+1) == '.':
                     # saw .. so remove one segment from the prefix
-                    prefix = self.remove_last_path_segment(prefix)
+                    prefix = self._remove_last_path_segment(prefix)
                     assert_segment_end(import_path_index+2)
                     import_path_index += 3  # .. and /
                 else:
@@ -247,14 +214,28 @@ class VirtualFileSystem:
         else:
             base_source_name = normalised_import_path
 
-        return self.remap_import(base_source_name, importer_source_unit_name)
+        return self._remap_import(base_source_name, importer_source_unit_name)
 
     @staticmethod
-    def clean_path(*parts: List[str]) -> str:
+    def _path_to_generic_string(path: Union[Path, str]) -> str:
+        if isinstance(path, Path):
+            path = str(path).replace('\\', '/')
+        return path
+
+    @staticmethod
+    def _clean_path(*parts: List[str]) -> str:
         return os.path.join(*parts).replace('\\', '/')
 
     @staticmethod
-    def remove_last_path_segment(path: str) -> str:
+    def _strip_prefix(prefix, path) -> Optional[Path]:
+        # these both need to be absolute paths and normalised
+        try:
+            return Path(path).relative_to(prefix)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _remove_last_path_segment(path: str) -> str:
         last_slash_index = path.rfind('/')
         if last_slash_index != -1:
             path = path[:last_slash_index]
@@ -263,12 +244,9 @@ class VirtualFileSystem:
             return ''
         return path.rstrip('/')
 
-
     @staticmethod
-    def is_relative_import(path: str) -> bool:
+    def _is_relative_import(path: str) -> bool:
         # Relative imports always start with ./ or ../ so import "util.sol", unlike import "./util.sol", is a direct
         # import. While both paths would be considered relative in the host filesystem, util.sol is actually absolute
         # in the VFS.
         return path[0] == '.'
-
-    # def get_remapped_import_name(self, path: str):
