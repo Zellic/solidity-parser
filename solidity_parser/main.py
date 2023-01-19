@@ -29,6 +29,7 @@ from json import JSONDecoder
 from pathlib import Path
 
 from solidity_parser.filesys import VirtualFileSystem
+from solidity_parser.ast.helper import make_ast
 
 def fname(node):
     # id = node.functionDescriptor().identifier()
@@ -123,36 +124,9 @@ def try_parse_contract(file_name, version, contract_source, idx):
                 text_file.write(contract_source)
         raise e
 
+
 def get_ast(file_path):
-    input_src = open(file_path, 'r').read()
-    version = get_minor_ver(input_src)
-
-    if version < 7:
-        grammar_parser_type = SolidityParser060
-        grammar_lexer_type = SolidityLexer060
-        ast_parser = Parser060()
-    elif 8 > version >= 7:
-        grammar_parser_type = SolidityParser070
-        grammar_lexer_type = SolidityLexer070
-        ast_parser = Parser070()
-    elif version >= 8:
-        grammar_parser_type = SolidityParser080
-        grammar_lexer_type = SolidityLexer080
-        ast_parser = Parser080()
-    else:
-        raise KeyError(f"dingle error, v{version}")
-
-    contract_input = InputStream(input_src)
-    lexer = grammar_lexer_type(contract_input)
-    stream = CommonTokenStream(lexer)
-    parser = grammar_parser_type(stream)
-
-    parse_tree = parser.sourceUnit()
-    source_units = parse_tree.children
-
-    ast_nodes = list(map(ast_parser.make, source_units))
-
-    return ast_nodes
+    return make_ast(open(file_path, 'r').read())
 
 
 def type_of(node):
@@ -178,22 +152,56 @@ def dfs(node):
             for x in val:
                 dfs(x)
 
+
+from types import SimpleNamespace
+import jsons
+from filesys import StandardJsonInput
+
 if __name__ == '__main__':
-    vfs = VirtualFileSystem('')
-    print(vfs.compute_source_unit_name("./util/./util.sol", "lib/src/../contract.sol"))
+    # p = Path('../example/TestInput.json').resolve()
+    # with p.open(mode='r', encoding='utf-8') as f:
+    #     data = f.read()
+    # input = jsons.loads(data, StandardJsonInput)
+    # print(input)
+    # x = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
+    # print(x.name, x.hometown.name, x.hometown.id)
+
+    base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
+    # lets say we're in the /examples folder and go backwards to StargateComposed.sol in CLI
+    # cwd = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/examples'
+    node_modules_dir = 'C:/Users/Bilal/node_modules'
+    vfs = VirtualFileSystem(base_path=base_dir,
+                            # cwd=cwd,
+                            include_paths=[node_modules_dir])
+
+    # vfs.process_cli_input_file('C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/StargateComposed.sol')
+    # vfs.process_cli_input_file('C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/examples/ExampleOFT.sol')
+    # vfs.process_cli_input_file('.././StargateComposed.sol')
+
+    vfs.process_standard_json('../example/TestInput.json')
+
+    print(vfs.sources.keys())
+    builder = symtab.Builder2(vfs)
+    #
+    # entry = 'StargateComposed.sol'
+    # entry_src = vfs.lookup_import()
+    # ast_nodes = vfs.
+
+    # builder.process_file('')
+
 
 if __name__ == '__main__1':
     base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
     all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
-    # all_files = ['C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only\\contracts\\30\\00\\30002861577da4ea6aa23966964172ad75dca9c7']
+    all_files = ['C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only\\contracts\\30\\00\\30002861577da4ea6aa23966964172ad75dca9c7']
     # start_idx = 10516
-    # start_idx = 0
+    start_idx = 0
     #
-    # idx = 0
-    # for info in get_contracts_from_descriptors(all_files):
-    #     if idx >= start_idx:
-    #         try_parse_contract(*info, idx=idx)
-    #     idx += 1
+    idx = 0
+    for info in get_contracts_from_descriptors(all_files):
+        if idx >= start_idx:
+            try_parse_contract(*info, idx=idx)
+        idx += 1
 
     # input_src = open(
     #     '../example/AaveToken.sol',
@@ -209,7 +217,7 @@ if __name__ == '__main__1':
     # tree = parser.sourceUnit()
     # source_units = tree.children
 
-    symtab_builder = symtab.Builder2()
+    symtab_builder = symtab.Builder2(None)
 
     # ast_nodes = list(map(ast_parser.make, source_units))
 

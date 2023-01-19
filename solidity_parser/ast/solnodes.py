@@ -650,3 +650,7 @@ class FunctionType(Type):
     parameters: List[Parameter]
     modifiers: List[Modifier]
     return_parameters: List[Parameter]
+
+    def __str__(self):
+        # TODO
+        return f'FT'
