@@ -156,8 +156,10 @@ def dfs(node):
 from types import SimpleNamespace
 import jsons
 from filesys import StandardJsonInput
+import logging
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
     # p = Path('../example/TestInput.json').resolve()
     # with p.open(mode='r', encoding='utf-8') as f:
     #     data = f.read()
