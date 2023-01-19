@@ -1,84 +1,188 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, List
+from typing import Generator, List, Dict, Optional, Union
 from collections import namedtuple
 
 import os
 import logging
+import jsons
+from solidity_parser.ast import solnodes, helper as ast_helper
 
 
 @dataclass
-class LoadedFile:
-    source_unit_name: str
+class Source:
+    # keccak256: Optional[str]
+    urls: Optional[List[str]]
+    content: str
+
+
+@dataclass
+class StandardJsonInput:
+    # language: str # 'Solidity'
+    sources: Dict[str, Source]  # source unit name -> source
+    # settings, not required for now
+
+
+@dataclass
+class LoadedSource:
     contents: str
-
-
-# class ImportCallback(ABC):
-#     @abstractmethod
-#     def get_file(self, path: str) -> LoadedFile:
-#         pass
-
-
-class HostFileSystemLoader():
-    def get_file(self, path: str, base_dir: str, include_paths: List[str]) -> LoadedFile:
-        # From Solidity lang docs 0.8.17:
-        # When the source is not available in the virtual filesystem, the compiler passes the source unit name to the
-        # import callback. The Host Filesystem Loader will attempt to use it as a path and look up the file on disk.
-        # At this point the platform-specific normalization rules kick in and names that were considered different in
-        # the VFS may actually result in the same file being loaded.
-        # For example /project/lib/math.sol and /project/lib/../lib///math.sol are considered completely different in
-        # the VFS even though they refer to the same file on disk.
-        try:
-            p = Path(path).resolve(strict=True)
-            # Even if an import callback ends up loading source code for two different source unit names from the same
-            # file on disk, the compiler will still see them as separate source units. It is the source unit name that
-            # matters, not the physical location of the code.
-            # TODO: return
-            # return LoadedFile(src, path)
-            raise NotImplemented()
-        except FileNotFoundError:
-            logging.error(f'No file found during import callback: {path}')
-            return None
+    ast: List[solnodes.SourceUnit]
 
 
 ImportMapping = namedtuple('ImportMapping', ['context', 'prefix', 'target'])
 
 
 class VirtualFileSystem:
-    def __init__(self, base_path: str, file_finder: HostFileSystemLoader = None):
-        self.base_path = base_path
-        self.include_paths = []
+    def __init__(self, base_path: str, cwd: str = None, include_paths: List[str] = None):
+        if cwd is None:
+            cwd = os.getcwd()
+        self.cwd = cwd
+
+        self.base_path = self.norm_vfs_path(base_path)
+
+        if include_paths is None:
+            include_paths = []
+        include_paths = [self.norm_vfs_path(p) for p in include_paths]
+        self.include_paths = include_paths
+
         self.import_remaps: List[ImportMapping] = []
 
-        if file_finder is None:
-            file_finder = HostFileSystemLoader()
-        self.file_finder = file_finder
+        self.sources: Dict[str, LoadedSource] = {}
 
-        self.cache = {}
+    def absolute_path(self, path: str, reference: str) -> str:
+        if path[0] == '.':
+            return path
+        # remove file name
+        result = Path(reference)
+        if result.is_file():
+            result = result.parent
 
-    def normalise_cli_path(self, path: str, cwd: str = None) -> str:
-        if self.is_relative_import(path):
-            if not cwd:
-                raise ValueError('need current working directory for relative CLI path')
-            else:
-                absolute_path = os.path.join(cwd, path)
+        for part in Path(path).parts:
+            if str(part) == '..':
+                result = result.parent
+            elif str*(part) != '.':
+                result /= part
+        return result.resolve(strict=False)
+
+    ######### public methods #########
+
+    def _add_loaded_source(self, source_unit_name: str, source_code: str) -> LoadedSource:
+        ast = ast_helper.make_ast(source_code)
+        loaded_source = LoadedSource(source_code, ast)
+        self.sources[source_unit_name] = loaded_source
+        return loaded_source
+
+    def process_cli_input_file(self, file_path):
+        # CLI load method
+        source_unit_name = self._cli_path_to_source_name(file_path)
+        src_code = self._read_file(file_path)
+        self._add_loaded_source(source_unit_name, src_code)
+
+    def process_standard_json(self, path: str):
+        json_content = self._read_file(path)
+        standard_input = jsons.loads(json_content, StandardJsonInput)
+
+        for (source_unit_name, source) in standard_input.sources.items():
+            self._add_loaded_source(source_unit_name, source.content)
 
     def add_import_remapping(self, context, prefix, target):
         self.import_remaps.append(ImportMapping(context, prefix, target))
 
-    def lookup_import(self, import_path: str, importer_source_unit_name: str = None):
+    def lookup_import_path(self, import_path: str, importer_source_unit_name: str = None) -> LoadedSource:
         import_source_name = self.compute_source_unit_name(import_path, importer_source_unit_name)
 
-        if import_source_name in self.cache:
-            return self.cache[import_source_name]
+        if import_source_name in self.sources:
+            return self.sources[import_source_name]
 
-        located_file = self.file_finder.get_file(import_path, self.base_path, self.include_paths)
-        if located_file:
-            self.cache[import_source_name] = located_file
-            return located_file
+        # When the source is not available in the virtual filesystem, the compiler passes the source unit name to the
+        # import callback. The Host Filesystem Loader will attempt to use it as a path and look up the file on disk.
+        contents = self._read_file_callback(import_source_name, self.base_path, self.include_paths)
 
-        assert False, f"Can't import {import_path} from {importer_source_unit_name}"
+        if contents:
+            loaded_source = self._add_loaded_source(import_source_name, contents)
+            if loaded_source:
+                return loaded_source
+
+        raise f"Can't import {import_path} from {importer_source_unit_name}"
+
+
+    ##################################
+
+    def _read_file(self, path: str, is_cli_path=True) -> str:
+        # A path that was input from the command line has a CWD. This VFS can simulate being run from another CWD
+        # so if required, we can use the supplied CWD as the base for relative file references
+        if is_cli_path and VirtualFileSystem.is_relative_import(path):
+            path = Path(self.cwd, path)
+        else:
+            path = Path(path)
+        path = path.resolve(strict=True)
+
+        with path.open(mode='r', encoding='utf-8') as f:
+            return f.read()
+
+    @staticmethod
+    def _path_to_generic_string(path: Union[Path, str]) -> str:
+        if isinstance(path, Path):
+            path = str(path).replace('\\', '/')
+        return path
+
+    def _cli_path_to_source_name(self, input_file_path) -> str:
+        """Computes the source name for a source file supplied via command line invocation of solc"""
+        norm_path = self.norm_vfs_path(input_file_path)
+        prefixes = [self.base_path] + self.include_paths
+
+        for prefix in prefixes:
+            # make the path relative to the prefix
+            stripped_path = self.strip_prefix(prefix, norm_path)
+            if stripped_path is not None:
+                norm_path = stripped_path
+                break
+
+        return self._path_to_generic_string(norm_path)
+
+    def strip_prefix(self, prefix, path) -> str:
+        # these both need to be absolute paths and normalised
+        try:
+            return Path(path).relative_to(prefix)
+        except ValueError:
+            return None
+
+    def norm_vfs_path(self, path: Union[str, Path]) -> str:
+        """Path normalisation according to solidity lang docs"""
+        normp = Path(self.cwd, path).resolve(strict=False)
+
+        normp2 = self._path_to_generic_string(normp)
+        # remove the drive on windows if possible (only if the cwd is on the same drive as the path)
+        if normp.drive == Path(self.cwd).drive:
+            normp2 = normp2[len(normp.drive):]
+
+        return normp2
+
+    def _read_file_callback(self, su_name: str, base_dir: str, include_paths: List[str]) -> str:
+        # import callback
+        su_norm = su_name
+        if su_norm.startswith('file://'):
+            su_norm = su_norm[7:]
+
+        prefixes = [base_dir] + include_paths
+        candidates = []
+
+        for prefix in prefixes:
+            possible_path = Path(prefix, su_norm)
+            canonical_path = self.norm_vfs_path(possible_path)
+            if os.path.exists(canonical_path):
+                candidates.append(canonical_path)
+
+        if len(candidates) == 0:
+            raise f'No file found: {su_name}'
+        elif len(candidates) > 1:
+            raise f'Multiple candidates found for {su_name}: {candidates}'
+
+        # TODO: allowed directory check
+
+        contents = self._read_file(candidates[0], is_cli_path=False)
+        return contents
 
     def remap_import(self, source_unit_name: str, importer_source_unit_name: str) -> str:
         """Takes a source unit name and checks if it should be remapped

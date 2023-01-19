@@ -4,7 +4,7 @@ import os
 from abc import ABC, abstractmethod
 
 from solidity_parser.ast import solnodes
-
+from solidity_parser.filesys import VirtualFileSystem
 
 class Resolvable(ABC):
     """Trait for an element that resolves to a concrete symbol, e.g. a referenced import"""
@@ -216,70 +216,18 @@ class RootScope(Scope):
         Scope.__init__(self, '<root>')
 
 
-class PathPartScope(ScopeAndSymbol):
-    @staticmethod
-    def part_name(part_name: str) -> str:
-        return f'<path:{part_name}>'
+class SourceUnitScope(ScopeAndSymbol):
+    def __init__(self, vfs: VirtualFileSystem, source_unit_name: str):
+        ScopeAndSymbol.__init__(self, f'<source_unit:{source_unit_name}>', None)
+        self.vfs = vfs
+        self.source_unit_name = source_unit_name
 
-    def __init__(self, part_name: str):
-        ScopeAndSymbol.__init__(self, self.part_name(part_name), None)
-
-    def set_parent_scope(self, parent_scope: 'Scope'):
-        assert isinstance(parent_scope, (PathPartScope, RootScope))
-        return ScopeAndSymbol.set_parent_scope(self, parent_scope)
-
-    @staticmethod
-    def get_next_part(current, part_name, is_file=False) -> Optional[Union['FileScope', 'PathPartScope']]:
-        if part_name == '.':
-            return current
-        elif part_name == '..':
-            assert not isinstance(current, RootScope)
-            return current.parent_scope
-        else:
-            key = FileScope.file_name(part_name) if is_file else PathPartScope.part_name(part_name)
-            next_part = current.find_local(key)
-            if next_part is None:
-                return None
-
-            assert isinstance(next_part, (FileScope, PathPartScope))
-            return next_part
-
-    def find_file(self, relative_path) -> Optional['FileScope']:
-        # split the parts up, e.g. 
-        parts = os.path.normpath(relative_path).split(os.sep)
-        assert len(parts) > 0  # need at least the file name, so has to be more than 0
-
-        first_part = parts[0]
-
-        if first_part == '.' or first_part == '..':
-            # Relative import, start searching from this path element
-            current = self
-        else:
-            # Absolute import in Solidity terms, search from the root
-            current = self.find_first_ancestor(lambda scope: isinstance(scope, RootScope))
-
-        # search the path elements only(not the file name)
-        for part in parts[:-1]:
-            current = PathPartScope.get_next_part(current, part)
-            if not current:
-                return None
-
-        return current.get_next_part(parts[-1], is_file=True)
-
-
-class FileScope(ScopeAndSymbol):
-    @staticmethod
-    def file_name(file_name: str) -> str:
-        return f'<file:{file_name}>'
-
-    def __init__(self, file_name: str):
-        """
-        param file_name: The files simple name, i.e. for a file A://B/C, this would be C
-        """
-        ScopeAndSymbol.__init__(self, self.file_name(file_name), None)
+    def get_imported_source_unit(self, import_path: str) -> Optional['SourceUnitScope']:
+        # atm this throws if the file isn't found
+        return self.vfs.lookup_import(import_path, self.source_unit_name)
 
     def set_parent_scope(self, parent_scope: 'Scope'):
-        assert isinstance(parent_scope, PathPartScope)
+        assert isinstance(parent_scope, RootScope)
         return ScopeAndSymbol.set_parent_scope(self, parent_scope)
 
 
@@ -288,25 +236,33 @@ class ContractScope(ScopeAndSymbol):
         ScopeAndSymbol.__init__(self, [ast_node.name.text], ast_node)
 
     def set_parent_scope(self, parent_scope: Scope):
-        assert isinstance(parent_scope, FileScope)
+        assert isinstance(parent_scope, SourceUnitScope)
         return ScopeAndSymbol.set_parent_scope(self, parent_scope)
 
     def find_linked(self, name: str) -> Optional[Symbol]:
-        file_scope: FileScope = self.parent_scope
-        for inherit in self.value.inherits:
-            inherit_name = inherit.name.name.text
-            inherit_scope: Scope = file_scope.find(inherit_name)
 
-            if not inherit_scope:
+        file_scope: SourceUnitScope = self.parent_scope
+
+        for inherit in self.value.inherits:
+            # Find the scope for the superclass
+            inherit_name = inherit.name.name.text
+            super_scope: Scope = file_scope.find(inherit_name)
+
+            if not super_scope:
                 continue
 
+            # if the symbol we're looking for has the same name as the super class
+            # then return the super class scope/symbol
             if inherit_name == name:
-                return inherit_scope
+                assert isinstance(super_scope, Symbol)
+                return super_scope
 
-            symbol = inherit_scope.find(name)
+            # else check the super scope for the symbol we're looking for
+            symbol = super_scope.find(name)
             if symbol:
                 return symbol
 
+        # didn't find anything here, continue with default lookup mechanism
         return ScopeAndSymbol.find_linked(self, name)
 
     # def resolve(self, name) -> Symbol:
@@ -321,19 +277,14 @@ class ContractScope(ScopeAndSymbol):
         # return None
 
 
-
 class ImportSymbol(ScopeAndSymbol):
     def __init__(self, aliases: List[str], ast_node: solnodes.ImportDirective):
         ScopeAndSymbol.__init__(self, aliases, ast_node)
 
-    def get_imported_scope(self) -> Optional[FileScope]:
-        # Get the current file scope, i.e. the one where this import statement is in
-        file_scope = self.parent_scope
-        # Parent of the file scope is the directory scope, from there we can explore the path
-        directory_scope = file_scope.parent_scope
-        # Traverse the import path from the directory
-        import_file_scope = directory_scope.find_file(self.value.path)
-        return import_file_scope
+    def get_imported_scope(self) -> Optional[SourceUnitScope]:
+        source_unit: SourceUnitScope = self.parent_scope
+        import_path = self.value.path
+        return source_unit.get_imported_source_unit(import_path)
 
 
 class AliasImportSymbol(ImportSymbol, Resolvable):
@@ -389,30 +340,17 @@ class UsingSymbol(Symbol, Resolvable):
 
 
 class Builder2:
-    def __init__(self):
+    def __init__(self, vfs: VirtualFileSystem):
         self.root_scope = RootScope()
+        self.vfs = vfs
 
-    def build_or_find_path(self, directory_names: List[str]) -> PathPartScope:
-        current_scope = self.root_scope
-        for part in directory_names:
-            next_scope = current_scope.find_local(PathPartScope.part_name(part))
-
-            if next_scope is None:
-                next_scope = PathPartScope(part)
-                current_scope.add(next_scope)
-
-            current_scope = next_scope
-        return current_scope
-
-    def process_file(self, file_path: Path, source_units):
-        # Remove the last part which contains the file name (e.g. ABC.sol)
-        directory_scope = self.build_or_find_path(list(file_path.parts)[:-1])
-        file_scope = FileScope(file_path.name)
+    def process_file(self, source_unit_name: str, source_units):
+        fs = SourceUnitScope(self.vfs, source_unit_name)
 
         for node in source_units:
-            self.add_node_dfs(file_scope, node)
+            self.add_node_dfs(fs, node)
 
-        self.add_to_scope(directory_scope, file_scope)
+        self.add_to_scope(self.root_scope, fs)
 
     def add_node_dfs(self, parent_scope, node):
         if node is None:
