@@ -62,7 +62,7 @@ def _pragma_directive(parser, pragma_directive: SolidityParser.PragmaDirectiveCo
     for token in pragma_directive.PragmaToken():
         total_str += token.getText()
     # TODO: how to split?
-    return solnodes.PragmaDirective(None, None)
+    return solnodes.PragmaDirective(name='pragma', value=total_str)
 
 
 def _import_directive(parser, directive: SolidityParser.ImportDirectiveContext):
@@ -106,7 +106,7 @@ def _contract_definition(parser, contract_definition: SolidityParser.ContractDef
     return solnodes.ContractDefinition(
         parser.make(contract_definition.identifier()),
         contract_definition.Abstract() is not None,
-        parser.make(contract_definition.inheritanceSpecifierList()),
+        parser.make(contract_definition.inheritanceSpecifierList(), default=[]),
         parser.make_all_rules(contract_definition.contractBodyElement())
     )
 
@@ -114,7 +114,7 @@ def _contract_definition(parser, contract_definition: SolidityParser.ContractDef
 def _interface_definition(parser, interface_definition: SolidityParser.InterfaceDefinitionContext):
     return solnodes.InterfaceDefinition(
         parser.make(interface_definition.identifier()),
-        parser.make(interface_definition.inheritanceSpecifierList()),
+        parser.make(interface_definition.inheritanceSpecifierList(), default=[]),
         parser.make_all_rules(interface_definition.contractBodyElement())
     )
 

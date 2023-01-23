@@ -25,8 +25,16 @@ class StandardJsonInput:
 
 @dataclass
 class LoadedSource:
+    source_unit_name: str
     contents: str
-    ast: List[solnodes.SourceUnit]
+
+    @property
+    def ast(self) -> List[solnodes.SourceUnit]:
+        # Mechanism for creating the AST on demand and caching it
+        if not hasattr(self, '_ast'):
+            logging.getLogger('VFS').info(f'Parsing {self.source_unit_name}')
+            self._ast = ast_helper.make_ast(self.contents)
+        return self._ast
 
 
 ImportMapping = namedtuple('ImportMapping', ['context', 'prefix', 'target'])
@@ -83,9 +91,7 @@ class VirtualFileSystem:
         raise f"Can't import {import_path} from {importer_source_unit_name}"
 
     def _add_loaded_source(self, source_unit_name: str, source_code: str) -> LoadedSource:
-        logging.getLogger('VFS').info(f'Parsing {source_unit_name}')
-        ast = ast_helper.make_ast(source_code)
-        loaded_source = LoadedSource(source_code, ast)
+        loaded_source = LoadedSource(source_unit_name, source_code)
         self.sources[source_unit_name] = loaded_source
         return loaded_source
 
