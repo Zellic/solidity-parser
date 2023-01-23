@@ -15,9 +15,9 @@ from solidity_parser.ast.parsers.parsers060 import Parser060
 from solidity_parser.ast.parsers.parsers070 import Parser070
 from solidity_parser.ast.parsers.parsers080 import Parser080
 
-from solidity_parser.ast.solnodes import SourceUnit
+from solidity_parser.ast import solnodes
 
-def make_ast(input_src, version: int = None) -> List[SourceUnit]:
+def make_ast(input_src, version: int = None) -> List[solnodes.SourceUnit]:
     if version is None:
         version = collector.get_minor_ver(input_src)
 
@@ -45,3 +45,7 @@ def make_ast(input_src, version: int = None) -> List[SourceUnit]:
     source_units = parse_tree.children
 
     return list(map(ast_parser.make, source_units))
+
+
+def param_type_str(parameters: List[solnodes.Parameter]) -> str:
+    return '(' + ', '.join([str(p.var_type) for p in parameters]) + ')'

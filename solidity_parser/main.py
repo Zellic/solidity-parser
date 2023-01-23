@@ -157,6 +157,7 @@ from types import SimpleNamespace
 import jsons
 from filesys import StandardJsonInput
 import logging
+from solidity_parser.ast.mro_helper import c3_linearise
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
@@ -182,34 +183,35 @@ if __name__ == '__main__':
 
     vfs.process_standard_json('../example/TestInput.json')
 
-    print(vfs.sources.keys())
     builder = symtab.Builder2(vfs)
     #
     # entry = 'StargateComposed.sol'
     # entry_src = vfs.lookup_import()
     # ast_nodes = vfs.
-
-    # builder.process_file('')
+    print(vfs.lookup_import_path('StargateComposed.sol', ''))
+    file_scope = builder.process_file('StargateComposed.sol')
+    contract_scope = file_scope.find('StargateComposed')
+    print([str(c.value.name) for c in c3_linearise(contract_scope)])
 
 
 if __name__ == '__main__1':
-    base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
-    all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
-    all_files = ['C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only\\contracts\\30\\00\\30002861577da4ea6aa23966964172ad75dca9c7']
-    # start_idx = 10516
-    start_idx = 0
-    #
-    idx = 0
-    for info in get_contracts_from_descriptors(all_files):
-        if idx >= start_idx:
-            try_parse_contract(*info, idx=idx)
-        idx += 1
+    # base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
+    # all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
+    # all_files = ['C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only\\contracts\\30\\00\\30002861577da4ea6aa23966964172ad75dca9c7']
+    # # start_idx = 10516
+    # start_idx = 0
+    # #
+    # idx = 0
+    # for info in get_contracts_from_descriptors(all_files):
+    #     if idx >= start_idx:
+    #         try_parse_contract(*info, idx=idx)
+    #     idx += 1
 
-    # input_src = open(
-    #     '../example/AaveToken.sol',
-    #     'r').read()
+    input_src = open(
+        '../example/test.sol',
+        'r').read()
 
-    # try_parse_contract('ft', 8, input_src, None)
+    try_parse_contract('ft', 8, input_src, None)
 
     # lexer = SolidityLexer080(InputStream(input_src))
     # stream = CommonTokenStream(lexer)
@@ -219,27 +221,27 @@ if __name__ == '__main__1':
     # tree = parser.sourceUnit()
     # source_units = tree.children
 
-    symtab_builder = symtab.Builder2(None)
+    # symtab_builder = symtab.Builder2(None)
 
     # ast_nodes = list(map(ast_parser.make, source_units))
 
     # file_path = Path('../example/AaveToken.sol').resolve()
     # symtab_builder.process_file(file_path, ast_nodes)
 
-    base_dir = '../example/Aave/'
-    base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
+    # base_dir = '../example/Aave/'
+    # base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
 
     # base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/mocks'
-    file_paths = [os.path.join(dirpath, f) for (dirpath, dirnames, filenames) in os.walk(base_dir) for f in filenames if f.endswith('.sol')]
+    # file_paths = [os.path.join(dirpath, f) for (dirpath, dirnames, filenames) in os.walk(base_dir) for f in filenames if f.endswith('.sol')]
 
-    all_ast_nodes = []
-    for fp in file_paths:
-        # if not fp.endswith('ProxyOFTV2.sol'):
-        #     continue
-        ast_nodes = get_ast(fp)
-        full_path = Path(fp).resolve()
-        symtab_builder.process_file(full_path, ast_nodes)
-        all_ast_nodes = all_ast_nodes + ast_nodes
+    # all_ast_nodes = []
+    # for fp in file_paths:
+    #     # if not fp.endswith('ProxyOFTV2.sol'):
+    #     #     continue
+    #     ast_nodes = get_ast(fp)
+    #     full_path = Path(fp).resolve()
+    #     symtab_builder.process_file(full_path, ast_nodes)
+    #     all_ast_nodes = all_ast_nodes + ast_nodes
 
 
     # for su in source_units:
@@ -248,7 +250,7 @@ if __name__ == '__main__1':
     #     if isinstance(u, solnodes.ContractDefinition) and str(u.name) == 'ClockAuctionBase':
     #         symtab_builder.process_source_unit(u)
 
-    root_scope = symtab_builder.root_scope
+    # root_scope = symtab_builder.root_scope
 
     # print(root_scope)
 
@@ -274,9 +276,9 @@ if __name__ == '__main__1':
     #
     # print(root_scope)
 
-    for n in all_ast_nodes:
-        if n and isinstance(n, solnodes.ContractDefinition) and n.name.text == 'StargateComposed':
-            dfs(n)
+    # for n in all_ast_nodes:
+    #     if n and isinstance(n, solnodes.ContractDefinition) and n.name.text == 'StargateComposed':
+    #         dfs(n)
     # print(len(all_ast_nodes))
 
 
