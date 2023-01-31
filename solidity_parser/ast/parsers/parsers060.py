@@ -237,11 +237,16 @@ def _unary_post_op(parser, expr: SolidityParser.UnaryPostOpContext):
 
 
 def _type_name(parser, type_name: SolidityParser.TypeNameContext):
-    if type_name.expression() is not None:
-        return solnodes.VariableLengthArrayType(
-            parser.make(type_name.typeName()),
-            parser.make(type_name.expression())
-        )
+    if type_name.typeName():
+        if type_name.expression():
+            return solnodes.VariableLengthArrayType(
+                parser.make(type_name.typeName()),
+                parser.make(type_name.expression())
+            )
+        else:
+            return solnodes.ArrayType(
+                parser.make(type_name.typeName())
+            )
     else:
         return parser.make_first(type_name)
 

@@ -173,6 +173,17 @@ class UserType(Type):
 
 
 @dataclass
+class ResolvedUserType(Type):
+    source_unit: str
+
+    def __str__(self): return self.source_unit
+
+
+class NoType(Type):
+    pass
+
+
+@dataclass
 class NamedArg(Expr):
     """ A name-value pair used for calling functions with options """
     name: Ident
@@ -534,7 +545,7 @@ class SpecialFunctionKind(Enum):
 @dataclass
 class FunctionDefinition(SourceUnit, ContractPart):
     name: Union[Ident, SpecialFunctionKind]
-    args: List[Parameter]
+    parameters: List[Parameter]
     modifiers: List[Modifier]
     returns: List[Parameter]
     code: Block
@@ -543,7 +554,7 @@ class FunctionDefinition(SourceUnit, ContractPart):
 @dataclass
 class ModifierDefinition(ContractPart):
     name: Ident
-    args: List[Parameter]
+    parameters: List[Parameter]
     modifiers: List[Modifier]
     code: Block
 
@@ -583,7 +594,7 @@ class ConstantVariableDeclaration(SourceUnit):
 
 @dataclass
 class EventParameter(Node):
-    param_type: Type
+    var_type: Type
     name: Ident
     is_indexed: bool
 
@@ -597,7 +608,7 @@ class EventDefinition(ContractPart):
 
 @dataclass
 class ErrorParameter(Node):
-    error_type: Type
+    var_type: Type
     name: Ident
 
 
