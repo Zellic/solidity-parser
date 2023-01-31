@@ -1,22 +1,26 @@
 from typing import Union, List, Dict, Optional
-from pathlib import Path
-import os
-from abc import ABC, abstractmethod
+from collections import defaultdict
 
 from solidity_parser.ast import solnodes
-from solidity_parser.ast.helper import param_type_str
 from solidity_parser.filesys import LoadedSource, VirtualFileSystem
 
 
-class Scopeable(ABC):
+Aliases = Union[str, List[str]]
+
+
+class Scopeable:
     """Element that can be added as a child of a Scope"""
     
-    def __init__(self):
+    def __init__(self, aliases: Optional[Aliases]):
         self.parent_scope: Optional[Scope] = None
+        
+        # make it into a list if it's not
+        if aliases is None:
+            aliases = []
+        elif not isinstance(aliases, list):
+            aliases = [aliases]
 
-    @abstractmethod
-    def get_names(self) -> Optional[List[str]]:
-        """Gets the names or aliases this scopeable is known by"""
+        self.aliases: List[str] = aliases
 
     def set_parent_scope(self, parent_scope: 'Scope'):
         assert self.parent_scope is None, 'Element is already scoped'
@@ -31,25 +35,20 @@ class Scopeable(ABC):
 
 
 class Symbol(Scopeable):
-    def __init__(self, aliases: Optional[Union[str, List[str]]], value):
-        Scopeable.__init__(self)
+    def __init__(self, aliases: Optional[Aliases], value, static_type: solnodes.Type = None):
+        Scopeable.__init__(self, aliases)
 
-        # make it into a list if it's not
-        if aliases is None:
-            aliases = []
-        elif not isinstance(aliases, list):
-            aliases = [aliases]
-
-        self.aliases: List[str] = aliases
         self.value = value
         self.order = -1
 
-    def get_names(self) -> Optional[List[str]]:
-        return self.aliases
+        self.static_type = static_type
 
     def resolve_base_symbol(self) -> 'Symbol':
         # Return the symbol this symbol points to, if one exists.
         return self
+
+    def type_of(self):
+        return self.static_type
 
     def set_parent_scope(self, parent_scope: 'Scope'):
         Scopeable.set_parent_scope(self, parent_scope)
@@ -59,69 +58,65 @@ class Symbol(Scopeable):
         return '' if not self.value else f' @{type(self.value).__name__}'
 
     def __str__(self, level=0):
-        return f"Symbol: {self.aliases}{self.str_type()}"
+        return f"{type(self).__name__}: {self.aliases}{self.str_type()}"
 
 
 class Scope(Scopeable):
-    def __init__(self, scope_name: Optional[str] = None):
-        Scopeable.__init__(self)
-        self.scope_name: str = scope_name
+    def __init__(self, aliases: Optional[Aliases]):
+        Scopeable.__init__(self, aliases)
         # collection of known mappings that can be looked up quickly
-        self.symbols: Dict[str, Symbol] = {}
-        # list of objects that have a specific lookup mechanism that needs to be
-        # invoked for every symbol lookup
-        # TODO: cache positive results
-        # self.links: List[Deferred] = []
-
-    def get_names(self) -> Optional[List[str]]:
-        return [self.scope_name] if self.scope_name else None
+        self.symbols: Dict[str, List[Symbol]] = defaultdict(list)
 
     def is_defined(self, name: str) -> bool:
-        return name in self.symbols
+        # check if the name exists in the table and it contains something
+        return name in self.symbols and bool(self.symbols[name])
+
+    def all_symbols(self):
+        return set([item for sublist in self.symbols.values() for item in sublist])
 
     def import_symbols_from_scope(self, other_scope: 'Scope'):
-        self.symbols.update(other_scope.symbols)
+        new_symbols = defaultdict(list)
+
+        for (k, v) in self.symbols.items():
+            new_symbols[k].extend(v)
+        for (k,v) in other_scope.symbols.items():
+            new_symbols[k].extend(v)
+
+        self.symbols = new_symbols
 
     def add(self, symbol: Symbol):
         symbol.set_parent_scope(self)
-        aliases = symbol.get_names()
 
-        for name in aliases:
-            if self.is_defined(name):
-                raise KeyError(f"{name} already exists in scope: {self.scope_name}")
+        for name in symbol.aliases:
+            self.symbols[name].append(symbol)
 
-        for name in aliases:
-            self.symbols[name] = symbol
-
-    def find_local(self, name: str) -> Optional[Symbol]:
+    def find_local(self, name: str) -> Optional[List[Symbol]]:
         """Finds a mapped symbol in this scope only"""
         if name in self.symbols:
             return self.symbols[name]
-        return None
+        return []
 
-    def find(self, name: str, find_base_symbol: bool = False) -> Optional[Symbol]:
+    def find(self, name: str, find_base_symbol: bool = False) -> Optional[List[Symbol]]:
         # check this scope first
-        symbol = self.find_local(name)
+        found_symbols = self.find_local(name)
         # check the parent scope if it wasn't in this scope
-        if symbol is None and self.parent_scope is not None:
-            symbol = self.parent_scope.find(name)
-        # get the base symbol if required
-        return symbol.resolve_base_symbol() if symbol is not None and find_base_symbol else symbol
+        if not found_symbols and self.parent_scope is not None:
+            found_symbols = self.parent_scope.find(name)
 
-    def follow_find(self, *names):
-        # TODO: remove
-        current = self
-        for name in names:
-            current = current.find_local(name)
-            if not current:
-                return None
-        return current
+        if not found_symbols:
+            return []
+
+        # get the base symbols if required
+        if find_base_symbol:
+            return [s.resolve_base_symbol() for s in found_symbols]
+        else:
+            return list(found_symbols)
 
     def str__symbols(self, level=0):
         indent = '  ' * level
         indent1 = '  ' + indent
 
-        all_syms = set(self.symbols.values())
+        all_syms = self.all_symbols()
 
         if all_syms:
             nl_indent = '\n' + indent1
@@ -137,39 +132,64 @@ class Scope(Scopeable):
 
 
 class ScopeAndSymbol(Scope, Symbol):
-    def __init__(self, name, ast_node):
-        Scope.__init__(self, name)
-        Symbol.__init__(self, name, ast_node)
-
-    def get_names(self) -> Optional[List[str]]:
-        return Symbol.get_names(self)
+    def __init__(self, aliases: Optional[Aliases], ast_node):
+        Scope.__init__(self, aliases)
+        Symbol.__init__(self, aliases, ast_node)
 
     def set_parent_scope(self, parent_scope: 'Scope'):
         Symbol.set_parent_scope(self, parent_scope)
 
     def __str__(self, level=0):
-        # if the scope alias is the same as the symbol aliases then just use the scope alias, else dump all of them
-        if len(self.aliases) == 1 and self.aliases[0] == self.scope_name:
-            name = self.scope_name
-        else:
-            name = f"{self.scope_name}/{self.aliases}"
+        return f"{type(self).__name__}: {self.aliases}{self.str_type()}" + Scope.str__symbols(self, level)
 
-        return f"Scope/Symbol: {name}{Symbol.str_type(self)}" + Scope.str__symbols(self, level)
+
+class PrimitiveTypeScope(ScopeAndSymbol):
+    def __init__(self, aliases: Optional[Aliases], static_type):
+        ScopeAndSymbol.__init__(self, aliases)
 
 
 class RootScope(Scope):
     def __init__(self):
         Scope.__init__(self, '<root>')
 
+        msg_object = Scope('msg')
+        msg_object.add(Symbol('data', None, solnodes.ArrayType(solnodes.ByteType())))
+        msg_object.add(Symbol('gas', None, solnodes.IntType(False, 256)))
+        msg_object.add(Symbol('sender', None, solnodes.AddressType(False)))
+        msg_object.add(Symbol('sig', None, solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+        msg_object.add(Symbol('value', None, solnodes.IntType(False, 256)))
 
-class SourceUnitScope(ScopeAndSymbol):
+        self.add(msg_object)
+
+        abi_object = Scope('abi')
+        # TODO: function type
+        abi_object.add(Symbol('encode', None, None))
+        abi_object.add(Symbol('decode', None, None))
+        abi_object.add(Symbol('encodePacked', None, None))
+
+        self.add(abi_object)
+
+        # primitive types
+
+        # int/int256 type
+        # self.add(Symbol(['int', 'int256'], None, solnodes.IntType(True, 256)))    # signed
+        # self.add(Symbol(['uint', 'uint256'], None, solnodes.IntType(False, 256))) # unsigned
+
+        # int types, 8, 16, ... 240, 248
+        # for i in range(1, 32):
+        #     size = i * 8
+        #     self.add(Symbol(f'int{size}', None, solnodes.IntType(True, size)))  # signed
+        #     self.add(Symbol(f'uint{size}', None, solnodes.IntType(False, size)))  # unsigned
+
+
+class FileScope(ScopeAndSymbol):
     def __init__(self, builder: 'Builder2', vfs: VirtualFileSystem, source_unit_name: str):
         ScopeAndSymbol.__init__(self, f'<source_unit:{source_unit_name}>', None)
         self.builder = builder
         self.vfs = vfs
         self.source_unit_name = source_unit_name
 
-    def get_imported_source_unit(self, import_path: str) -> Optional['SourceUnitScope']:
+    def get_imported_source_unit(self, import_path: str) -> Optional['FileScope']:
         # atm this throws if the file isn't found
         source = self.builder.vfs.lookup_import_path(import_path, self.source_unit_name)
         return self.builder.process_or_find(source)
@@ -178,40 +198,63 @@ class SourceUnitScope(ScopeAndSymbol):
         assert isinstance(parent_scope, RootScope)
         return ScopeAndSymbol.set_parent_scope(self, parent_scope)
 
+    def type_of(self):
+        # The file itself doesn't have a type associated with it,
+        # only the contracts/interfaces/functions etc inside it do
+        return solnodes.NoType()
+
 
 class ContractOrInterfaceScope(ScopeAndSymbol):
-    def __init__(self, ast_node: Union[solnodes.ContractDefinition, solnodes.InterfaceDefinition], name=None):
-        if name is None:
-            name = ast_node.name.text
-        ScopeAndSymbol.__init__(self, [name], ast_node)
+    def __init__(self, ast_node: Union[solnodes.ContractDefinition, solnodes.InterfaceDefinition]):
+        ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
 
     def set_parent_scope(self, parent_scope: Scope):
-        assert isinstance(parent_scope, SourceUnitScope)
+        assert isinstance(parent_scope, FileScope)
         return ScopeAndSymbol.set_parent_scope(self, parent_scope)
 
+    def type_of(self):
+        return self.value.name.text
+
     def get_supers(self) -> List['ContractOrInterfaceScope']:
-        klass_file_scope: SourceUnitScope = self.parent_scope
+        klass_file_scope: FileScope = self.parent_scope
         superklasses: List[ContractOrInterfaceScope] = []
         for inherit_specifier in self.value.inherits:
             # inherit specifier => name type => name ident => text str
             name = inherit_specifier.name.name.text
             symbol = klass_file_scope.find(name, True)
-            assert isinstance(symbol, ContractOrInterfaceScope), f'Got {symbol.get_names()}::{type(symbol)}'
+            assert isinstance(symbol, ContractOrInterfaceScope), f'Got {symbol.aliases}::{type(symbol)}'
             superklasses.append(symbol)
         return superklasses
 
-    def get_local_function(self, name) -> solnodes.FunctionDefinition:
-        pass
+    def get_local_method(self, name):
+        def matches(symbol: Symbol):
+            return isinstance(symbol.value, solnodes.FunctionDefinition) and str(symbol.value.name) == name
+
+        candidates = [s.value for s in self.symbols.values() if matches(s)]
+
+        return candidates
+
+
+class ModFunErrEvtScope(ScopeAndSymbol):
+    def __init__(self, ast_node: [solnodes.FunctionDefinition, solnodes.EventDefinition,
+                                  solnodes.ErrorDefinition, solnodes.ModifierDefinition]):
+        # name = f'{ast_node.name} {param_type_str(ast_node.parameters)}'
+        # if hasattr(ast_node, 'returns'):
+        #     name += f' => {param_type_str(ast_node.returns)}'
+        ScopeAndSymbol.__init__(self, str(ast_node.name), ast_node)
 
 
 class ImportSymbol(ScopeAndSymbol):
-    def __init__(self, aliases: List[str], ast_node: solnodes.ImportDirective):
+    def __init__(self, aliases: Optional[Aliases], ast_node: solnodes.ImportDirective):
         ScopeAndSymbol.__init__(self, aliases, ast_node)
 
-    def get_imported_scope(self) -> Optional[SourceUnitScope]:
-        source_unit: SourceUnitScope = self.parent_scope
+    def get_imported_scope(self) -> Optional[FileScope]:
+        source_unit: FileScope = self.parent_scope
         import_path = self.value.path
         return source_unit.get_imported_source_unit(import_path)
+
+    def type_of(self):
+        return solnodes.NoType()
 
 
 class AliasImportSymbol(ImportSymbol):
@@ -221,7 +264,7 @@ class AliasImportSymbol(ImportSymbol):
         # the X's if Y is looked up to find X
 
         self.alias_index = alias_index
-        ImportSymbol.__init__(self, [ast_node.aliases[alias_index].alias.text], ast_node)
+        ImportSymbol.__init__(self, ast_node.aliases[alias_index].alias.text, ast_node)
 
     def resolve_base_symbol(self) -> 'Symbol':
         alias: solnodes.SymbolAlias = self.value.aliases[self.alias_index]
@@ -232,23 +275,10 @@ class AliasImportSymbol(ImportSymbol):
 
 class UnitImportSymbol(ImportSymbol):
     def __init__(self, ast_node: solnodes.UnitImportDirective):
-        ImportSymbol.__init__(self, [ast_node.alias.text], ast_node)
+        ImportSymbol.__init__(self, ast_node.alias.text, ast_node)
 
     def resolve_base_symbol(self) -> 'Symbol':
         return self.get_imported_scope()
-
-
-class UsingSymbol(Symbol):
-    def __init__(self, ast_node: solnodes.UsingDirective):
-        Symbol.__init__(self, [str(ast_node.override_type)], ast_node)
-
-    def set_parent_scope(self, parent_scope: Scope):
-        assert isinstance(parent_scope, ContractOrInterfaceScope)
-        return Symbol.set_parent_scope(self, parent_scope)
-
-    def resolve(self) -> 'Symbol':
-        scope: ContractOrInterfaceScope = self.parent_scope
-        return scope.find(self.value.library_name.text)
 
 
 class Builder2:
@@ -262,7 +292,7 @@ class Builder2:
         self.vfs = vfs
 
     def process_or_find(self, loaded_source: LoadedSource):
-        found_fs = [s for s in self.root_scope.symbols if isinstance(s, SourceUnitScope) and str(s.value.name) == loaded_source.source_unit_name]
+        found_fs = [s for s in self.root_scope.symbols if isinstance(s, FileScope) and str(s.value.name) == loaded_source.source_unit_name]
         print(f'FS {loaded_source.source_unit_name} exists={bool(found_fs)}')
 
         if not found_fs:
@@ -277,7 +307,7 @@ class Builder2:
             if not source_units:
                 raise ValueError(f'Could not load {source_unit_name} from root')
 
-        fs = SourceUnitScope(self, self.vfs, source_unit_name)
+        fs = FileScope(self, self.vfs, source_unit_name)
 
         context = Builder2.Context(fs)
 
@@ -341,8 +371,21 @@ class Builder2:
             if isinstance(node.override_type, solnodes.AnyType):
                 raise NotImplemented("using X for *")
             else:
-                return UsingSymbol(node)
-        if isinstance(node, solnodes.PragmaDirective):
+                # get the functions in the target library and import them under the scope of the 1st param type
+                current_file_scope: FileScope = context.file_scope
+                library_file_scope: FileScope = current_file_scope.find(node.library_name.text)[0]
+                target_type = node.override_type
+
+                for s in library_file_scope.all_symbols():
+                    func_def: solnodes.FunctionDefinition = s.value
+                    if func_def.parameters:
+                        first_parameter_type = func_def.parameters[0].var_type
+                        print(first_parameter_type)
+                        if first_parameter_type == target_type:
+                            print("BONG")
+                        else:
+                            print("BING")
+        elif isinstance(node, solnodes.PragmaDirective):
             return None
         elif isinstance(node, solnodes.SymbolImportDirective):
             return [AliasImportSymbol(node, i) for i in range(0, len(node.aliases))]
@@ -355,9 +398,9 @@ class Builder2:
             imported_file = current_file_scope.get_imported_source_unit(node.path)
             current_file_scope.import_symbols_from_scope(imported_file)
             return None  # no new node is made from this
-        elif isinstance(node, solnodes.FunctionDefinition):
-            symbol_name = f'{node.name} {param_type_str(node.args)} => {param_type_str(node.returns)}'
-            return self.make_scope(node, name=symbol_name)
+        elif isinstance(node, (solnodes.FunctionDefinition, solnodes.EventDefinition,
+                               solnodes.ErrorDefinition, solnodes.ModifierDefinition)):
+            return ModFunErrEvtScope(node)
         elif isinstance(node, (solnodes.ContractDefinition, solnodes.InterfaceDefinition)):
             return ContractOrInterfaceScope(node)
         elif isinstance(node, solnodes.ContractPart):

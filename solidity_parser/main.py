@@ -158,8 +158,10 @@ import jsons
 from filesys import StandardJsonInput
 import logging
 from solidity_parser.ast.mro_helper import c3_linearise
+from solidity_parser.ast import funcanalysis
 
 if __name__ == '__main__':
+    pp.install_extras()
     logging.basicConfig(level=logging.DEBUG)
     # p = Path('../example/TestInput.json').resolve()
     # with p.open(mode='r', encoding='utf-8') as f:
@@ -181,18 +183,17 @@ if __name__ == '__main__':
     # vfs.process_cli_input_file('C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/examples/ExampleOFT.sol')
     # vfs.process_cli_input_file('.././StargateComposed.sol')
 
-    vfs.process_standard_json('../example/TestInput.json')
+    # vfs.process_standard_json('../example/TestInput.json')
 
     builder = symtab.Builder2(vfs)
-    #
-    # entry = 'StargateComposed.sol'
-    # entry_src = vfs.lookup_import()
-    # ast_nodes = vfs.
-    print(vfs.lookup_import_path('StargateComposed.sol', ''))
+
     file_scope = builder.process_file('StargateComposed.sol')
     contract_scope = file_scope.find('StargateComposed')
-    print([str(c.value.name) for c in c3_linearise(contract_scope)])
+    pp.pprint(contract_scope[0].value)
+    # print([str(c.value.name) for c in c3_linearise(contract_scope)])
 
+    # funcanalysis.dfs(contract_scope[0].value)
+    # print(contract_scope.get_local_method('swapNativeForNative'))
 
 if __name__ == '__main__1':
     # base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
