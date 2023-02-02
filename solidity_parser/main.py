@@ -159,6 +159,7 @@ from filesys import StandardJsonInput
 import logging
 from solidity_parser.ast.mro_helper import c3_linearise
 from solidity_parser.ast import funcanalysis
+from solidity_parser.ast import solnodes2
 
 if __name__ == '__main__':
     pp.install_extras()
@@ -189,7 +190,10 @@ if __name__ == '__main__':
 
     file_scope = builder.process_file('StargateComposed.sol')
     contract_scope = file_scope.find('StargateComposed')
-    pp.pprint(contract_scope[0].value)
+    # pp.pprint(contract_scope[0].value)
+    b2 = solnodes2.Builder()
+    c2 = b2.refine_top_level_node(contract_scope[0].value)
+    pp.pprint(c2)
     # print([str(c.value.name) for c in c3_linearise(contract_scope)])
 
     # funcanalysis.dfs(contract_scope[0].value)

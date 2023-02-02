@@ -130,7 +130,7 @@ def _inheritance_specifier(parser, inheritance_specifier: SolidityParser.Inherit
     type_name = parser.make(inheritance_specifier.identifierPath())
     return solnodes.InheritSpecifier(
         solnodes.UserType(type_name),
-        parser.make(inheritance_specifier.callArgumentList())
+        parser.make(inheritance_specifier.callArgumentList(), default=[])
     )
 
 

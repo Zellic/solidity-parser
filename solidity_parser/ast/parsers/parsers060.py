@@ -531,7 +531,7 @@ def _contract_definition(parser, contract_definition: SolidityParser.ContractDef
 def _inheritance_specifier(parser, inheritance_specifier: SolidityParser.InheritanceSpecifierContext):
     return solnodes.InheritSpecifier(
         parser.make(inheritance_specifier.userDefinedTypeName()),
-        parser.make(inheritance_specifier.expressionList())
+        parser.make(inheritance_specifier.expressionList(), default=[])
     )
 
 
