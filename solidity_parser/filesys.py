@@ -148,9 +148,9 @@ class VirtualFileSystem:
                 candidates.append(canonical_path)
 
         if len(candidates) == 0:
-            raise f'No file found: {su_name}'
+            raise ValueError(f'No file found: {su_name}')
         elif len(candidates) > 1:
-            raise f'Multiple candidates found for {su_name}: {candidates}'
+            raise ValueError(f'Multiple candidates found for {su_name}: {candidates}')
 
         # TODO: allowed directory check
 
