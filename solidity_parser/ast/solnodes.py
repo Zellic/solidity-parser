@@ -8,8 +8,17 @@ class Node:
     location: str
     "LineNumber:LinePosition, this is set dynamically in common.make"
 
+    def __post_init__(self):
+        for child in self.get_children():
+            child.parent = self
+
     def get_children(self):
+        parent = self.parent if hasattr(self, 'parent') else None
+
         for val in vars(self).values():
+            if parent and val is parent:
+                continue
+
             if isinstance(val, Node):
                 yield val
             elif isinstance(val, list):
@@ -172,15 +181,9 @@ class UserType(Type):
     def __str__(self): return str(self.name)
 
 
-@dataclass
-class ResolvedUserType(Type):
-    source_unit: str
-
-    def __str__(self): return self.source_unit
-
-
 class NoType(Type):
-    pass
+    def __str__(self):
+        return '<no_type>'
 
 
 @dataclass
@@ -299,7 +302,7 @@ class New(Expr):
     This expression must then be used as the base object in a constructor call to instantiate it.
 
     """
-    type_name: Ident
+    type_name: Type
 
 
 @dataclass

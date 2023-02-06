@@ -1,5 +1,3 @@
-import sys
-
 from antlr4 import InputStream, CommonTokenStream, TerminalNode
 
 from solidity_parser.grammar.v060.SolidityLexer import SolidityLexer as SolidityLexer060
@@ -155,7 +153,7 @@ def dfs(node):
 
 from types import SimpleNamespace
 import jsons
-from filesys import StandardJsonInput
+from solidity_parser.filesys import StandardJsonInput
 import logging
 from solidity_parser.ast.mro_helper import c3_linearise
 from solidity_parser.ast import funcanalysis
@@ -163,7 +161,7 @@ from solidity_parser.ast import solnodes2
 
 if __name__ == '__main__':
     pp.install_extras()
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig( level=logging.DEBUG)
     # p = Path('../example/TestInput.json').resolve()
     # with p.open(mode='r', encoding='utf-8') as f:
     #     data = f.read()
@@ -172,10 +170,12 @@ if __name__ == '__main__':
     # x = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
     # print(x.name, x.hometown.name, x.hometown.id)
 
-    base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
+    # base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
+    base_dir = 'C:/Users/bibl/Downloads/solidity-examples-main/contracts'
     # lets say we're in the /examples folder and go backwards to StargateComposed.sol in CLI
     # cwd = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/examples'
-    node_modules_dir = 'C:/Users/Bilal/node_modules'
+    # node_modules_dir = 'C:/Users/Bilal/node_modules'
+    node_modules_dir = 'C:/Users/bibl/AppData/Roaming/npm/node_modules'
     vfs = VirtualFileSystem(base_path=base_dir,
                             # cwd=cwd,
                             include_paths=[node_modules_dir])
@@ -193,7 +193,7 @@ if __name__ == '__main__':
     # pp.pprint(contract_scope[0].value)
     b2 = solnodes2.Builder()
     c2 = b2.refine_top_level_node(contract_scope[0].value)
-    pp.pprint(c2)
+    pp.pprint(c2.parts[5].parent)
     # print([str(c.value.name) for c in c3_linearise(contract_scope)])
 
     # funcanalysis.dfs(contract_scope[0].value)

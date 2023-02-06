@@ -524,6 +524,8 @@ def _type_name(parser, type_name: SolidityParser.TypeNameContext):
             return solnodes.ArrayType(
                 parser.make(type_name.typeName())
             )
+    elif type_name.identifierPath():
+        return solnodes.UserType(parser.make_first(type_name))
     else:
         return parser.make_first(type_name)
 

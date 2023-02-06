@@ -1,4 +1,4 @@
-from typing import Union, List, Dict, Optional
+from typing import Union, List, Dict, Optional, Type
 from collections import defaultdict
 
 from solidity_parser.ast import solnodes
@@ -28,10 +28,13 @@ class Scopeable:
 
     def find_first_ancestor(self, predicate):
         """Walks up the symbol tree and finds the first element that satisfies the given predicate"""
-        current = self.parent_scope
+        current = self
         while current and not predicate(current):
             current = current.parent_scope
         return current
+
+    def find_first_ancestor_of(self, ttype: Type):
+        return self.find_first_ancestor(lambda x: isinstance(x, ttype))
 
 
 class Symbol(Scopeable):
@@ -112,6 +115,16 @@ class Scope(Scopeable):
         else:
             return list(found_symbols)
 
+    def find_single(self, name: str, find_base_symbol: bool = False, default=None) -> Optional[Symbol]:
+        results = self.find(name, find_base_symbol)
+
+        if len(results) == 1:
+            return results[0]
+
+        assert len(results) == 0
+
+        return default
+
     def str__symbols(self, level=0):
         indent = '  ' * level
         indent1 = '  ' + indent
@@ -151,23 +164,6 @@ class PrimitiveTypeScope(ScopeAndSymbol):
 class RootScope(Scope):
     def __init__(self):
         Scope.__init__(self, '<root>')
-
-        msg_object = Scope('msg')
-        msg_object.add(Symbol('data', None, solnodes.ArrayType(solnodes.ByteType())))
-        msg_object.add(Symbol('gas', None, solnodes.IntType(False, 256)))
-        msg_object.add(Symbol('sender', None, solnodes.AddressType(False)))
-        msg_object.add(Symbol('sig', None, solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
-        msg_object.add(Symbol('value', None, solnodes.IntType(False, 256)))
-
-        self.add(msg_object)
-
-        abi_object = Scope('abi')
-        # TODO: function type
-        abi_object.add(Symbol('encode', None, None))
-        abi_object.add(Symbol('decode', None, None))
-        abi_object.add(Symbol('encodePacked', None, None))
-
-        self.add(abi_object)
 
         # primitive types
 
@@ -235,6 +231,15 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
         return candidates
 
 
+class StructScope(ScopeAndSymbol):
+    def __init__(self, ast_node: solnodes.StructDefinition):
+        ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
+
+    def set_parent_scope(self, parent_scope: Scope):
+        assert isinstance(parent_scope, (FileScope, ContractOrInterfaceScope))
+        return ScopeAndSymbol.set_parent_scope(self, parent_scope)
+
+
 class ModFunErrEvtScope(ScopeAndSymbol):
     def __init__(self, ast_node: [solnodes.FunctionDefinition, solnodes.EventDefinition,
                                   solnodes.ErrorDefinition, solnodes.ModifierDefinition]):
@@ -279,6 +284,17 @@ class UnitImportSymbol(ImportSymbol):
 
     def resolve_base_symbol(self) -> 'Symbol':
         return self.get_imported_scope()
+
+
+class UsingFunctionSymbol(Symbol):
+    def __init__(self, target: ModFunErrEvtScope, override_type: solnodes.Type):
+        assert isinstance(target.value, solnodes.FunctionDefinition)
+        Symbol.__init__(self, target.aliases, target.value)
+        self.target = target
+        self.override_type = override_type
+
+    def resolve_base_symbol(self) -> 'Symbol':
+        return self.target
 
 
 class Builder2:
@@ -376,15 +392,22 @@ class Builder2:
                 library_file_scope: FileScope = current_file_scope.find(node.library_name.text)[0]
                 target_type = node.override_type
 
+                assert target_type == solnodes.IntType(False, 256)
+
+                target_scope_name = str(target_type)
+                target_type_scope = current_file_scope.find_local(target_scope_name)
+                if not target_type_scope:
+                    target_type_scope = ScopeAndSymbol(target_scope_name, target_type)
+                    current_file_scope.add(target_type_scope)
+
                 for s in library_file_scope.all_symbols():
                     func_def: solnodes.FunctionDefinition = s.value
                     if func_def.parameters:
                         first_parameter_type = func_def.parameters[0].var_type
-                        print(first_parameter_type)
                         if first_parameter_type == target_type:
-                            print("BONG")
-                        else:
-                            print("BING")
+                            indirection_symbol = UsingFunctionSymbol(s, target_type)
+                            target_type_scope.add(indirection_symbol)
+
         elif isinstance(node, solnodes.PragmaDirective):
             return None
         elif isinstance(node, solnodes.SymbolImportDirective):
@@ -403,6 +426,8 @@ class Builder2:
             return ModFunErrEvtScope(node)
         elif isinstance(node, (solnodes.ContractDefinition, solnodes.InterfaceDefinition)):
             return ContractOrInterfaceScope(node)
+        elif isinstance(node, solnodes.StructDefinition):
+            return StructScope(node)
         elif isinstance(node, solnodes.ContractPart):
             # This catches: ModifierDefinition, StructDefinition, EnumDefinition,
             # StateVariableDeclaration, EventDefinition, ErrorDefinition. These all have a 'name'
@@ -414,8 +439,6 @@ class Builder2:
             # ConstantVariableDeclaration, ContractDefinition, InterfaceDefinition, LibraryDefinition.
             # Some ContractParts, import directives and PragmaDirective are also SourceUnits but handled separately
             # above
-            return self.make_scope(node)
-        elif isinstance(node, solnodes.StructDefinition):
             return self.make_scope(node)
         elif isinstance(node, (solnodes.StateVariableDeclaration, solnodes.ConstantVariableDeclaration)):
             return self.make_symbol(node)
