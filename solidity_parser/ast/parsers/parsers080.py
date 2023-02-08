@@ -433,7 +433,7 @@ def _expr_stmt(parser, stmt: SolidityParser.ExpressionStatementContext):
 def _try(parser, stmt: SolidityParser.TryStatementContext):
     return solnodes.Try(
         parser.make(stmt.expression()),
-        parser.make(stmt.parameterList()),
+        parser.make(stmt.parameterList(), default=[]),
         parser.make(stmt.block()),
         parser.make_all_rules(stmt.catchClause())
     )
@@ -442,7 +442,7 @@ def _try(parser, stmt: SolidityParser.TryStatementContext):
 def _catch_clause(parser, catch_clause: SolidityParser.CatchClauseContext):
     return solnodes.Catch(
         parser.make(catch_clause.identifier()),
-        parser.make(catch_clause.parameterList()),
+        parser.make(catch_clause.parameterList(), default=[]),
         parser.make(catch_clause.block())
     )
 
