@@ -1,10 +1,19 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Any, Union, Optional, Dict
+from typing import List, Any, Union, Optional, Dict, TypeVar, Generic, Set, Deque
 from abc import ABC, abstractmethod
+from collections import deque
 
 from solidity_parser.ast import solnodes as solnodes1
 from solidity_parser.ast import symtab
+
+
+T = TypeVar('T')
+
+
+@dataclass
+class Ref(Generic[T]):
+    x: T
 
 
 @dataclass
@@ -13,6 +22,11 @@ class Node:
 
     def get_children(self):
         for val in vars(self).values():
+            # Don't include parent
+            if val is self.parent:
+                continue
+
+            # Don't include Refs
             if isinstance(val, Node):
                 yield val
             elif isinstance(val, list):
@@ -24,6 +38,7 @@ class Node:
             yield from direct_child.get_all_children()
 
     def __post_init__(self):
+        self.parent = None
         for child in self.get_children():
             child.parent = self
 
@@ -40,12 +55,8 @@ class Expr(Node):
         pass
 
 
-
-@dataclass
-class Block(Stmt):
-    stmts: List[Stmt]
-    is_unchecked: bool
-
+class Modifier(Node):
+    pass
 
 
 @dataclass
@@ -53,8 +64,9 @@ class Ident(Node):
     text: str
 
 
+@dataclass
 class TopLevelUnit(Node):
-    pass
+    source_unit_name: str
 
 
 
@@ -136,12 +148,15 @@ class MappingType(Type):
     def __str__(self): return f"({self.src} => {self.dst})"
 
 
-
-
-
 @dataclass
 class ResolvedUserType(Type):
-    value: TopLevelUnit
+    # Ref so that we don't set the parent of the TopLevelUnit to this type instance
+    value: Ref[TopLevelUnit] = field(repr=False)
+
+    def __str__(self):
+        return f'ResolvedUserType({self.value.x.name.text})'
+    def __repr__(self):
+        return self.__str__()
 
 
 class ContractPart(Node):
@@ -155,11 +170,18 @@ class InheritSpecifier(Node):
 
 
 @dataclass
+class LibraryOverride(Node):
+    overriden_type: Type
+    library: ResolvedUserType
+
+
+@dataclass
 class ContractDefinition(TopLevelUnit):
     name: Ident
     is_abstract: bool
     inherits: List[InheritSpecifier]
     parts: List[ContractPart]
+    type_overrides: List[LibraryOverride]
 
 
 @dataclass
@@ -167,6 +189,13 @@ class InterfaceDefinition(TopLevelUnit):
     name: Ident
     inherits: List[InheritSpecifier]
     parts: List[ContractPart]
+
+
+@dataclass
+class LibraryDefinition(TopLevelUnit):
+    name: Ident
+    parts: List[ContractPart]
+
 
 
 @dataclass
@@ -179,6 +208,40 @@ class StructMember(Node):
 class StructDefinition(TopLevelUnit):
     name: Ident
     members: List[StructMember]
+
+
+@dataclass
+class ErrorParameter(Node):
+    ttype: Type
+    name: Ident
+
+
+@dataclass
+class ErrorDefinition(TopLevelUnit, ContractPart):
+    name: Ident
+    parameters: List[ErrorParameter]
+
+
+@dataclass
+class StateVariableDeclaration(ContractPart):
+    name: Ident
+    ttype: Type
+    modifiers: List[Modifier]
+    value: Expr
+
+
+@dataclass
+class EventParameter(Node):
+    name: Ident
+    ttype: Type
+    is_indexed: bool
+
+
+@dataclass
+class EventDefinition(ContractPart):
+    name: Ident
+    parameters: List[EventParameter]
+    is_anonymous: bool
 
 
 class Location(Enum):
@@ -201,8 +264,32 @@ class Parameter(Node):
     var: Var
 
 
-class Modifier(Node):
-    pass
+@dataclass
+class Block(Stmt):
+    stmts: List[Stmt]
+    is_unchecked: bool
+
+
+@dataclass
+class If(Stmt):
+    condition: Expr
+    true_branch: Stmt
+    false_branch: Stmt
+
+
+@dataclass
+class Catch(Stmt):
+    ident: Ident
+    parameters: List[Parameter]
+    body: Block
+
+@dataclass
+class Try(Stmt):
+    expr: Expr
+    return_parameters: List[Parameter]
+    body: Block
+    catch_clauses: List[Catch]
+
 
 
 @dataclass
@@ -217,6 +304,12 @@ class FunctionDefinition(ContractPart):
 @dataclass
 class TupleVarDecl(Stmt):
     vars: List[Var]
+    value: Expr
+
+
+@dataclass
+class VarDecl(Stmt):
+    var: Var
     value: Expr
 
 
@@ -247,13 +340,20 @@ class BinaryOp(Expr):
 
 @dataclass
 class SelfObject(Expr):
-    declarer: Union[ContractDefinition, InterfaceDefinition]
+    declarer: Ref[Union[ContractDefinition, InterfaceDefinition]] = field(repr=False)
 
 
 @dataclass
 class StateVarLoad(Expr):
     base: Expr
     name: Ident
+
+
+@dataclass
+class StateVarStore(Expr):
+    base: Expr
+    name: Ident
+    value: Expr
 
 
 @dataclass
@@ -265,15 +365,25 @@ class LocalVarLoad(Expr):
 
 
 @dataclass
-class FieldVarLoad(Expr):
-    obj_base: Expr
-    name: Ident
+class LocalVarStore(Expr):
+    var: Var
+    value: Expr
+
+    def type_of(self) -> Type:
+        return self.var.ttype
 
 
 @dataclass
 class ArrayLoad(Expr):
     base: Expr
     index: Expr
+
+
+@dataclass
+class ArrayStore(Expr):
+    base: Expr
+    index: Expr
+    value: Expr
 
 
 @dataclass
@@ -332,6 +442,17 @@ class Cast(Expr):
         return self.ttype
 
 
+@dataclass
+class EmitEvent(Stmt):
+    error: Ref[EventDefinition]
+    args: List[Expr]
+
+
+@dataclass
+class Return(Stmt):
+    value: Expr
+
+
 class TypeHelper:
     def __init__(self, builder):
         self.builder = builder
@@ -339,29 +460,60 @@ class TypeHelper:
     def find_field(self, ttype: Type, name: str) -> FunctionDefinition:
         pass
 
+    def find_event(self, ttype: ResolvedUserType, name: str) -> EventDefinition:
+        # Not sure if inheritance is allowed for events. Afaik a contract can only call events defined in itself
+
+        unit = ttype.value.x
+
+        assert isinstance(unit, ContractDefinition)
+
+        def matches(x):
+            # TODO: parameter type match
+            return isinstance(x, EventDefinition) and x.name.text == name
+        candidates = [x for x in unit.parts if matches(x)]
+
+        assert len(candidates) == 1
+
+        return candidates[0]
+
 class Builder:
 
     def __init__(self):
         self.user_types: Dict[str, ContractDefinition] = {}
+        self.type_helper = TypeHelper(self)
+        self.processed: Set[solnodes1.SourceUnit] = set()
+        self.to_process: Deque[solnodes1.SourceUnit] = deque()
 
-    def get_contract_type(self, ast1_node: solnodes1.SourceUnit, name: str = None) -> ResolvedUserType:
-        if isinstance(ast1_node,
-                      (solnodes1.ContractDefinition, solnodes1.InterfaceDefinition, solnodes1.StructDefinition)):
+    def process_all(self):
+        while self.to_process:
+            self.refine_unit_or_part(self.to_process.popleft())
 
-            if name is not None:
-                assert name == ast1_node.name.text
+    def load_if_required(self, user_type_symbol: symtab.Symbol) -> TopLevelUnit:
+        ast1_node: solnodes1.SourceUnit = user_type_symbol.value
+
+        if isinstance(ast1_node, (solnodes1.ContractDefinition, solnodes1.InterfaceDefinition,
+                                  solnodes1.StructDefinition, solnodes1.LibraryDefinition)):
+
+            if hasattr(ast1_node, 'ast2_node'):
+                ast2_node = ast1_node.ast2_node
             else:
-                name = ast1_node.name.text
+                parent_scope = user_type_symbol.parent_scope
 
-            if name in self.user_types:
-                ast2_node = self.user_types[name]
-            else:
-                ast2_node = self.refine_top_level_node(ast1_node)
-                self.user_types[name] = ast2_node
+                if isinstance(parent_scope, symtab.FileScope):
+                    source_unit_name = parent_scope.source_unit_name
+                else:
+                    parent_type = self.load_if_required(parent_scope)
+                    source_unit_name = f'{parent_type.source_unit_name}${parent_type.name.text}'
 
-            return ResolvedUserType(ast2_node)
+                print(f'LOAD {source_unit_name}')
+                ast2_node = self.define_skeleton(ast1_node, source_unit_name)
+
+            return ast2_node
         else:
             raise ValueError(f"Invalid user type resolve: {type(ast1_node)}")
+
+    def get_contract_type(self, user_type_symbol: symtab.Symbol) -> ResolvedUserType:
+        return ResolvedUserType(Ref(self.load_if_required(user_type_symbol)))
 
     def get_user_type(self, ttype: solnodes1.UserType):
         """Maps an AST1 UserType to AST2 ResolvedUserType"""
@@ -374,7 +526,7 @@ class Builder:
         if len(s) != 1:
             raise ValueError(f"Too many symbols for {ttype}: {s}")
 
-        return self.get_contract_type(s[0].value)
+        return self.get_contract_type(s[0])
 
     def _todo(self, node):
         raise ValueError(f'TODO: {type(node)}')
@@ -403,6 +555,12 @@ class Builder:
 
         self._todo(ttype)
 
+    def symbol_to_ref(self, symbol: symtab.Symbol):
+        ast1_node = symbol.value
+
+
+
+
     def refine_stmt(self, node: solnodes1.Stmt):
         if isinstance(node, solnodes1.VarDecl):
             if len(node.variables) == 1:
@@ -413,7 +571,41 @@ class Builder:
             return ExprStmt(self.refine_expr(node.expr))
         elif isinstance(node, solnodes1.Block):
             return self.block(node)
+        elif isinstance(node, solnodes1.If):
+            return If(
+                self.refine_expr(node.condition),
+                self.refine_stmt(node.true_branch) if node.true_branch else None,
+                self.refine_stmt(node.false_branch) if node.false_branch else None
+            )
+        elif isinstance(node, solnodes1.Try):
+            return Try(
+                self.refine_expr(node.expr),
+                [self.parameter(x) for x in node.return_parameters],
+                self.refine_stmt(node.body),
+                [Catch(
+                    # TODO: figure out what this is
+                    x.ident.text if x.ident else None,
+                    [self.parameter(y) for y in x.parameters],
+                    self.block(x.body)
+                ) for x in node.catch_clauses]
+            )
+        elif isinstance(node, solnodes1.Emit):
+            assert isinstance(node.call.callee, solnodes1.Ident)
+            callee_symbol = node.scope.find_single(node.call.callee.text)
+            assert isinstance(callee_symbol.value, solnodes1.EventDefinition)
+            assert len(node.call.modifiers) == 0
 
+            # Get the AST2 EventDefinition. This requires the parent contract to be loaded so we have to do that first
+            parent_type = self.get_contract_type(callee_symbol.parent_scope)
+
+            assert parent_type
+
+            event_name = callee_symbol.value.name.text
+            event = self.type_helper.find_event(parent_type, event_name)
+
+            return EmitEvent(Ref(event), [self.refine_expr(x) for x in node.call.args])
+        elif isinstance(node, solnodes1.Return):
+            return Return(self.refine_expr(node.value))
         self._todo(node)
 
 
@@ -439,7 +631,7 @@ class Builder:
                 ident_target_symbol = expr.scope.find_single(callee.text)
                 assert isinstance(ident_target_symbol, symtab.ContractOrInterfaceScope)
                 assert len(new_args) == 1
-                return Cast(self.get_contract_type(ident_target_symbol.value), new_args[0])
+                return Cast(self.get_contract_type(ident_target_symbol), new_args[0])
         elif isinstance(callee, solnodes1.AddressType):
             # address(my_obj) but we treat it as a Cast expr type instead of its own separate node
             assert len(new_args) == 1
@@ -470,7 +662,7 @@ class Builder:
                     ident_symbol = expr.scope.find_single(base.text)
                     target_symbol = ident_symbol.find_single(callee.name.text)
                     assert isinstance(target_symbol, symtab.StructScope)
-                    return CreateStruct(self.get_contract_type(target_symbol.value), new_args)
+                    return CreateStruct(self.get_contract_type(target_symbol), new_args)
             else:
                 # This is here so that I can stop on each pattern, the above creation of new_base are approved patterns
                 self._todo(expr)
@@ -499,15 +691,51 @@ class Builder:
 
         self._todo(expr)
 
+    ASSIGN_TO_OP = {
+        solnodes1.BinaryOpCode.ASSIGN: solnodes1.BinaryOpCode.ASSIGN,
+        solnodes1.BinaryOpCode.ASSIGN_OR: solnodes1.BinaryOpCode.BIT_OR,
+        solnodes1.BinaryOpCode.ASSIGN_BIT_NEG: solnodes1.BinaryOpCode.BIT_XOR,
+        solnodes1.BinaryOpCode.ASSIGN_BIT_AND: solnodes1.BinaryOpCode.BIT_AND,
+        solnodes1.BinaryOpCode.ASSIGN_LSHIFT: solnodes1.BinaryOpCode.LSHIFT,
+        solnodes1.BinaryOpCode.ASSIGN_RSHIFT: solnodes1.BinaryOpCode.RSHIFT,
+        solnodes1.BinaryOpCode.ASSIGN_ADD: solnodes1.BinaryOpCode.ADD,
+        solnodes1.BinaryOpCode.ASSIGN_SUB: solnodes1.BinaryOpCode.SUB,
+        solnodes1.BinaryOpCode.ASSIGN_MUL: solnodes1.BinaryOpCode.MUL,
+        solnodes1.BinaryOpCode.ASSIGN_DIV: solnodes1.BinaryOpCode.DIV,
+        solnodes1.BinaryOpCode.ASSIGN_MOD: solnodes1.BinaryOpCode.MOD
+    }
+
     def refine_expr(self, expr: solnodes1.Expr):
         if isinstance(expr, solnodes1.BinaryOp):
-            return BinaryOp(self.refine_expr(expr.left), self.refine_expr(expr.right), expr.op)
+            left = self.refine_expr(expr.left)
+            right = self.refine_expr(expr.right)
+
+            if expr.op in self.ASSIGN_TO_OP:
+                # this is an assign, make sure the lhs is a valid assignment target.
+                # if the OP does some other mathematical operation then split the rhs into a load lhs + rhs
+                assert isinstance(left, (StateVarLoad, LocalVarLoad, ArrayLoad))
+
+                if expr.op != solnodes1.BinaryOpCode.ASSIGN:
+                    value = BinaryOp(left, right, self.ASSIGN_TO_OP[expr.op])
+                else:
+                    value = right
+
+                if isinstance(left, StateVarLoad):
+                    return StateVarStore(left.base, left.name, value)
+                elif isinstance(left, ArrayLoad):
+                    return ArrayStore(left.base, left.index, value)
+                else:
+                    return LocalVarStore(left.var, value)
+            else:
+                return BinaryOp(left, right, expr.op)
         elif isinstance(expr, solnodes1.Ident):
             # We should only reach this if this Ident is a reference to a variable load. This shouldn't be
             # hit when resolving other uses of Idents
 
             if expr.text == 'this':
-                return SelfObject(self.get_declaring_contract(expr).value)
+                ast1_current_contract = self.get_declaring_contract(expr)
+                contract_type: ResolvedUserType = self.get_contract_type(ast1_current_contract)
+                return SelfObject(contract_type.value)
 
             ident_symbol = expr.scope.find_single(expr.text)
             assert ident_symbol  # must be resolved to something
@@ -517,12 +745,14 @@ class Builder:
             if isinstance(ident_target, solnodes1.StateVariableDeclaration):
                 # i.e. Say we are in contract C and ident is 'x', check that 'x' is declared in C
                 # this is so that we know the 'base' of this load will be 'self'
-                current_contract = self.get_declaring_contract(expr)
+                ast1_current_contract = self.get_declaring_contract(expr)
                 var_declaring_contract = self.get_declaring_contract(ident_target)
 
-                assert current_contract is var_declaring_contract
+                assert ast1_current_contract is var_declaring_contract
 
-                return StateVarLoad(SelfObject(current_contract.value), Ident(expr.text))
+                contract_type: ResolvedUserType = self.get_contract_type(ast1_current_contract)
+
+                return StateVarLoad(SelfObject(contract_type.value), Ident(expr.text))
             elif isinstance(ident_target, (solnodes1.Parameter, solnodes1.Var)):
                 return LocalVarLoad(self.var(ident_target))
             else:
@@ -547,7 +777,7 @@ class Builder:
                 # this is assumed to be a field load only, i.e. x.y (in AST1 x.y would be a child of a FunctionCall
                 # so x.y() should be a FunctionCall instead of the child of a FC)
                 new_base = self.refine_expr(base)
-                pass
+                return StateVarLoad(new_base, expr.name.text)
 
         elif isinstance(expr, solnodes1.Literal):
             return Literal(expr.value, expr.unit)
@@ -635,41 +865,113 @@ class Builder:
         else:
             return Block([], False)
 
-    def refine_contract_part(self, part: solnodes1.ContractPart):
-        if isinstance(part, solnodes1.FunctionDefinition):
-            return FunctionDefinition(
-                Ident(str(part.name)),
-                [self.parameter(x) for x in part.parameters],
-                [self.parameter(x) for x in part.returns],
-                [self.modifier(x) for x in part.modifiers],
-                self.block(part.code)
-            )
+    def define_skeleton(self, ast1_node: solnodes1.SourceUnit, source_unit_name: str) -> TopLevelUnit:
+        """
+        Makes a skeleton of the given AST1 node without processing the details. This is required as user types are
+        loaded on demand(when they're used in code/parameter lists/declarations, etc). This skeleton is used as a
+        reference and then filled in later on. """
 
-    def refine_top_level_node(self, node: solnodes1.SourceUnit):
-        if isinstance(node, solnodes1.ContractDefinition):
-            return ContractDefinition(
-                Ident(node.name.text),
-                node.is_abstract,
-                [
-                    InheritSpecifier(self.get_user_type(x.name), [self.refine_expr(arg) for arg in x.args])
-                    for x in node.inherits
-                ],
-                [self.refine_contract_part(part) for part in node.parts]
-            )
-        elif isinstance(node, solnodes1.InterfaceDefinition):
-            return InterfaceDefinition(
-                Ident(node.name.text),
-                [
-                    InheritSpecifier(self.get_user_type(x.name), [self.refine_expr(arg) for arg in x.args])
-                    for x in node.inherits
-                ],
-                [self.refine_contract_part(part) for part in node.parts]
-            )
-        elif isinstance(node, solnodes1.StructDefinition):
-            return StructDefinition(
-                Ident(node.name.text),
-                [StructMember(self.map_type(x.member_type), Ident(x.name.text)) for x in node.members]
-            )
-        else:
+        assert not hasattr(ast1_node, 'ast2_node')
+
+        # Source unit name is only used for source units/top level units
+        assert bool(source_unit_name) == self.is_top_level(ast1_node)
+
+        def _make_new_node(n):
+            if isinstance(n, solnodes1.FunctionDefinition):
+                return FunctionDefinition(Ident(str(n.name)), [], [], [], None)
+
+            name = Ident(n.name.text)
+            if isinstance(n, solnodes1.ContractDefinition):
+                return ContractDefinition(source_unit_name, name, [], [], [], [])
+            elif isinstance(n, solnodes1.InterfaceDefinition):
+                return InterfaceDefinition(source_unit_name, name, [], [])
+            elif isinstance(n, solnodes1.StructDefinition):
+                return StructDefinition(source_unit_name, name, [])
+            elif isinstance(n, solnodes1.LibraryDefinition):
+                return LibraryDefinition(source_unit_name, name, [])
+            elif isinstance(n, solnodes1.StateVariableDeclaration):
+                return StateVariableDeclaration(name, None, [], None)
+            elif isinstance(n, solnodes1.EventDefinition):
+                return EventDefinition(name, [], None)
+            else:
+                self._todo(ast1_node)
+
+        ast2_node = _make_new_node(ast1_node)
+        ast1_node.ast2_node = ast2_node
+
+        if hasattr(ast1_node, 'parts'):
+            for p in ast1_node.parts:
+                if self.is_top_level(p):
+                    # these units don't get added as parts in AST2
+                    self.load_if_required(p.scope)
+                elif not isinstance(p, (solnodes1.UsingDirective, solnodes1.PragmaDirective)):
+                    # don't need usings or pragmas for AST2
+                    ast2_node.parts.append(self.define_skeleton(p, None))
+
+        if self.is_top_level(ast1_node):
+            self.to_process.append(ast1_node)
+
+        return ast2_node
+
+    def refine_unit_or_part(self, ast1_node: solnodes1.SourceUnit):
+        if not isinstance(ast1_node, (solnodes1.ContractDefinition, solnodes1.InterfaceDefinition,
+                                      solnodes1.StructDefinition, solnodes1.LibraryDefinition,
+                                      solnodes1.FunctionDefinition, solnodes1.EventDefinition,
+                                      solnodes1.StateVariableDeclaration)):
             raise ValueError('x')
+            
+        ast2_node = ast1_node.ast2_node
 
+        if self.is_top_level(ast1_node):
+            if isinstance(ast1_node, solnodes1.ContractDefinition):
+                ast2_node.is_abstract = ast1_node.is_abstract
+
+            # contracts, interfaces
+            if hasattr(ast1_node, 'inherits'):
+                ast2_node.inherits = [
+                    InheritSpecifier(self.get_user_type(x.name), [self.refine_expr(arg) for arg in x.args])
+                    for x in ast1_node.inherits
+                ]
+
+            # contracts, interfaces, libraries
+            if hasattr(ast1_node, 'parts'):
+                for part in ast1_node.parts:
+                    if isinstance(part, solnodes1.UsingDirective):
+                        # Not sure if things other than contracts can have usings, if this should errors, we can investigate
+                        library_scope = part.scope.find_single(part.library_name.text)
+                        assert isinstance(library_scope.value, solnodes1.LibraryDefinition)
+                        library = self.get_contract_type(part.scope.find_single(part.library_name.text))
+                        ast2_node.type_overrides.append(LibraryOverride(self.map_type(part.override_type), library))
+
+                    if hasattr(part, 'ast2_node'):
+                        self.refine_unit_or_part(part)
+
+            # structs
+            if hasattr(ast1_node, 'members'):
+                ast2_node.members = [StructMember(self.map_type(x.member_type), Ident(x.name.text)) for x in
+                                     ast1_node.members]
+
+        if isinstance(ast1_node, solnodes1.FunctionDefinition):
+            ast2_node.inputs = [self.parameter(x) for x in ast1_node.parameters]
+            ast2_node.outputs = [self.parameter(x) for x in ast1_node.returns]
+            ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
+            ast2_node.code = self.block(ast1_node.code) if ast1_node.code else None
+            return ast2_node
+
+        if isinstance(ast1_node, solnodes1.StateVariableDeclaration):
+            ast2_node.ttype = self.map_type(ast1_node.var_type)
+            ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
+            ast2_node.initial_value = self.refine_expr(ast1_node.initial_value) if ast1_node.initial_value else None
+            return ast2_node
+
+        if isinstance(ast1_node, solnodes1.EventDefinition):
+            ast2_node.parameters = [EventParameter(Ident(p.name.text), self.map_type(p.var_type), p.is_indexed)
+                                    for p in ast1_node.parameters]
+            ast2_node.is_anonymous = ast1_node.is_anonymous
+            return ast2_node
+
+        return None
+
+    def is_top_level(self, node: solnodes1.Node):
+        # FunctionDefinitions are set as SourceUnits in AST1 but not in AST2
+        return isinstance(node, solnodes1.SourceUnit) and not isinstance(node, solnodes1.FunctionDefinition)

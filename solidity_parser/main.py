@@ -192,8 +192,14 @@ if __name__ == '__main__':
     contract_scope = file_scope.find('StargateComposed')
     # pp.pprint(contract_scope[0].value)
     b2 = solnodes2.Builder()
-    c2 = b2.refine_top_level_node(contract_scope[0].value)
-    pp.pprint(c2.parts[5].parent)
+    b2.define_skeleton(contract_scope[0].value, file_scope.source_unit_name)
+    b2.process_all()
+
+    c2 = contract_scope[0].value.ast2_node
+    c2.get_children()
+    with open('output.txt', 'wt') as out:
+        pp.pprint(c2, stream=out)
+
     # print([str(c.value.name) for c in c3_linearise(contract_scope)])
 
     # funcanalysis.dfs(contract_scope[0].value)

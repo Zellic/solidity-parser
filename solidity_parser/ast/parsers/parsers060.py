@@ -55,7 +55,7 @@ def _if(parser, stmt: SolidityParser.IfStatementContext):
 def _try(parser, stmt: SolidityParser.TryStatementContext):
     return solnodes.Try(
         parser.make(stmt.expression()),
-        parser.make(stmt.returnParameters()),
+        parser.make(stmt.returnParameters(), default=[]),
         parser.make(stmt.block()),
         parser.make_all_rules(stmt.catchClause())
     )
@@ -378,7 +378,7 @@ def _parameter(parser, stmt: SolidityParser.ParameterContext):
 def _catch_clause(parser, clause: SolidityParser.CatchClauseContext):
     return solnodes.Catch(
         parser.make(clause.identifier()),
-        parser.make(clause.parameterList()),
+        parser.make(clause.parameterList(), default=[]),
         parser.make(clause.block())
     )
 
