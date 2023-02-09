@@ -22,14 +22,13 @@ class Node:
 
     def get_children(self):
         for val in vars(self).values():
-            # Don't include parent
+            # Don't include parent or Refs
             if val is self.parent:
                 continue
 
-            # Don't include Refs
             if isinstance(val, Node):
                 yield val
-            elif isinstance(val, list):
+            elif isinstance(val, (list, tuple)):
                 yield from [v for v in val if isinstance(v, Node)]
 
     def get_all_children(self):
@@ -159,6 +158,11 @@ class ResolvedUserType(Type):
         return self.__str__()
 
 
+@dataclass
+class TupleType(Type):
+    ttypes: List[Type]
+
+
 class ContractPart(Node):
     pass
 
@@ -219,7 +223,7 @@ class ErrorParameter(Node):
 @dataclass
 class ErrorDefinition(TopLevelUnit, ContractPart):
     name: Ident
-    parameters: List[ErrorParameter]
+    inputs: List[ErrorParameter]
 
 
 @dataclass
@@ -240,7 +244,7 @@ class EventParameter(Node):
 @dataclass
 class EventDefinition(ContractPart):
     name: Ident
-    parameters: List[EventParameter]
+    inputs: List[EventParameter]
     is_anonymous: bool
 
 
@@ -302,6 +306,14 @@ class FunctionDefinition(ContractPart):
 
 
 @dataclass
+class ModifierDefinition(ContractPart):
+    name: Ident
+    inputs: List[Parameter]
+    modifiers: List[Modifier]
+    code: Block
+
+
+@dataclass
 class TupleVarDecl(Stmt):
     vars: List[Var]
     value: Expr
@@ -331,6 +343,23 @@ class Literal(Expr):
 
 
 @dataclass
+class TypeLiteral(Expr):
+    ttypes: List[Type]
+    # TODO: change to Type
+
+    def type_of(self):
+        # FIXME: need to copy items before passing
+        return TupleType(self.ttypes)
+
+@dataclass
+class UnaryOp(Expr):
+    """ Single operand expression """
+    expr: Expr
+    op: solnodes1.UnaryOpCode
+    is_pre: bool
+
+
+@dataclass
 class BinaryOp(Expr):
     """ Binary/two operand expression """
     left: Expr
@@ -344,10 +373,16 @@ class SelfObject(Expr):
 
 
 @dataclass
+class SuperObject(Expr):
+    declarer: Ref[Union[ContractDefinition, InterfaceDefinition]] = field(repr=False)
+
+
+
+@dataclass
 class StateVarLoad(Expr):
     base: Expr
     name: Ident
-
+    # TODO: Ref instead of name?
 
 @dataclass
 class StateVarStore(Expr):
@@ -414,6 +449,12 @@ class Call(Expr):
 
 
 @dataclass
+class LibraryCall(Call):
+    library: ResolvedUserType
+    name: Ident
+
+
+@dataclass
 class FunctionCall(Call):
     base: Expr
     name: Ident
@@ -443,6 +484,12 @@ class Cast(Expr):
 
 
 @dataclass
+class GetType(Expr):
+    # type(MyContract)
+    ttype: Type
+
+
+@dataclass
 class EmitEvent(Stmt):
     error: Ref[EventDefinition]
     args: List[Expr]
@@ -451,6 +498,18 @@ class EmitEvent(Stmt):
 @dataclass
 class Return(Stmt):
     value: Expr
+
+
+@dataclass
+class Assembly(Stmt):
+    # TODO: full assembly code representation
+    code: str
+
+
+@dataclass
+class ExecModifiedCode(Stmt):
+    # _; statement in modifier code bodies that show where modified function code gets executed
+    pass
 
 
 class TypeHelper:
@@ -465,7 +524,7 @@ class TypeHelper:
 
         unit = ttype.value.x
 
-        assert isinstance(unit, ContractDefinition)
+        assert isinstance(unit, (ContractDefinition, InterfaceDefinition))
 
         def matches(x):
             # TODO: parameter type match
@@ -475,6 +534,9 @@ class TypeHelper:
         assert len(candidates) == 1
 
         return candidates[0]
+
+    def find_declared_target_method(self, scope: symtab.Scope, name: str, arg_types: List[Type]):
+        pass
 
 class Builder:
 
@@ -606,11 +668,22 @@ class Builder:
             return EmitEvent(Ref(event), [self.refine_expr(x) for x in node.call.args])
         elif isinstance(node, solnodes1.Return):
             return Return(self.refine_expr(node.value))
+        elif isinstance(node, solnodes1.AssemblyStmt):
+            return Assembly(node.code)
         self._todo(node)
 
+    def get_declaring_contract(self, node: solnodes1.Node) -> symtab.ContractInterfaceLibraryScope:
+        return node.scope.find_first_ancestor_of(symtab.ContractInterfaceLibraryScope)
 
-    def get_declaring_contract(self, node: solnodes1.Node) -> symtab.ContractOrInterfaceScope:
-        return node.scope.find_first_ancestor_of(symtab.ContractOrInterfaceScope)
+    def get_self_object(self, node: Union[solnodes1.Stmt, solnodes1.Expr]):
+        ast1_current_contract = self.get_declaring_contract(node)
+        contract_type: ResolvedUserType = self.get_contract_type(ast1_current_contract)
+        return SelfObject(contract_type.value)
+
+    def get_super_object(self, node: Union[solnodes1.Stmt, solnodes1.Expr]):
+        ast1_current_contract = self.get_declaring_contract(node)
+        contract_type: ResolvedUserType = self.get_contract_type(ast1_current_contract)
+        return SuperObject(contract_type.value)
 
     def refine_call_function(self, expr):
         # solnodes1.CallFunction is very confusing because the grammar allows basically any expression into it and
@@ -619,22 +692,47 @@ class Builder:
         callee = expr.callee
 
         new_args = [self.refine_expr(x) for x in expr.args]
+        new_modifiers = [self.modifier(x) for x in expr.modifiers]
+
+        # helper for a few cases
+        def assert_simple_call(arg_len=1, mod_len=0):
+            assert len(new_args) == arg_len and len(new_modifiers) == mod_len
 
         if isinstance(callee, solnodes1.Ident):
             if callee.text == 'require':
-                return RequireExpr(
-                    [self.modifier(x) for x in expr.modifiers],
-                    new_args
-                )
+                return RequireExpr(new_modifiers, new_args)
+            elif callee.text == 'keccak256':
+                return BuiltInCall([], new_args, callee.text, FixedLengthArrayType(ByteType(), 32))
             else:
-                # cast?
-                ident_target_symbol = expr.scope.find_single(callee.text)
-                assert isinstance(ident_target_symbol, symtab.ContractOrInterfaceScope)
-                assert len(new_args) == 1
-                return Cast(self.get_contract_type(ident_target_symbol), new_args[0])
+                ident_target_symbols = expr.scope.find(callee.text)
+
+                if len(ident_target_symbols) == 0:
+                    raise ValueError('No resolve')
+
+                if len(ident_target_symbols) == 1:
+                    ident_target_symbol = ident_target_symbols[0]
+                else:
+                    # check homogenous
+                    type_a = type(ident_target_symbols[0])
+                    all([type(x) == type_a for x in ident_target_symbols])
+
+                    assert isinstance(ident_target_symbols[0], symtab.ModFunErrEvtScope)
+
+                    ident_target_symbol = self.find_method(ident_target_symbols, [arg.type_of() for arg in new_args])
+
+                if isinstance(ident_target_symbol, symtab.ContractInterfaceLibraryScope):
+                    assert_simple_call()
+                    return Cast(self.get_contract_type(ident_target_symbol), new_args[0])
+                elif isinstance(ident_target_symbol, symtab.ModFunErrEvtScope):
+                    target = ident_target_symbol.value
+
+                    if isinstance(target, solnodes1.FunctionDefinition):
+                        # This is an unqualified function call, i.e. the statement 'my_func(x,y)'. The base
+                        # is set as self
+                        return FunctionCall(new_modifiers, new_args, self.get_self_object(expr), Ident(target.name.text))
         elif isinstance(callee, solnodes1.AddressType):
             # address(my_obj) but we treat it as a Cast expr type instead of its own separate node
-            assert len(new_args) == 1
+            assert_simple_call()
             return Cast(self.map_type(callee), new_args[0])
         elif isinstance(callee, solnodes1.GetMember):
             base = callee.obj_base
@@ -646,23 +744,58 @@ class Builder:
                 if base.text == 'abi':
                     if callee.name.text == 'encode' or callee.name.text == 'encodePacked':
                         return BuiltInCall(
-                            [self.modifier(x) for x in expr.modifiers],
+                            new_modifiers,
                             new_args,
                             f'abi.{callee.name.text}',
                             ArrayType(ByteType())
                         )
                     elif callee.name.text == 'decode':
+                        assert_simple_call(arg_len=2)
+                        assert isinstance(new_args[1], TypeLiteral)
+
                         return BuiltInCall(
-                            [self.modifier(x) for x in expr.modifiers],
-                            new_args,
-                            f'abi.{callee.name.text}',
-                            None
+                            new_modifiers,
+                            [new_args[1]],
+                            'abi.decode',
+                            TupleType(new_args[1].type_of())
                         )
+                elif base.text == 'super':
+                    new_base = self.get_super_object(expr)
+                elif base.text == 'this':
+                    new_base = self.get_self_object(expr)
                 else:
                     ident_symbol = expr.scope.find_single(base.text)
-                    target_symbol = ident_symbol.find_single(callee.name.text)
-                    assert isinstance(target_symbol, symtab.StructScope)
-                    return CreateStruct(self.get_contract_type(target_symbol), new_args)
+                    ident_node = ident_symbol.value
+                    if isinstance(ident_node, solnodes1.StateVariableDeclaration):
+                        # state_var.xyz() => self.state_var.xyz()
+                        new_base = StateVarLoad(self.get_self_object(expr), Ident(ident_node.name.text))
+                    elif isinstance(ident_node, (solnodes1.Parameter, solnodes1.Var)):
+                        new_base = LocalVarLoad(self.var(ident_node))
+                    else:
+                        assert isinstance(ident_symbol, symtab.Scope)
+                        target_symbols = ident_symbol.find(callee.name.text)
+
+                        if len(target_symbols) == 0:
+                            raise ValueError('No resolve')
+
+                        if len(target_symbols) == 1:
+                            target_symbol = target_symbols[0]
+                        else:
+                            # check homogenous
+                            type_a = type(target_symbols[0])
+                            all([type(x) == type_a for x in target_symbols])
+
+                            assert isinstance(target_symbols[0], symtab.ModFunErrEvtScope)
+
+                            target_symbol = self.find_method(target_symbols, [arg.type_of() for arg in new_args])
+
+                        if isinstance(target_symbol, symtab.ModFunErrEvtScope):
+                            assert isinstance(ident_node, solnodes1.LibraryDefinition)
+                            # static library call, e.g. MyLib.xyz()
+                            return LibraryCall(new_modifiers, new_args, self.get_contract_type(ident_symbol), Ident(target_symbol.value.name.text))
+                        else:
+                            assert isinstance(target_symbol, symtab.StructScope)
+                            return CreateStruct(self.get_contract_type(target_symbol), new_args)
             else:
                 # This is here so that I can stop on each pattern, the above creation of new_base are approved patterns
                 self._todo(expr)
@@ -675,15 +808,14 @@ class Builder:
             # assert target
 
             return FunctionCall(
-                [self.modifier(x) for x in expr.modifiers],
+                new_modifiers,
                 new_args,
                 new_base,
                 Ident(callee.name.text)
             )
         elif isinstance(callee, solnodes1.New):
             if isinstance(callee.type_name, solnodes1.ArrayType):
-                assert len(expr.modifiers) == 0
-                assert len(expr.args) == 1
+                assert_simple_call()
                 size_expr = self.refine_expr(expr.args[0])
                 assert isinstance(size_expr, Literal)
                 return CreateMemoryArray(self.map_type(callee.type_name), size_expr)
@@ -705,8 +837,13 @@ class Builder:
         solnodes1.BinaryOpCode.ASSIGN_MOD: solnodes1.BinaryOpCode.MOD
     }
 
+    def any_or_all(self, args):
+        return all(args) == any(args)
+
     def refine_expr(self, expr: solnodes1.Expr):
-        if isinstance(expr, solnodes1.BinaryOp):
+        if isinstance(expr, solnodes1.UnaryOp):
+            return UnaryOp(self.refine_expr(expr.expr), expr.op, expr.is_pre)
+        elif isinstance(expr, solnodes1.BinaryOp):
             left = self.refine_expr(expr.left)
             right = self.refine_expr(expr.right)
 
@@ -733,9 +870,11 @@ class Builder:
             # hit when resolving other uses of Idents
 
             if expr.text == 'this':
-                ast1_current_contract = self.get_declaring_contract(expr)
-                contract_type: ResolvedUserType = self.get_contract_type(ast1_current_contract)
-                return SelfObject(contract_type.value)
+                return self.get_self_object(expr)
+            elif expr.text == '_':
+                # NOTE: we return a Stmt here instead of an Expr. In a later pass, ExprStmt(ExecModifiedCode)
+                # gets reduced to just ExecModifiedCode in place of ExprStmt
+                return ExecModifiedCode()
 
             ident_symbol = expr.scope.find_single(expr.text)
             assert ident_symbol  # must be resolved to something
@@ -773,32 +912,51 @@ class Builder:
                         return BuiltInValue('msg.data', ArrayType(ByteType()))
                     elif expr.name.text == 'sig':
                         return BuiltInValue('msg.sig', FixedLengthArrayType(UIntType()))
-            else:
-                # this is assumed to be a field load only, i.e. x.y (in AST1 x.y would be a child of a FunctionCall
-                # so x.y() should be a FunctionCall instead of the child of a FC)
-                new_base = self.refine_expr(base)
-                return StateVarLoad(new_base, expr.name.text)
+
+            # this is assumed to be a field load only, i.e. x.y (in AST1 x.y would be a child of a FunctionCall
+            # so x.y() should be a FunctionCall instead of the child of a FC)
+            new_base = self.refine_expr(base)
+            return StateVarLoad(new_base, expr.name.text)
 
         elif isinstance(expr, solnodes1.Literal):
-            return Literal(expr.value, expr.unit)
+            if isinstance(expr.value, tuple):
+                assert not expr.unit
+                # the grammar has 'TupleExpression' s, e.g. '(' exprList ')'. The exprs it allows can also be types.
+                # Either all or none of the exprs must be types
+                type_args = [isinstance(arg, solnodes1.Type) for arg in expr.value]
+                assert self.any_or_all(type_args)
+
+                if any(type_args):
+                    return TypeLiteral([self.map_type(t) for t in expr.value])
+                elif len(expr.value) == 1:
+                    assert isinstance(expr.value[0], solnodes1.Expr)
+                    return self.refine_expr(expr.value[0])
+            elif isinstance(expr.value, solnodes1.Type):
+                self._todo(expr)
+            else:
+                assert not isinstance(expr.value, solnodes1.Expr)
+                return Literal(expr.value, expr.unit)
         elif isinstance(expr, solnodes1.GetArrayValue):
             return ArrayLoad(self.refine_expr(expr.array_base), self.refine_expr(expr.index))
         elif isinstance(expr, solnodes1.PayableConversion):
             # address payable cast
             assert len(expr.args) == 1
             return Cast(AddressType(True), self.refine_expr(expr.args[0]))
+        elif isinstance(expr, solnodes1.CreateMetaType):
+            return GetType(self.map_type(expr.base_type))
+
         self._todo(expr)
 
-    def find_method(self, scope: symtab.Scope, base: Expr, arg_types: List[Type], name: str):
-        base_type: Type = base.type_of()
-
-        if not base_type:
-            self._todo(base)
-
-        # FIXME: this is wrong, don't lookup with str
-        base_type_name: str = str(base_type)
-        base_scope: symtab.Scope = scope.find_single(base_type_name)
-        possible_matches: List[symtab.Symbol] = base_scope.find(name, find_base_symbol=False)
+    def find_method(self, possible_matches: List[symtab.Symbol], arg_types: List[Type]):
+        # base_type: Type = base.type_of()
+        #
+        # if not base_type:
+        #     self._todo(base)
+        #
+        # # FIXME: this is wrong, don't lookup with str
+        # base_type_name: str = str(base_type)
+        # base_scope: symtab.Scope = scope.find_single(base_type_name)
+        # possible_matches: List[symtab.Symbol] = base_scope.find(name, find_base_symbol=False)
 
         def check_arg_types(s: symtab.Symbol) -> bool:
             def get_arg_types(func_scope: symtab.ModFunErrEvtScope):
@@ -893,6 +1051,8 @@ class Builder:
                 return StateVariableDeclaration(name, None, [], None)
             elif isinstance(n, solnodes1.EventDefinition):
                 return EventDefinition(name, [], None)
+            elif isinstance(n, solnodes1.ModifierDefinition):
+                return ModifierDefinition(name, [], [], None)
             else:
                 self._todo(ast1_node)
 
@@ -917,7 +1077,7 @@ class Builder:
         if not isinstance(ast1_node, (solnodes1.ContractDefinition, solnodes1.InterfaceDefinition,
                                       solnodes1.StructDefinition, solnodes1.LibraryDefinition,
                                       solnodes1.FunctionDefinition, solnodes1.EventDefinition,
-                                      solnodes1.StateVariableDeclaration)):
+                                      solnodes1.StateVariableDeclaration, solnodes1.ModifierDefinition)):
             raise ValueError('x')
             
         ast2_node = ast1_node.ast2_node
@@ -965,10 +1125,15 @@ class Builder:
             return ast2_node
 
         if isinstance(ast1_node, solnodes1.EventDefinition):
-            ast2_node.parameters = [EventParameter(Ident(p.name.text), self.map_type(p.var_type), p.is_indexed)
-                                    for p in ast1_node.parameters]
+            ast2_node.inputs = [EventParameter(Ident(p.name.text), self.map_type(p.var_type), p.is_indexed)
+                                for p in ast1_node.parameters]
             ast2_node.is_anonymous = ast1_node.is_anonymous
             return ast2_node
+
+        if isinstance(ast1_node, solnodes1.ModifierDefinition):
+            ast2_node.inputs = [self.parameter(x) for x in ast1_node.parameters]
+            ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
+            ast2_node.code = self.block(ast1_node.code) if ast1_node.code else None
 
         return None
 
