@@ -21,7 +21,7 @@ class Node:
 
             if isinstance(val, Node):
                 yield val
-            elif isinstance(val, list):
+            elif isinstance(val, (list, tuple)):
                 yield from [v for v in val if isinstance(v, Node)]
 
     def get_all_children(self):

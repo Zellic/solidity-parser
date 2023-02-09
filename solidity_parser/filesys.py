@@ -104,6 +104,8 @@ class VirtualFileSystem:
             path = Path(path)
         path = path.resolve(strict=True)
 
+        logging.getLogger('VFS').info(f'Reading {path}')
+
         with path.open(mode='r', encoding='utf-8') as f:
             return f.read()
 

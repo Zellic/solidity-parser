@@ -78,14 +78,21 @@ class Scope(Scopeable):
         return set([item for sublist in self.symbols.values() for item in sublist])
 
     def import_symbols_from_scope(self, other_scope: 'Scope'):
-        new_symbols = defaultdict(list)
+        # the scope to import may contain symbols that we already have
+        _new_symbols = defaultdict(set)
 
         for (k, v) in self.symbols.items():
-            new_symbols[k].extend(v)
+            for s in v:
+                _new_symbols[k].add(s)
         for (k,v) in other_scope.symbols.items():
-            new_symbols[k].extend(v)
+            for s in v:
+                _new_symbols[k].add(s)
 
-        self.symbols = new_symbols
+        new_symbols2 = defaultdict(list)
+        for k, v in _new_symbols.items():
+            new_symbols2[k].extend(v)
+
+        self.symbols = new_symbols2
 
     def add(self, symbol: Symbol):
         symbol.set_parent_scope(self)
@@ -141,7 +148,7 @@ class Scope(Scopeable):
         return symbol_str
 
     def __str__(self, level=0):
-        return f"Scope: {self.scope_name}" + self.str__symbols(level)
+        return f"Scope: {self.aliases}" + self.str__symbols(level)
 
 
 class ScopeAndSymbol(Scope, Symbol):
@@ -179,8 +186,12 @@ class RootScope(Scope):
 
 
 class FileScope(ScopeAndSymbol):
+    @staticmethod
+    def alias(source_unit_name: str):
+        return f'<source_unit:{source_unit_name}>'
+
     def __init__(self, builder: 'Builder2', vfs: VirtualFileSystem, source_unit_name: str):
-        ScopeAndSymbol.__init__(self, f'<source_unit:{source_unit_name}>', None)
+        ScopeAndSymbol.__init__(self, self.alias(source_unit_name), None)
         self.builder = builder
         self.vfs = vfs
         self.source_unit_name = source_unit_name
@@ -200,7 +211,7 @@ class FileScope(ScopeAndSymbol):
         return solnodes.NoType()
 
 
-class ContractOrInterfaceScope(ScopeAndSymbol):
+class ContractInterfaceLibraryScope(ScopeAndSymbol):
     def __init__(self, ast_node: Union[solnodes.ContractDefinition, solnodes.InterfaceDefinition]):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
 
@@ -211,24 +222,27 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
     def type_of(self):
         return self.value.name.text
 
-    def get_supers(self) -> List['ContractOrInterfaceScope']:
+    def find_local(self, name: str) -> Optional[List[Symbol]]:
+        found_symbols = Scope.find_local(self, name)
+        if found_symbols:
+            return found_symbols
+        else:
+            for super_contract in self.get_supers():
+                found_symbols = super_contract.find(name, False)
+                if found_symbols:
+                    return found_symbols
+        return []
+
+    def get_supers(self) -> List['ContractInterfaceLibraryScope']:
         klass_file_scope: FileScope = self.parent_scope
-        superklasses: List[ContractOrInterfaceScope] = []
+        superklasses: List[ContractInterfaceLibraryScope] = []
         for inherit_specifier in self.value.inherits:
             # inherit specifier => name type => name ident => text str
             name = inherit_specifier.name.name.text
-            symbol = klass_file_scope.find(name, True)
-            assert isinstance(symbol, ContractOrInterfaceScope), f'Got {symbol.aliases}::{type(symbol)}'
+            symbol = klass_file_scope.find_single(name, True)
+            assert isinstance(symbol, ContractInterfaceLibraryScope), f'Got {symbol.aliases}::{type(symbol)}'
             superklasses.append(symbol)
         return superklasses
-
-    def get_local_method(self, name):
-        def matches(symbol: Symbol):
-            return isinstance(symbol.value, solnodes.FunctionDefinition) and str(symbol.value.name) == name
-
-        candidates = [s.value for s in self.symbols.values() if matches(s)]
-
-        return candidates
 
 
 class StructScope(ScopeAndSymbol):
@@ -236,7 +250,7 @@ class StructScope(ScopeAndSymbol):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
 
     def set_parent_scope(self, parent_scope: Scope):
-        assert isinstance(parent_scope, (FileScope, ContractOrInterfaceScope))
+        assert isinstance(parent_scope, (FileScope, ContractInterfaceLibraryScope))
         return ScopeAndSymbol.set_parent_scope(self, parent_scope)
 
 
@@ -308,7 +322,12 @@ class Builder2:
         self.vfs = vfs
 
     def process_or_find(self, loaded_source: LoadedSource):
-        found_fs = [s for s in self.root_scope.symbols if isinstance(s, FileScope) and str(s.value.name) == loaded_source.source_unit_name]
+        # found_fs = [s for s in self.root_scope.symbols if isinstance(s, FileScope) and s.source_unit_name == loaded_source.source_unit_name]
+        found_fs = self.root_scope.symbols.get(FileScope.alias(loaded_source.source_unit_name))
+        if found_fs:
+            assert len(found_fs) == 1
+            found_fs = found_fs[0]
+
         print(f'FS {loaded_source.source_unit_name} exists={bool(found_fs)}')
 
         if not found_fs:
@@ -424,8 +443,8 @@ class Builder2:
         elif isinstance(node, (solnodes.FunctionDefinition, solnodes.EventDefinition,
                                solnodes.ErrorDefinition, solnodes.ModifierDefinition)):
             return ModFunErrEvtScope(node)
-        elif isinstance(node, (solnodes.ContractDefinition, solnodes.InterfaceDefinition)):
-            return ContractOrInterfaceScope(node)
+        elif isinstance(node, (solnodes.ContractDefinition, solnodes.InterfaceDefinition, solnodes.LibraryDefinition)):
+            return ContractInterfaceLibraryScope(node)
         elif isinstance(node, solnodes.StructDefinition):
             return StructScope(node)
         elif isinstance(node, solnodes.ContractPart):

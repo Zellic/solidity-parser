@@ -200,7 +200,7 @@ def _modifier_definition(parser, modifier_definition: SolidityParser.ModifierDef
 
     return solnodes.ModifierDefinition(
         parser.make(modifier_definition.identifier()),
-        parser.make(modifier_definition.parameterList()),
+        parser.make(modifier_definition.parameterList(), default=[]),
         modifiers,
         parser.make(modifier_definition.block())
     )
