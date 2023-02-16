@@ -596,6 +596,12 @@ class ConstantVariableDeclaration(SourceUnit):
 
 
 @dataclass
+class UserValueType(SourceUnit, ContractPart):
+    name: Ident
+    value: Type
+
+
+@dataclass
 class EventParameter(Node):
     var_type: Type
     name: Ident
