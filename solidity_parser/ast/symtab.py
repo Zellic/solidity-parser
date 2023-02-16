@@ -1,4 +1,4 @@
-from typing import Union, List, Dict, Optional, Type
+from typing import Union, List, Dict, Optional, Type, Tuple
 from collections import defaultdict
 
 from solidity_parser.ast import solnodes
@@ -33,7 +33,7 @@ class Scopeable:
             current = current.parent_scope
         return current
 
-    def find_first_ancestor_of(self, ttype: Type):
+    def find_first_ancestor_of(self, ttype: Union[Type, Tuple[Type]]):
         return self.find_first_ancestor(lambda x: isinstance(x, ttype))
 
 
@@ -211,7 +211,16 @@ class FileScope(ScopeAndSymbol):
         return solnodes.NoType()
 
 
-class ContractInterfaceLibraryScope(ScopeAndSymbol):
+class LibraryScope(ScopeAndSymbol):
+    def __init__(self, ast_node: solnodes.LibraryDefinition):
+        ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
+
+    def set_parent_scope(self, parent_scope: Scope):
+        assert isinstance(parent_scope, FileScope)
+        return ScopeAndSymbol.set_parent_scope(self, parent_scope)
+
+
+class ContractOrInterfaceScope(ScopeAndSymbol):
     def __init__(self, ast_node: Union[solnodes.ContractDefinition, solnodes.InterfaceDefinition]):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
 
@@ -233,14 +242,14 @@ class ContractInterfaceLibraryScope(ScopeAndSymbol):
                     return found_symbols
         return []
 
-    def get_supers(self) -> List['ContractInterfaceLibraryScope']:
+    def get_supers(self) -> List['ContractOrInterfaceScope']:
         klass_file_scope: FileScope = self.parent_scope
-        superklasses: List[ContractInterfaceLibraryScope] = []
+        superklasses: List[ContractOrInterfaceScope] = []
         for inherit_specifier in self.value.inherits:
             # inherit specifier => name type => name ident => text str
             name = inherit_specifier.name.name.text
             symbol = klass_file_scope.find_single(name, True)
-            assert isinstance(symbol, ContractInterfaceLibraryScope), f'Got {symbol.aliases}::{type(symbol)}'
+            assert isinstance(symbol, ContractOrInterfaceScope), f'Got {symbol.aliases}::{type(symbol)}'
             superklasses.append(symbol)
         return superklasses
 
@@ -250,12 +259,30 @@ class StructScope(ScopeAndSymbol):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
 
     def set_parent_scope(self, parent_scope: Scope):
-        assert isinstance(parent_scope, (FileScope, ContractInterfaceLibraryScope))
+        assert isinstance(parent_scope, (FileScope, ContractOrInterfaceScope, LibraryScope))
+        return ScopeAndSymbol.set_parent_scope(self, parent_scope)
+
+
+class LibraryScope(ScopeAndSymbol):
+    def __init__(self, ast_node: solnodes.LibraryDefinition):
+        ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
+
+    def set_parent_scope(self, parent_scope: Scope):
+        assert isinstance(parent_scope, FileScope)
+        return ScopeAndSymbol.set_parent_scope(self, parent_scope)
+
+
+class EnumScope(ScopeAndSymbol):
+    def __init__(self, ast_node: solnodes.EnumDefinition):
+        ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
+
+    def set_parent_scope(self, parent_scope: Scope):
+        assert isinstance(parent_scope, (FileScope, ContractOrInterfaceScope, LibraryScope, EnumScope))
         return ScopeAndSymbol.set_parent_scope(self, parent_scope)
 
 
 class ModFunErrEvtScope(ScopeAndSymbol):
-    def __init__(self, ast_node: [solnodes.FunctionDefinition, solnodes.EventDefinition,
+    def __init__(self, ast_node: Union[solnodes.FunctionDefinition, solnodes.EventDefinition,
                                   solnodes.ErrorDefinition, solnodes.ModifierDefinition]):
         # name = f'{ast_node.name} {param_type_str(ast_node.parameters)}'
         # if hasattr(ast_node, 'returns'):
@@ -335,6 +362,13 @@ class Builder2:
 
         return found_fs
 
+    def process_or_find_from_base_dir(self, relative_source_unit_name: str):
+        source_unit_name = self.vfs._compute_source_unit_name(relative_source_unit_name, '')
+        fs = self.root_scope.find_single(FileScope.alias(source_unit_name))
+        if fs:
+            return fs
+        return self.process_file(source_unit_name)
+
     def process_file(self, source_unit_name: str, source_units: List[solnodes.SourceUnit] = None):
         if source_units is None:
             source = self.vfs.lookup_import_path(source_unit_name, '')
@@ -411,22 +445,25 @@ class Builder2:
                 library_file_scope: FileScope = current_file_scope.find(node.library_name.text)[0]
                 target_type = node.override_type
 
-                assert target_type == solnodes.IntType(False, 256)
-
                 target_scope_name = str(target_type)
                 target_type_scope = current_file_scope.find_local(target_scope_name)
                 if not target_type_scope:
                     target_type_scope = ScopeAndSymbol(target_scope_name, target_type)
                     current_file_scope.add(target_type_scope)
+                elif len(target_type_scope) != 1:
+                    raise ValueError(f'Too many type scopes for {target_scope_name}')
+                else:
+                    target_type_scope = target_type_scope[0]
 
                 for s in library_file_scope.all_symbols():
-                    func_def: solnodes.FunctionDefinition = s.value
+                    func_def = s.value
+                    if not isinstance(func_def, solnodes.FunctionDefinition):
+                        continue
                     if func_def.parameters:
                         first_parameter_type = func_def.parameters[0].var_type
                         if first_parameter_type == target_type:
                             indirection_symbol = UsingFunctionSymbol(s, target_type)
                             target_type_scope.add(indirection_symbol)
-
         elif isinstance(node, solnodes.PragmaDirective):
             return None
         elif isinstance(node, solnodes.SymbolImportDirective):
@@ -443,10 +480,14 @@ class Builder2:
         elif isinstance(node, (solnodes.FunctionDefinition, solnodes.EventDefinition,
                                solnodes.ErrorDefinition, solnodes.ModifierDefinition)):
             return ModFunErrEvtScope(node)
-        elif isinstance(node, (solnodes.ContractDefinition, solnodes.InterfaceDefinition, solnodes.LibraryDefinition)):
-            return ContractInterfaceLibraryScope(node)
+        elif isinstance(node, solnodes.LibraryDefinition):
+            return LibraryScope(node)
+        elif isinstance(node, (solnodes.ContractDefinition, solnodes.InterfaceDefinition)):
+            return ContractOrInterfaceScope(node)
         elif isinstance(node, solnodes.StructDefinition):
             return StructScope(node)
+        elif isinstance(node, solnodes.EnumDefinition):
+            return EnumScope(node)
         elif isinstance(node, solnodes.ContractPart):
             # This catches: ModifierDefinition, StructDefinition, EnumDefinition,
             # StateVariableDeclaration, EventDefinition, ErrorDefinition. These all have a 'name'

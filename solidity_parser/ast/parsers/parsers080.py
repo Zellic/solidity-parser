@@ -614,8 +614,14 @@ def _string_literal(parser, literal: SolidityParser.StringLiteralContext):
 
 
 def _number_literal(parser, literal: SolidityParser.NumberLiteralContext):
+    # floats aren't allowed in Solidity, if there is a numeric literal ith a decimal point, it needs to have an exponent
+    # (or a unit?) so that the complete value of the literal evaluates to an integer
     if literal.DecimalNumber():
-        value = float(literal.DecimalNumber().getText())
+        str_val = literal.DecimalNumber().getText()
+        # parse unit float() instead of int() as it handles the decimal point and exponent stuff
+        value = float(str_val)
+        assert value.is_integer()
+        value = int(value)
     else:
         value = int(literal.HexNumber().getText(), 16)
 

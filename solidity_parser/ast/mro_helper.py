@@ -1,4 +1,4 @@
-from solidity_parser.ast.symtab import ContractInterfaceLibraryScope
+from solidity_parser.ast.symtab import ContractOrInterfaceScope
 from typing import List
 
 
@@ -28,7 +28,7 @@ def _merge(*sequences):
                 del seq[0]
 
 
-def c3_linearise(klass: ContractInterfaceLibraryScope) -> List[ContractInterfaceLibraryScope]:
+def c3_linearise(klass: ContractOrInterfaceScope) -> List[ContractOrInterfaceScope]:
     superklasses = klass.get_supers()
     # In solidity this is reversed for some reason
     superklasses = list(reversed(superklasses))

@@ -158,6 +158,7 @@ import logging
 from solidity_parser.ast.mro_helper import c3_linearise
 from solidity_parser.ast import funcanalysis
 from solidity_parser.ast import solnodes2
+from glob import glob
 
 if __name__ == '__main__':
     pp.install_extras()
@@ -187,21 +188,41 @@ if __name__ == '__main__':
     # vfs.process_standard_json('../example/TestInput.json')
 
     builder = symtab.Builder2(vfs)
-    file_scope = builder.process_file('@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol')
-    contract_scope = file_scope.find('Initializable')
+    
+    # file_scope = builder.process_file('@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol')
+    # contract_scope = file_scope.find('Initializable')
+    
     # file_scope = builder.process_file('contracts-upgradable/token/ONFT721/ONFT721CoreUpgradeable.sol')
     # contract_scope = file_scope.find('ONFT721CoreUpgradeable')
+
+    # file_scope = builder.process_file('./examples/../examples/ExampleBasedOFT20.sol')
+    # contract_scope = file_scope.find('ExampleBasedOFT')
+
     # pp.pprint(contract_scope[0].value)
     b2 = solnodes2.Builder()
-    b2.define_skeleton(contract_scope[0].value, file_scope.source_unit_name)
+
+    all_files = [y for x in os.walk(base_dir) for y in glob(os.path.join(x[0], '*.sol'))]
+    all_files = [r[len(base_dir)+len('\\'):] for r in all_files]
+    all_files = [f'./{f}' for f in all_files]
+
+    for f in all_files:
+        fs = builder.process_or_find_from_base_dir(f)
+        for s in fs.symbols.values():
+            if len(s) != 1:
+                continue
+            n = s[0].value
+            if not hasattr(n, 'ast2_node') and b2.is_top_level(n):
+                b2.define_skeleton(n, fs.source_unit_name)
+
     b2.process_all()
 
-    syms = [x for xs in builder.root_scope.symbols.values() for x in xs if isinstance(x, symtab.FileScope)]
-    print(len(syms))
-    c2 = contract_scope[0].value.ast2_node
-    c2.get_children()
-    with open('output.txt', 'wt') as out:
-        pp.pprint(c2, stream=out)
+
+    # syms = [x for xs in builder.root_scope.symbols.values() for x in xs if isinstance(x, symtab.FileScope)]
+    # print(syms)
+    # c2 = contract_scope[0].value.ast2_node
+    # c2.get_children()
+    # with open('output.txt', 'wt') as out:
+    #     pp.pprint(c2, stream=out)
 
     # print([str(c.value.name) for c in c3_linearise(contract_scope)])
 
