@@ -10,6 +10,9 @@ from solidity_parser.grammar.v070.SolidityParser import SolidityParser as Solidi
 from solidity_parser.grammar.v080.SolidityLexer import SolidityLexer as SolidityLexer080
 from solidity_parser.grammar.v080.SolidityParser import SolidityParser as SolidityParser080
 
+from solidity_parser.grammar.v088.SolidityLexer import SolidityLexer as SolidityLexer088
+from solidity_parser.grammar.v088.SolidityParser import SolidityParser as SolidityParser088
+
 from solidity_parser.collectors.collector import collect_top_level_objects, get_minor_ver
 # from solidity_parser.ast.nodes import Contract, ContractType
 import prettyprinter as pp
@@ -17,6 +20,7 @@ import prettyprinter as pp
 from solidity_parser.ast.parsers.parsers060 import Parser060
 from solidity_parser.ast.parsers.parsers070 import Parser070
 from solidity_parser.ast.parsers.parsers080 import Parser080
+from solidity_parser.ast.parsers.parsers088 import Parser088
 
 from solidity_parser.ast import solnodes, symtab
 
@@ -160,7 +164,7 @@ from solidity_parser.ast import funcanalysis
 from solidity_parser.ast import solnodes2
 from glob import glob
 
-if __name__ == '__main__':
+if __name__ == '__main__1':
     pp.install_extras()
     logging.basicConfig( level=logging.DEBUG)
     # p = Path('../example/TestInput.json').resolve()
@@ -229,7 +233,7 @@ if __name__ == '__main__':
     # funcanalysis.dfs(contract_scope[0].value)
     # print(contract_scope.get_local_method('swapNativeForNative'))
 
-if __name__ == '__main__1':
+if __name__ == '__main__':
     # base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
     # all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
     # all_files = ['C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only\\contracts\\30\\00\\30002861577da4ea6aa23966964172ad75dca9c7']
@@ -243,18 +247,18 @@ if __name__ == '__main__1':
     #     idx += 1
 
     input_src = open(
-        '../example/test.sol',
+        'C:/Users/bibl/Downloads/x/RLPReader.sol',
         'r').read()
 
-    try_parse_contract('ft', 8, input_src, None)
+    # try_parse_contract('ft', 8, input_src, None)
 
-    # lexer = SolidityLexer080(InputStream(input_src))
-    # stream = CommonTokenStream(lexer)
-    # parser = SolidityParser080(stream)
-    # ast_parser = Parser080()
-    #
-    # tree = parser.sourceUnit()
-    # source_units = tree.children
+    lexer = SolidityLexer088(InputStream(input_src))
+    stream = CommonTokenStream(lexer)
+    parser = SolidityParser088(stream)
+    ast_parser = Parser088()
+
+    tree = parser.sourceUnit()
+    source_units = tree.children
 
     # symtab_builder = symtab.Builder2(None)
 

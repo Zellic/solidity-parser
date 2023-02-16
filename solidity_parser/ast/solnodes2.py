@@ -511,6 +511,18 @@ class BuiltInValue(Expr):
 
 
 @dataclass
+class ABISelector(Expr):
+    function: FunctionDefinition
+
+    def type_of(self) -> Type:
+        return Bytes(4)
+
+    def __str__(self):
+        owner_name = self.function.parent.source_unit_name
+        return f'{owner_name}.{self.function.name.text}.selector'
+
+
+@dataclass
 class CreateMemoryArray(Expr):
     ttype: ArrayType
     size: Expr
@@ -1069,6 +1081,13 @@ class Builder:
             return self.refine_call_function(expr)
         elif isinstance(expr, solnodes1.GetMember):
             base = expr.obj_base
+
+            if expr.name.text == 'selector':
+                # the selector is a bytes4 ABI function selector
+                assert isinstance(base, solnodes1.GetMember)
+
+                return ABISelector(None)
+
             if isinstance(base, solnodes1.Ident):
                 if base.text == 'msg':
                     if expr.name.text == 'value':
@@ -1082,7 +1101,6 @@ class Builder:
                     elif expr.name.text == 'sig':
                         return BuiltInValue('msg.sig', FixedLengthArrayType(UIntType()))
 
-            if isinstance(base, solnodes1.Ident):
                 # MyEnum.MYVALUE, don't want to pass Ident(text='MyEnum') to refine_expr as it's not an Expr that can
                 # be loaded as a base itself
                 target_symbols = base.scope.find(base.text)
@@ -1093,7 +1111,6 @@ class Builder:
             # so x.y() should be a FunctionCall instead of the child of a FC)
             new_base = self.refine_expr(base)
             return StateVarLoad(new_base, expr.name.text)
-
         elif isinstance(expr, solnodes1.Literal):
             if isinstance(expr.value, tuple):
                 assert not expr.unit
