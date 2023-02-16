@@ -313,18 +313,23 @@ def _primary(parser, expr: SolidityParser.PrimaryExpressionContext):
         else:
             return base_type
     elif expr.identifier() is not None:
-        base_type = solnodes.UserType(parser.make(expr.identifier()))
+        # In the 080 grammar primary expressions hit 'identifier' first. To match this, if this isn't
+        # an array type, return as an ident
         if expr.arrayBrackets():
+            base_type = solnodes.UserType(parser.make(expr.identifier()))
             return solnodes.ArrayType(base_type)
         else:
-            return base_type
+            return parser.make(expr.identifier())
     else:
         return parser.make_first(expr)
 
 
 def _number_literal(parser, literal: SolidityParser.NumberLiteralContext):
-    if literal.DecimalNumber() is not None:
-        value = float(literal.DecimalNumber().getText())
+    if literal.DecimalNumber():
+        str_val = literal.DecimalNumber().getText()
+        value = float(str_val)
+        assert value.is_integer()
+        value = int(value)
     else:
         value = int(literal.HexNumber().getText(), 16)
 

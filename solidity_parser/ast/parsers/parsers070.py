@@ -31,8 +31,11 @@ def _unicode_string_literal(parser, literal: SolidityParser.UnicodeStringLiteral
 
 
 def _number_literal(parser, literal: SolidityParser.NumberLiteralContext):
-    if literal.DecimalNumber() is not None:
-        value = float(literal.DecimalNumber().getText())
+    if literal.DecimalNumber():
+        str_val = literal.DecimalNumber().getText()
+        value = float(str_val)
+        assert value.is_integer()
+        value = int(value)
     else:
         value = int(literal.HexNumber().getText(), 16)
 
