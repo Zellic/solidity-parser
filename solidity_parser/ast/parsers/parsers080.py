@@ -9,8 +9,8 @@ from solidity_parser.ast import solnodes
 class Parser080(ParserBase):
     def __init__(self):
         super().__init__({
-            **get_all_subparsers(sys.modules[__name__]),
-            **custom_parsers()
+            **custom_parsers(),
+            **get_all_subparsers(sys.modules[__name__])
         })
 
 
@@ -23,7 +23,6 @@ def custom_parsers():
             parsers060._dowhile,
             parsers060._continue,
             parsers060._break,
-            parsers060._try,
             parsers060._return
         ),
         'StatementContext': ParserBase.make_first,
@@ -56,12 +55,21 @@ def custom_parsers():
     }
 
 
+def _try(parser, stmt: SolidityParser.TryStatementContext):
+    return solnodes.Try(
+        parser.make(stmt.expression()),
+        parser.make(stmt.returnParameters, default=[]),
+        parser.make(stmt.block()),
+        parser.make_all_rules(stmt.catchClause())
+    )
+
+
 def _pragma_directive(parser, pragma_directive: SolidityParser.PragmaDirectiveContext):
     total_str = ''
     for token in pragma_directive.PragmaToken():
         total_str += token.getText()
     # TODO: how to split?
-    return solnodes.PragmaDirective(None, None)
+    return solnodes.PragmaDirective(name='pragma', value=total_str)
 
 
 def _import_directive(parser, directive: SolidityParser.ImportDirectiveContext):
@@ -105,7 +113,7 @@ def _contract_definition(parser, contract_definition: SolidityParser.ContractDef
     return solnodes.ContractDefinition(
         parser.make(contract_definition.identifier()),
         contract_definition.Abstract() is not None,
-        parser.make(contract_definition.inheritanceSpecifierList()),
+        parser.make(contract_definition.inheritanceSpecifierList(), default=[]),
         parser.make_all_rules(contract_definition.contractBodyElement())
     )
 
@@ -113,7 +121,7 @@ def _contract_definition(parser, contract_definition: SolidityParser.ContractDef
 def _interface_definition(parser, interface_definition: SolidityParser.InterfaceDefinitionContext):
     return solnodes.InterfaceDefinition(
         parser.make(interface_definition.identifier()),
-        parser.make(interface_definition.inheritanceSpecifierList()),
+        parser.make(interface_definition.inheritanceSpecifierList(), default=[]),
         parser.make_all_rules(interface_definition.contractBodyElement())
     )
 
@@ -129,7 +137,7 @@ def _inheritance_specifier(parser, inheritance_specifier: SolidityParser.Inherit
     type_name = parser.make(inheritance_specifier.identifierPath())
     return solnodes.InheritSpecifier(
         solnodes.UserType(type_name),
-        parser.make(inheritance_specifier.callArgumentList())
+        parser.make(inheritance_specifier.callArgumentList(), default=[])
     )
 
 
@@ -199,7 +207,7 @@ def _modifier_definition(parser, modifier_definition: SolidityParser.ModifierDef
 
     return solnodes.ModifierDefinition(
         parser.make(modifier_definition.identifier()),
-        parser.make(modifier_definition.parameterList()),
+        parser.make(modifier_definition.parameterList(), default=[]),
         modifiers,
         parser.make(modifier_definition.block())
     )
@@ -432,7 +440,7 @@ def _expr_stmt(parser, stmt: SolidityParser.ExpressionStatementContext):
 def _try(parser, stmt: SolidityParser.TryStatementContext):
     return solnodes.Try(
         parser.make(stmt.expression()),
-        parser.make(stmt.parameterList()),
+        parser.make(stmt.parameterList(), default=[]),
         parser.make(stmt.block()),
         parser.make_all_rules(stmt.catchClause())
     )
@@ -441,7 +449,7 @@ def _try(parser, stmt: SolidityParser.TryStatementContext):
 def _catch_clause(parser, catch_clause: SolidityParser.CatchClauseContext):
     return solnodes.Catch(
         parser.make(catch_clause.identifier()),
-        parser.make(catch_clause.parameterList()),
+        parser.make(catch_clause.parameterList(), default=[]),
         parser.make(catch_clause.block())
     )
 
@@ -457,7 +465,7 @@ def _emit(parser, stmt: SolidityParser.EmitStatementContext):
 
 
 def _revert(parser, stmt: SolidityParser.RevertStatementContext):
-    return solnodes.Rvert(
+    return solnodes.Revert(
         solnodes.CallFunction(
             parser.make(stmt.expression()),
             [],
@@ -513,11 +521,18 @@ def _meta_type(parser, meta_type: SolidityParser.MetaTypeContext):
 
 
 def _type_name(parser, type_name: SolidityParser.TypeNameContext):
-    if type_name.expression():
-        return solnodes.VariableLengthArrayType(
-            parser.make(type_name.typeName()),
-            parser.make(type_name.expression())
-        )
+    if type_name.typeName():
+        if type_name.expression():
+            return solnodes.VariableLengthArrayType(
+                parser.make(type_name.typeName()),
+                parser.make(type_name.expression())
+            )
+        else:
+            return solnodes.ArrayType(
+                parser.make(type_name.typeName())
+            )
+    elif type_name.identifierPath():
+        return solnodes.UserType(parser.make_first(type_name))
     else:
         return parser.make_first(type_name)
 
@@ -606,8 +621,14 @@ def _string_literal(parser, literal: SolidityParser.StringLiteralContext):
 
 
 def _number_literal(parser, literal: SolidityParser.NumberLiteralContext):
+    # floats aren't allowed in Solidity, if there is a numeric literal ith a decimal point, it needs to have an exponent
+    # (or a unit?) so that the complete value of the literal evaluates to an integer
     if literal.DecimalNumber():
-        value = float(literal.DecimalNumber().getText())
+        str_val = literal.DecimalNumber().getText()
+        # parse unit float() instead of int() as it handles the decimal point and exponent stuff
+        value = float(str_val)
+        assert value.is_integer()
+        value = int(value)
     else:
         value = int(literal.HexNumber().getText(), 16)
 
