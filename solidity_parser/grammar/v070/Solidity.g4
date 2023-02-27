@@ -279,7 +279,7 @@ expression
   | expression ('==' | '!=') expression # BinaryExpr
   | expression '&&' expression # BinaryExpr
   | expression '||' expression # BinaryExpr
-  | expression '?' expression ':' expression # TernaryExpr
+  | expression '?' (expression ':' expression) # TernaryExpr
   | expression ('=' | '|=' | '^=' | '&=' | '<<=' | '>>=' | '+=' | '-=' | '*=' | '/=' | '%=') expression # BinaryExpr
   | primaryExpression  # Primary;
 

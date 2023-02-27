@@ -365,7 +365,7 @@ expression:
 	| expression (Equal | NotEqual) expression # EqualityComparison
 	| expression And expression # AndOperation
 	| expression Or expression # OrOperation
-	|<assoc=right> expression Conditional expression Colon expression # Conditional
+	|<assoc=right> expression Conditional (expression Colon expression) # Conditional
 	|<assoc=right> expression assignOp expression # Assignment
 	| New typeName # NewExpression
 	| tupleExpression # Tuple

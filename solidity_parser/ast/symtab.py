@@ -38,20 +38,15 @@ class Scopeable:
 
 
 class Symbol(Scopeable):
-    def __init__(self, aliases: Optional[Aliases], value, static_type: solnodes.Type = None):
+    def __init__(self, aliases: Optional[Aliases], value):
         Scopeable.__init__(self, aliases)
 
         self.value = value
         self.order = -1
 
-        self.static_type = static_type
-
     def resolve_base_symbol(self) -> 'Symbol':
         # Return the symbol this symbol points to, if one exists.
         return self
-
-    def type_of(self):
-        return self.static_type
 
     def set_parent_scope(self, parent_scope: 'Scope'):
         Scopeable.set_parent_scope(self, parent_scope)
@@ -151,6 +146,10 @@ class Scope(Scopeable):
         return f"Scope: {self.aliases}" + self.str__symbols(level)
 
 
+def type_key(ttype) -> str:
+    return f'<type:{str(ttype)}>'
+
+
 class ScopeAndSymbol(Scope, Symbol):
     def __init__(self, aliases: Optional[Aliases], ast_node):
         Scope.__init__(self, aliases)
@@ -205,11 +204,6 @@ class FileScope(ScopeAndSymbol):
         assert isinstance(parent_scope, RootScope)
         return ScopeAndSymbol.set_parent_scope(self, parent_scope)
 
-    def type_of(self):
-        # The file itself doesn't have a type associated with it,
-        # only the contracts/interfaces/functions etc inside it do
-        return solnodes.NoType()
-
 
 class LibraryScope(ScopeAndSymbol):
     def __init__(self, ast_node: solnodes.LibraryDefinition):
@@ -227,9 +221,6 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
     def set_parent_scope(self, parent_scope: Scope):
         assert isinstance(parent_scope, FileScope)
         return ScopeAndSymbol.set_parent_scope(self, parent_scope)
-
-    def type_of(self):
-        return self.value.name.text
 
     def find_local(self, name: str) -> Optional[List[Symbol]]:
         found_symbols = Scope.find_local(self, name)
@@ -298,9 +289,6 @@ class ImportSymbol(ScopeAndSymbol):
         source_unit: FileScope = self.parent_scope
         import_path = self.value.path
         return source_unit.get_imported_source_unit(import_path)
-
-    def type_of(self):
-        return solnodes.NoType()
 
 
 class AliasImportSymbol(ImportSymbol):
@@ -380,42 +368,87 @@ class Builder2:
 
         context = Builder2.Context(fs)
 
-        for node in source_units:
-            self.add_node_dfs(fs, node, context)
+        for index, node in enumerate(source_units):
+            self.add_node_dfs(fs, node, context, index)
 
         self.add_to_scope(self.root_scope, fs)
 
         return fs
 
-    def add_node_dfs(self, parent_scope, node, context: Context):
-        if node is None:
-            return None
+    def add_node_dfs(self, parent_scope, node, context: Context, visit_index=0):
+        """
+        Recursively traverse a node and its children and create symbols and scopes in a nested hierarchy
 
+        This function adds newly created symbols and scopes to the given parent scope and does not return anything
+        """
+
+        if node is None:
+            # base case, nothing to do
+            return
+
+        # we need to add any created symbols/scope to a parent
         assert parent_scope is not None, 'No parent scope'
 
+        # the nodes scope is the scope it was created in always
         node.scope = parent_scope
 
+        # track the scope for the nodes children later
         current_scope = parent_scope
 
-        scope_or_symbols = self.process_node(node, context)
+        # Process the node for new symbols or a new scope
+        scope_or_symbols = self.process_node(node, context, visit_index)
         if scope_or_symbols is None:
             new_symbols = []
         elif isinstance(scope_or_symbols, list):
-            # this is assumed to be a list of symbols
+            # this is assumed to be a list of symbols, i.e. doesn't contain a scope
             new_symbols = scope_or_symbols
         elif isinstance(scope_or_symbols, Symbol):
+            # single symbol(or scope), collect into list
             new_symbols = [scope_or_symbols]
         else:
             assert False, f'Invalid processing of {node} => {scope_or_symbols}'
 
+        # if it created a new scope, set the current scope to it so the nodes children are in that scope
         if isinstance(scope_or_symbols, Scope):
             current_scope = scope_or_symbols
 
+        # add the created symbols under the parent scope. The process_node call above either makes a new
+        # scope or new symbols, so don't think of this as adding new symbols to a newly created scope, that is
+        # invalid behaviour
         for new_child_sym in new_symbols:
             self.add_to_scope(parent_scope, new_child_sym)
 
-        for child_node in node.get_children():
-            self.add_node_dfs(current_scope, child_node, context)
+        # process children nodes in the current scope(whether it's the parent scope or a newly created one)
+
+        # updated algorithm for name shadowing when we encounter a VarDecl (r1,.., rk = value)
+        #  1. Make a new child scope of the current scope where the rhs variables are defined
+        #  2. Process the value under the current scope (not the newly created one)
+
+        # Example: unit decimals = decimals()
+        #  where decimals() is a function call that returns a uint
+        #
+        # Later on when the resolver sees the call to decimals() (expr C) and looks up 'decimals' in C.scope, it
+        # would return a scope that defines 'decimals' as a local variable (var V). In this modified algorithm,
+        # V.scope.parent_scope == E.scope, so E.scope.find('decimals') == function scope for 'decimals' and
+        # V.scope.find('decimals') == variable 'decimals'.
+
+        child_scope = current_scope
+        for child_index, child_node in enumerate(node.get_children()):
+
+            if isinstance(child_node, solnodes.VarDecl):
+                scope_name = ','.join([var.var_name.text for var in child_node.variables])
+                new_scope = self.make_scope(child_node, name=f'<vardecl:{scope_name}>')
+
+                self.add_to_scope(child_scope, new_scope)
+
+                var_symbols = [self.make_symbol(var, name=var.var_name.text) for var in child_node.variables]
+                self.add_to_scope(new_scope, *var_symbols)
+
+                # do this before setting the child scope
+                self.add_node_dfs(child_scope, child_node, context, child_index)
+                child_scope = new_scope
+            else:
+                self.add_node_dfs(child_scope, child_node, context, child_index)
 
     def add_to_scope(self, parent: Scope, *children: Symbol):
         if children is not None:
@@ -435,7 +468,7 @@ class Builder2:
     def scope_name(self, base_name, node):
         return f'<{base_name}>@{node.location}'
 
-    def process_node(self, node, context: Context):
+    def process_node(self, node, context: Context, visit_index: int):
         if isinstance(node, solnodes.UsingDirective):
             if isinstance(node.override_type, solnodes.AnyType):
                 raise NotImplemented("using X for *")
@@ -511,9 +544,14 @@ class Builder2:
             else:
                 return self.make_symbol(node, name=node.var_name.text)
         elif isinstance(node, solnodes.EventParameter):
-            return self.make_symbol(node)
+            if node.name is None:
+                name = f'<unnamed_paramter:{visit_index}'
+            else:
+                name = node.name.text
+            return self.make_symbol(node, name=name)
         elif isinstance(node, solnodes.VarDecl):
-            return [self.make_symbol(var, name=var.var_name.text) for var in node.variables]
+            return None  # TODO: this is a sentinel
+            # return [self.make_symbol(var, name=var.var_name.text) for var in node.variables]
         elif isinstance(node, solnodes.Block):
             return ScopeAndSymbol(self.scope_name('block', node), node)
         return None

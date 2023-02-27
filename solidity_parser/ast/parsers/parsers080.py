@@ -308,7 +308,7 @@ def _state_variable_declaration(parser, state_variable_declaration: SolidityPars
 
 
 def _error_definition(parser, error_definition: SolidityParser.ErrorDefinitionContext):
-    return solnodes.EnumDefinition(
+    return solnodes.ErrorDefinition(
         parser.make(error_definition.identifier()),
         parser.make_all_rules(error_definition.errorParameter())
     )
