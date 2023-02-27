@@ -162,9 +162,10 @@ import logging
 from solidity_parser.ast.mro_helper import c3_linearise
 from solidity_parser.ast import funcanalysis
 from solidity_parser.ast import solnodes2
+from solidity_parser.ast.ast2builder import Builder as Builder2
 from glob import glob
 
-if __name__ == '__main__1':
+if __name__ == '__main__':
     pp.install_extras()
     logging.basicConfig( level=logging.DEBUG)
     # p = Path('../example/TestInput.json').resolve()
@@ -176,7 +177,9 @@ if __name__ == '__main__1':
     # print(x.name, x.hometown.name, x.hometown.id)
 
     # base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
-    base_dir = 'C:/Users/bibl/Downloads/solidity-examples-main/contracts'
+    # base_dir = 'C:/Users/bibl/Downloads/solidity-examples-main/contracts'
+    base_dir = 'C:/Users/bibl/Downloads/debridge-contracts-v1'
+    # base_dir = 'F:/Zellic/Workspace/solidity-parser/testcases'
     # lets say we're in the /examples folder and go backwards to StargateComposed.sol in CLI
     # cwd = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/examples'
     # node_modules_dir = 'C:/Users/Bilal/node_modules'
@@ -191,34 +194,47 @@ if __name__ == '__main__1':
 
     # vfs.process_standard_json('../example/TestInput.json')
 
-    builder = symtab.Builder2(vfs)
+    symtab_builder = symtab.Builder2(vfs)
     
     # file_scope = builder.process_file('@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol')
     # contract_scope = file_scope.find('Initializable')
     
-    # file_scope = builder.process_file('contracts-upgradable/token/ONFT721/ONFT721CoreUpgradeable.sol')
-    # contract_scope = file_scope.find('ONFT721CoreUpgradeable')
+    # file_scope = builder.process_file('lzApp/NonblockingLzApp.sol')
+    # contract_scope = file_scope.find('NonblockingLzApp')[0].value
 
-    # file_scope = builder.process_file('./examples/../examples/ExampleBasedOFT20.sol')
-    # contract_scope = file_scope.find('ExampleBasedOFT')
+    # file_scope = builder.process_file('@openzeppelin/contracts/token/ERC721/ERC721.sol')
+    # contract_scope = file_scope.find('ERC721')[0].value
 
     # pp.pprint(contract_scope[0].value)
-    b2 = solnodes2.Builder()
+    ast2_builder = Builder2()
+
+    # b2.define_skeleton(contract_scope, file_scope.source_unit_name)
 
     all_files = [y for x in os.walk(base_dir) for y in glob(os.path.join(x[0], '*.sol'))]
     all_files = [r[len(base_dir)+len('\\'):] for r in all_files]
     all_files = [f'./{f}' for f in all_files]
 
     for f in all_files:
-        fs = builder.process_or_find_from_base_dir(f)
+        fs = symtab_builder.process_or_find_from_base_dir(f)
         for s in fs.symbols.values():
             if len(s) != 1:
                 continue
             n = s[0].value
-            if not hasattr(n, 'ast2_node') and b2.is_top_level(n):
-                b2.define_skeleton(n, fs.source_unit_name)
+            if not hasattr(n, 'ast2_node') and ast2_builder.is_top_level(n):
+                ast2_builder.define_skeleton(n, fs.source_unit_name)
 
-    b2.process_all()
+    # fs = symtab_builder.process_or_find_from_base_dir('token/oft/v2/ProxyOFTV2.sol')
+    # for s in fs.symbols.values():
+    #     if len(s) != 1:
+    #         continue
+    #     n = s[0].value
+    #     if not hasattr(n, 'ast2_node') and ast2_builder.is_top_level(n):
+    #         ast2_builder.define_skeleton(n, fs.source_unit_name)
+
+
+    ast2_builder.process_all()
+
+    print("donezo")
 
 
     # syms = [x for xs in builder.root_scope.symbols.values() for x in xs if isinstance(x, symtab.FileScope)]
@@ -233,7 +249,7 @@ if __name__ == '__main__1':
     # funcanalysis.dfs(contract_scope[0].value)
     # print(contract_scope.get_local_method('swapNativeForNative'))
 
-if __name__ == '__main__':
+if __name__ == '__main__1':
     # base_dir = 'C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only'
     # all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
     # all_files = ['C:/Users/Bilal/Downloads/contracts-30xx-only.tar/contracts-30xx-only\\contracts\\30\\00\\30002861577da4ea6aa23966964172ad75dca9c7']
