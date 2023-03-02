@@ -89,6 +89,10 @@ class Scope(Scopeable):
 
         self.symbols = new_symbols2
 
+    def add_global_symbol(self, symbol: Symbol):
+        root_scope = self.find_first_ancestor_of(RootScope)
+        root_scope.add(symbol)
+
     def add(self, symbol: Symbol):
         symbol.set_parent_scope(self)
 
@@ -146,10 +150,6 @@ class Scope(Scopeable):
         return f"Scope: {self.aliases}" + self.str__symbols(level)
 
 
-def type_key(ttype) -> str:
-    return f'<type:{str(ttype)}>'
-
-
 class ScopeAndSymbol(Scope, Symbol):
     def __init__(self, aliases: Optional[Aliases], ast_node):
         Scope.__init__(self, aliases)
@@ -162,14 +162,110 @@ class ScopeAndSymbol(Scope, Symbol):
         return f"{type(self).__name__}: {self.aliases}{self.str_type()}" + Scope.str__symbols(self, level)
 
 
-class PrimitiveTypeScope(ScopeAndSymbol):
-    def __init__(self, aliases: Optional[Aliases], static_type):
-        ScopeAndSymbol.__init__(self, aliases)
+class BuiltinObject(ScopeAndSymbol):
+    def __init__(self, name: str):
+        ScopeAndSymbol.__init__(self, name, None)
+        self.name = name
+
+
+class BuiltinFunction(Symbol):
+    def __init__(self, name: str, input_types: List[solnodes.Type], output_types: List[solnodes.Type]):
+        ScopeAndSymbol.__init__(self, name, None)
+        self.input_types = input_types
+        self.output_types = output_types
+
+
+class BuiltinValue(Symbol):
+    def __init__(self, name: str, ttype: solnodes.Type):
+        ScopeAndSymbol.__init__(self, name, None)
+        self.ttype = ttype
+
+
+def create_builtin_scope(key, values=None, functions=None):
+    scope = BuiltinObject(key)
+
+    if values:
+        for args in values:
+            scope.add(BuiltinValue(*args))
+
+    if functions:
+        for args in functions:
+            scope.add(BuiltinFunction(*args))
+
+    return scope
+
+
+def type_key(ttype) -> str:
+    return f'<type:{str(ttype)}>'
+
+
+def meta_type_key(ttype) -> str:
+    return f'<metatype:{str(ttype)}>'
 
 
 class RootScope(Scope):
     def __init__(self):
         Scope.__init__(self, '<root>')
+
+        msg_object = BuiltinObject('msg')
+        msg_object.add(BuiltinValue('value', solnodes.IntType(False, 256)))
+        msg_object.add(BuiltinValue('gas', solnodes.IntType(False, 256)))
+        msg_object.add(BuiltinValue('sender', solnodes.AddressType(False)))
+        msg_object.add(BuiltinValue('data', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+        self.add(msg_object)
+
+        def bytes():
+            return solnodes.ArrayType(solnodes.ByteType())
+
+        def bytes32():
+            return solnodes.FixedLengthArrayType(solnodes.ByteType(), 32)
+
+        def uint256():
+            return solnodes.IntType(False, 256)
+
+        abi_object = BuiltinObject('abi')
+        # input_types == None means the function can take any parameters
+
+        # abi.encode(...) returns (bytes memory)
+        abi_object.add(BuiltinFunction('encode', None, [bytes()]))
+        # encodePacked(...) returns (bytes memory)
+        abi_object.add(BuiltinFunction('encodePacked', None, [bytes()]))
+        # encodeWithSignature(string memory signature, ...) returns (bytes memory)
+        abi_object.add(BuiltinFunction('encodeWithSelector', None, [bytes()]))
+        # encodeWithSignature(string memory signature, ...) returns (bytes memory
+        abi_object.add(BuiltinFunction('encodeWithSignature', None, [bytes()]))
+
+        # abi.decode(bytes memory encodedData, (...)) returns (...)
+        abi_object.add(BuiltinFunction('decode', None, None))
+
+        self.add(abi_object)
+
+        # https://docs.soliditylang.org/en/latest/units-and-global-variables.html#members-of-address-types
+        def address_object(payable):
+            # key is <type: address> or <type: address payable>
+            scope = BuiltinObject(type_key(solnodes.AddressType(payable)))
+            scope.add(BuiltinValue('balance', uint256()))
+            scope.add(BuiltinValue('code', bytes()))
+            scope.add(BuiltinValue('codehash', bytes32()))
+
+            if payable:
+                scope.add(BuiltinFunction('transfer', [uint256()], []))
+                scope.add(BuiltinFunction('transfer', [uint256()], [solnodes.BoolType()]))
+
+            scope.add(BuiltinFunction('call', [bytes()], [solnodes.BoolType(), bytes()]))
+            scope.add(BuiltinFunction('delegatecall', [bytes()], [solnodes.BoolType(), bytes()]))
+            scope.add(BuiltinFunction('staticcall', [bytes()], [solnodes.BoolType(), bytes()]))
+            return scope
+
+        self.add(address_object(True))
+        self.add(address_object(False))
+
+        # Builtin global functions
+        self.add(BuiltinFunction('keccak256', None, [bytes32()]))
+        # addmod(uint x, uint y, uint k) returns (uint)
+        # mulmod(uint x, uint y, uint k) returns (uint)
+        self.add(BuiltinFunction('addmod', [uint256(), uint256(), uint256()], [uint256()]))
+        self.add(BuiltinFunction('mulmod', [uint256(), uint256(), uint256()], [uint256()]))
 
         # primitive types
 
@@ -315,6 +411,13 @@ class UnitImportSymbol(ImportSymbol):
         return self.get_imported_scope()
 
 
+class ProxyScope(ScopeAndSymbol):
+    def __init__(self, name: str, base_scope: ScopeAndSymbol):
+        ScopeAndSymbol.__init__(self, name, base_scope.value if base_scope else None)
+        if base_scope:
+            self.import_symbols_from_scope(base_scope)
+
+
 class UsingFunctionSymbol(Symbol):
     def __init__(self, target: ModFunErrEvtScope, override_type: solnodes.Type):
         assert isinstance(target.value, solnodes.FunctionDefinition)
@@ -329,8 +432,9 @@ class UsingFunctionSymbol(Symbol):
 class Builder2:
 
     class Context:
-        def __init__(self, file_scope):
+        def __init__(self, file_scope, unit_scope):
             self.file_scope = file_scope
+            self.unit_scope = unit_scope
 
     def __init__(self, vfs: VirtualFileSystem):
         self.root_scope = RootScope()
@@ -366,12 +470,13 @@ class Builder2:
 
         fs = FileScope(self, self.vfs, source_unit_name)
 
-        context = Builder2.Context(fs)
+        context = Builder2.Context(fs, None)
+
+        self.add_to_scope(self.root_scope, fs)
 
         for index, node in enumerate(source_units):
             self.add_node_dfs(fs, node, context, index)
 
-        self.add_to_scope(self.root_scope, fs)
 
         return fs
 
@@ -432,9 +537,12 @@ class Builder2:
         # V.scope.parent_scope == E.scope, so E.scope.find('decimals') == function scope for 'decimals' and
         # V.scope.find('decimals') == variable 'decimals'.
 
+        if isinstance(scope_or_symbols, (ContractOrInterfaceScope, LibraryScope, StructScope, EnumScope)):
+            # update the context for the children if a new top level scope was made
+            context = Builder2.Context(context.file_scope, scope_or_symbols)
+
         child_scope = current_scope
         for child_index, child_node in enumerate(node.get_children()):
-
             if isinstance(child_node, solnodes.VarDecl):
                 scope_name = ','.join([var.var_name.text for var in child_node.variables])
                 new_scope = self.make_scope(child_node, name=f'<vardecl:{scope_name}>')
@@ -474,19 +582,49 @@ class Builder2:
                 raise NotImplemented("using X for *")
             else:
                 # get the functions in the target library and import them under the scope of the 1st param type
-                current_file_scope: FileScope = context.file_scope
-                library_file_scope: FileScope = current_file_scope.find(node.library_name.text)[0]
+                # current_file_scope: FileScope = context.file_scope
+                unit_scope = context.unit_scope
+                library_file_scope: FileScope = unit_scope.find(node.library_name.text)[0]
                 target_type = node.override_type
 
-                target_scope_name = str(target_type)
-                target_type_scope = current_file_scope.find_local(target_scope_name)
+                if isinstance(target_type, solnodes.Ident):
+                    raise ValueError()
+
+                if isinstance(target_type, solnodes.UserType):
+                    target_scope_name = target_type.name.text
+                else:
+                    target_scope_name = type_key(target_type)
+
+                # We find the scope for the target type (i.e. X in 'using Y for X') and create a proxy of that scope in
+                # our own local scope and add the functions from Y to the proxy(not the base scope of X)
+                # This is so we can lookup functions in like x.z() in the proxy scope (as it will not exist in the base
+                # scope) as the Using directive is only 'active' in the current scope (as opposed to on a global level)
+
+                def make_proxy_scope(base_scope):
+                    new_proxy_scope = ProxyScope(target_scope_name, base_scope)
+                    new_proxy_scope.created_by = unit_scope
+                    unit_scope.add(new_proxy_scope)
+                    return new_proxy_scope
+
+                target_type_scope = unit_scope.find(target_scope_name)
                 if not target_type_scope:
-                    target_type_scope = ScopeAndSymbol(target_scope_name, target_type)
-                    current_file_scope.add(target_type_scope)
+                    # We don't have a solid scope for this type, create the proxy as the base scope
+                    target_type_scope = make_proxy_scope(None)
                 elif len(target_type_scope) != 1:
+                    # impossible
                     raise ValueError(f'Too many type scopes for {target_scope_name}')
                 else:
+                    # single scope, get it
                     target_type_scope = target_type_scope[0]
+
+                if isinstance(target_type_scope, ProxyScope):
+                    if target_type_scope.created_by != unit_scope:
+                        # this scope is a proxy from the parent scope, make our own so we don't pollute that one
+                        proxy_scope = make_proxy_scope(target_type_scope)
+                    else:
+                        proxy_scope = target_type_scope
+                else:
+                    proxy_scope = make_proxy_scope(target_type_scope)
 
                 for s in library_file_scope.all_symbols():
                     func_def = s.value
@@ -495,8 +633,7 @@ class Builder2:
                     if func_def.parameters:
                         first_parameter_type = func_def.parameters[0].var_type
                         if first_parameter_type == target_type:
-                            indirection_symbol = UsingFunctionSymbol(s, target_type)
-                            target_type_scope.add(indirection_symbol)
+                            proxy_scope.add(UsingFunctionSymbol(s, target_type))
         elif isinstance(node, solnodes.PragmaDirective):
             return None
         elif isinstance(node, solnodes.SymbolImportDirective):

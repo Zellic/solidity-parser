@@ -2,12 +2,14 @@ from dataclasses import replace as copy_dataclass
 from typing import List, Union, Optional, Dict, Set, Deque
 from collections import deque
 
+from Tools.scripts.make_ctype import values
+
 from solidity_parser.ast import solnodes as solnodes1
 from solidity_parser.ast import solnodes2 as solnodes2
 from solidity_parser.ast import symtab
 
 import logging
-
+import math
 
 class TypeHelper:
     def __init__(self, builder):
@@ -35,6 +37,301 @@ class TypeHelper:
     def find_declared_target_method(self, scope: symtab.Scope, name: str, arg_types: List[solnodes2.Type]):
         pass
 
+    def get_expr_type(self, expr: solnodes1.Expr, allow_multiple=False) -> solnodes2.Type:
+        if isinstance(expr, solnodes1.Ident):
+            text = expr.text
+            if text == 'this':
+                symbol = expr.scope.find_first_ancestor_of((symtab.ContractOrInterfaceScope, symtab.LibraryScope,
+                                                                 symtab.EnumScope, symtab.StructScope))
+            else:
+                if allow_multiple:
+                    symbols = expr.scope.find(text, find_base_symbol=True)
+                    return [self.symbol_to_ast2_type(s) for s in symbols]
+                else:
+                    symbol = expr.scope.find_single(text, find_base_symbol=True)
+
+            return self.symbol_to_ast2_type(symbol)
+        elif isinstance(expr, solnodes1.GetMember):
+            base_type = self.get_expr_type(expr.obj_base)
+            member = expr.name.text
+            if member == 'length' and isinstance(base_type, solnodes2.ArrayType):
+                return solnodes2.UIntType()
+
+            # check the scope of the base type
+            # then check the current contract/interface/library/scope to see if it's an overriden type with the using
+            # directive
+            scope = self.scope_for_type(expr, base_type)
+            if allow_multiple:
+                symbols = scope.find(member, find_base_symbol=True)
+                return [self.symbol_to_ast2_type(s) for s in symbols]
+            else:
+                symbol = scope.find_single(member)
+                return self.symbol_to_ast2_type(symbol)
+        elif isinstance(expr, solnodes1.Literal):
+            value = expr.value
+            if isinstance(value, bool):
+                # this needs to go before the int check as bool is a subclass of int in python
+                return solnodes2.BoolType()
+            elif isinstance(value, int):
+
+                if value == 0:
+                    return solnodes2.UIntType(8)
+
+                if value > 0:
+                    # uint
+                    signed = False
+                else:
+                    # int
+                    if value < 0:
+                        value = -value - 1
+
+                    value = value * 2
+                    signed = True
+
+                # count number of bytes required
+                bytes = 1
+                while value >= (1 << (bytes * 8)):
+                    bytes += 1
+                bits = bytes * 8
+
+                if bits > 256:
+                    raise ValueError('too many bits')
+
+                return solnodes2.IntType(is_signed=signed, size=bits)
+            elif isinstance(value, str):
+                return solnodes2.StringType()
+            elif isinstance(value, tuple):
+                type_args = [self.map_as_type_arg(arg) for arg in value]
+                are_type_args = [isinstance(arg, solnodes1.Type) for arg in type_args]
+                assert any(are_type_args) == all(are_type_args)
+
+                if any(are_type_args):
+                    # the grammar has 'TupleExpression' s, e.g. '(' exprList ')'. The exprs it allows can also be types.
+                    # Either all or none of the exprs must be types
+                    # but the parser is weird
+                    return solnodes2.TupleType([self.builder.map_type(t) for t in type_args])
+                elif len(value) == 1:
+                    # Bracketed expressions, not tuples, e.g. (x).y() , (x) isn't a tuple so unpack here
+                    assert isinstance(value[0], solnodes1.Expr)
+                    return self.get_expr_type(value[0])
+                else:
+                    return self.builder._todo(value)
+            else:
+                return self.builder._todo(value)
+        elif isinstance(expr, solnodes1.GetArrayValue):
+            base_type = self.get_expr_type(expr.array_base)
+            if isinstance(base_type, solnodes2.MappingType):
+                return base_type.dst
+            elif isinstance(base_type, solnodes2.ArrayType):
+                return base_type.base_type
+            else:
+                return self.builder._todo(base_type)
+        elif isinstance(expr, solnodes1.BinaryOp):
+            if expr.op in [solnodes1.BinaryOpCode.BOOL_AND, solnodes1.BinaryOpCode.BOOL_OR, solnodes1.BinaryOpCode.EQ,
+                           solnodes1.BinaryOpCode.NEQ]:
+                return solnodes2.BoolType()
+            elif expr.op in [solnodes1.BinaryOpCode.LTEQ, solnodes1.BinaryOpCode.LT, solnodes1.BinaryOpCode.GT,
+                             solnodes1.BinaryOpCode.GTEQ]:
+                return solnodes2.BoolType()
+            elif expr.op in [solnodes1.BinaryOpCode.LSHIFT, solnodes1.BinaryOpCode.RSHIFT,
+                             solnodes1.BinaryOpCode.ASSIGN_LSHIFT, solnodes1.BinaryOpCode.ASSIGN_RSHIFT]:
+                # result of a shift has the type of the left operand (from docs)
+                return self.get_expr_type(expr.left)
+            elif expr.op == solnodes1.BinaryOpCode.EXPONENTIATE:
+                # result is type of the base
+                return self.get_expr_type(expr.left)
+            elif expr.op in [solnodes1.BinaryOpCode.MUL, solnodes1.BinaryOpCode.DIV, solnodes1.BinaryOpCode.MOD,
+                             solnodes1.BinaryOpCode.ADD, solnodes1.BinaryOpCode.SUB,
+                             solnodes1.BinaryOpCode.BIT_AND, solnodes1.BinaryOpCode.BIT_OR,
+                             solnodes1.BinaryOpCode.BIT_XOR,
+                             solnodes1.BinaryOpCode.ASSIGN_BIT_NEG, solnodes1.BinaryOpCode.ASSIGN_BIT_AND,
+                             solnodes1.BinaryOpCode.ASSIGN, solnodes1.BinaryOpCode.ASSIGN_OR,
+                             solnodes1.BinaryOpCode.ASSIGN_MUL, solnodes1.BinaryOpCode.ASSIGN_DIV,
+                             solnodes1.BinaryOpCode.ASSIGN_MOD,solnodes1.BinaryOpCode.ASSIGN_ADD,
+                             solnodes1.BinaryOpCode.ASSIGN_SUB]:
+                t1 = self.get_expr_type(expr.left)
+                t2 = self.get_expr_type(expr.right)
+                if expr.op != solnodes1.BinaryOpCode.ASSIGN:
+                    # can only compare ints, but we can't use t1 == t2 as we can compare different int types, e.g.
+                    # this.x (uint256) == 0 (uint8)
+                    assert isinstance(t1, solnodes2.IntType) and isinstance(t2, solnodes2.IntType)
+                else:
+                    # assignment, types must be the same (I think)
+                    assert t1 == t2
+                return t1
+            else:
+                return self.builder._todo(expr.op)
+        elif isinstance(expr, solnodes1.TernaryOp):
+            t1 = self.get_expr_type(expr.left)
+            t2 = self.get_expr_type(expr.right)
+
+            assert isinstance(t1, solnodes2.IntType) == isinstance(t2, solnodes2.IntType)
+            if isinstance(t1, solnodes2.IntType):
+                # if they're both ints, then take the bigger type
+                return t1 if t1.size > t2.size else t2
+            else:
+                assert t1 == t2
+                return t1
+        elif isinstance(expr, solnodes1.UnaryOp):
+            if expr.op in [solnodes1.UnaryOpCode.INC, solnodes1.UnaryOpCode.DEC, solnodes1.UnaryOpCode.SIGN_NEG,
+                           solnodes1.UnaryOpCode.SIGN_POS, solnodes1.UnaryOpCode.BIT_NEG]:
+                return self.get_expr_type(expr.expr)
+            elif expr.op == solnodes1.UnaryOpCode.BOOL_NEG:
+                return solnodes2.BoolType()
+            else:
+                return self.builder._todo(expr.op)
+        elif isinstance(expr, solnodes1.CallFunction):
+            callee = expr.callee
+            if isinstance(callee, solnodes1.Type):
+                # e.g. int(...), string(...), address(...) => cast expr
+                return self.builder.map_type(callee)
+
+            arg_types = [self.get_expr_type(arg) for arg in expr.args]
+
+            func_types = self.get_expr_type(callee, allow_multiple=True)
+
+            if isinstance(func_types, solnodes2.Type):
+                # constructor call/new type
+                if func_types.is_builtin():
+                    # e.g. new string(xxx)
+                    return func_types
+                else:
+                    # e.g. new MyX() ? TODO: check if we should return the constructor function type here instead
+                    return func_types
+
+            assert all([isinstance(ft, solnodes2.FunctionType) for ft in func_types])
+
+            candidates = []
+            for ft in func_types:
+                if ft.inputs:
+                    # match input types
+                    if len(ft.inputs) == len(arg_types):
+                        if all([targ.can_implicitly_cast_from(actual)] for targ, actual in zip(ft.inputs, arg_types)):
+                            candidates.append(ft)
+                else:
+                    # input types == None => polymorphic builtin function. This isn't the same as a no arg function,
+                    # where input types == []
+                    candidates.append(ft)
+
+            if len(candidates) != 1:
+                raise ValueError('Can\'t resolve call')
+
+            output_types = candidates[0].outputs
+
+            # Special case: check if abi.decode is called as its output types depend on its input types
+            #  i.e. output_types is set to None in the symbol table as it's inputs and outputs are completely
+            #       generic
+            if isinstance(expr, solnodes1.GetMember) and isinstance(expr.obj_base, solnodes1.Ident):
+                if expr.obj_base.text == 'abi' and expr.name.text == 'decode':
+                    assert output_types == None
+                    # drop the first argument type so output types are t1, t2...
+                    #  abi.decode(bytes memory encodedData, (t1, t2...)) returns (t1, t2...)
+                    output_types = arg_types[1:]
+
+            if allow_multiple:
+                return output_types
+            else:
+                assert len(output_types) == 1
+                return output_types[0]
+        elif isinstance(expr, solnodes1.CreateMetaType):
+            return solnodes2.MetaTypeType(self.builder.map_type(expr.base_type))
+        elif isinstance(expr, solnodes1.New):
+            return self.builder.map_type(expr.type_name)
+        return self.builder._todo(expr)
+
+    def map_as_type_arg(self, arg):
+        # grammar shenanigans again...
+        # sometimes stuff like uint[] gets parsed as GetArrayValue(array_base=IntType(...), index=None))
+        if isinstance(arg, solnodes1.Type):
+            return arg
+        if isinstance(arg, solnodes1.GetArrayValue):
+            if isinstance(arg.array_base, solnodes1.Type):
+                assert arg.index is None
+                # make a copy of the base type and put it in an array
+                type_copy = copy_dataclass(arg.array_base)
+                return solnodes1.ArrayType(type_copy)
+            elif arg.index is None:
+                # could possibly be but haven't seen an array_base for this case yet...
+                assert False
+        return arg
+
+    def symbol_to_ast2_type(self, symbol) -> solnodes2.Type:
+        if isinstance(symbol, symtab.BuiltinObject):
+            return solnodes2.BuiltinType(symbol.name)
+        elif isinstance(symbol, symtab.BuiltinFunction):
+            input_types = [self.builder.map_type(ttype) for ttype in symbol.input_types] if symbol.input_types else None
+            output_types = [self.builder.map_type(ttype) for ttype in symbol.output_types] if symbol.output_types else None
+            return solnodes2.FunctionType(input_types, output_types)
+        elif isinstance(symbol, symtab.BuiltinValue):
+            ttype = symbol.ttype
+
+            if isinstance(ttype, solnodes2.Type):
+                # For builtin values that we create in scope_for_type, we pass in an AST2 Type instead of AST1 Type
+                return ttype
+            else:
+                return self.builder.map_type(ttype)
+
+        value = symbol.value
+
+        if self.builder.is_top_level(value):
+            # Contract, interface, struct, library
+            return self.builder.get_contract_type(symbol)
+        elif isinstance(value, (solnodes1.Parameter, solnodes1.Var)):
+            return self.builder.map_type(value.var_type)
+        elif isinstance(value, solnodes1.FunctionDefinition):
+            def param_types(ps):
+                return [self.builder.map_type(p.var_type) for p in ps]
+            return solnodes2.FunctionType(param_types(value.parameters), param_types(value.returns))
+        elif isinstance(value, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration)):
+            return self.builder.map_type(value.var_type)
+        else:
+            assert False, f'{type(value)}'
+
+    def scope_for_type(self, node: solnodes1.Node, ttype: solnodes2.Type) -> symtab.Scope:
+        if isinstance(ttype, solnodes2.ResolvedUserType):
+            scope = node.scope.find_single(ttype.value.x.name.text)
+        elif isinstance(ttype, solnodes2.BuiltinType):
+            scope = node.scope.find_single(ttype.name)
+        elif isinstance(ttype, solnodes2.MetaTypeType):
+            type_key = symtab.meta_type_key(ttype)
+            scope = node.scope.find_single(type_key)
+
+            if scope is None:
+                # Create a meta type entry in the symbol table
+                # https://docs.soliditylang.org/en/latest/units-and-global-variables.html#type-information
+                members = [
+                    ('name', solnodes2.StringType()), ('creationCode', solnodes2.Bytes()),
+                    ('runtimeCode', solnodes2.Bytes())
+                ]
+
+                base_ttype = ttype.ttype
+
+                if isinstance(base_ttype, solnodes2.IntType):
+                    members.extend([('min', base_ttype), ('max', base_ttype)])
+
+                if isinstance(base_ttype, solnodes2.ResolvedUserType) and isinstance(base_ttype.value.x, solnodes2.InterfaceDefinition):
+                    members.append(('interfaceId', solnodes2.Bytes(4)))
+
+                scope = symtab.create_builtin_scope(type_key, values=members)
+                node.scope.add_global_symbol(scope)
+        else:
+            # this is a primitive (probably). E.g. We look up the global <type: int256> or if the type is a metatype
+            # <metatype: int256>
+            type_key = symtab.type_key(ttype)
+            scope = node.scope.find_single(type_key)
+
+            if not scope:
+                fields = []
+
+                if isinstance(ttype, solnodes2.FunctionType):
+                    # Function selector, specific to the function type itself
+                    fields.append(('selector', solnodes2.Bytes(4)))
+
+                scope = symtab.create_builtin_scope(type_key, values=fields)
+                node.scope.add_global_symbol(scope)
+
+        assert isinstance(scope, symtab.Scope)
+        return scope
 
 class Builder:
 
@@ -234,7 +531,7 @@ class Builder:
     def get_super_object(self, node: Union[solnodes1.Stmt, solnodes1.Expr]):
         ast1_current_contract = self.get_declaring_contract(node)
         contract_type: solnodes2.ResolvedUserType = self.get_contract_type(ast1_current_contract)
-        return solnodes2.SuperObject(contract_type.value)
+        return solnodes2.SuperObject(solnodes2.SuperType(contract_type.value))
 
     def check_builtin_function(self, name: str, new_args: List[solnodes2.Expr], new_mods: List[solnodes2.Modifier]) -> Optional[solnodes2.BuiltInCall]:
         def assert_simple_call(arg_len=1, mod_len=0):
@@ -296,7 +593,7 @@ class Builder:
             elif callee.text == 'gasleft':
                 assert_simple_call(arg_len=0)
                 # this is the same as msg.gas
-                return solnodes2.BuiltInValue('msg.gas', solnodes2.UIntType(256))
+                return solnodes2.GlobalValue('msg.gas', solnodes2.UIntType(256))
             elif callee.text == 'address':
                 # i.e. address(xyz)
                 # Sometimes the callee gets parsed as an AddressType and sometimes as an Ident(text='address'), why?
@@ -461,47 +758,16 @@ class Builder:
         return all(args) == any(args)
 
     def follow_get_member(self, get_member: solnodes1.GetMember) -> solnodes2.Type:
-
-        # x.y.z.a() = Call(base = GM(GM(GM(Load(x), y), z), a), args = [])
-        #  i.e. find that x.y.z.a is a function and then figure make the FC node in parent func
-
-        # x.y.z
-
-        # A=GM(
-        #   B= GM(
-        #         Load{'x'},
-        #         'y'
-        #       ),
-        #       'z'
-        #    )
-
-        # Find the type of B or the scope that is defined for the type
-        #
-        # B is the base of A
-        #  1. Find the scope that B defines (i.e. find the scope of x.y).
-        #  2. Find 'z' in that scope
-
-        # x.y: 'x' is not a GetMember.
-        # 1. Need to determine its Type and find the Scope for that type using the parent
-        # scope as the starting point. (e.g. If the type is XY and the current file imports XY, we search for 'XY'
-        # starting in the current file).
-        # Use scope to find 'y'
-
-        # x.y: 'x' is not a GetMember. Need to analyse cases to determine the scope it defines
-        #  Case of Ident: Lookup the Ident in the parent scope, should give a scope
-        # Use scope to find 'y'
-
-        # Problems:
-        #  Solidity globals:
-        #     Base is not concrete: msg in msg.sender, abi in abi.encode
-        #     Member name is not concrete: length in myArray.length, selector in myFunction.selector
-        #
-        #  These need to resolve to a scope as they can be used further in expressions, e.g.
-        #    using MyMath for uint
-        #    uint y = myArray.length.add(1)
-        #  Here we need to resolve a scope for myArray.length
-
         base = get_member.obj_base
+
+        def scope_for_type(ttype: solnodes2.Type) -> symtab.Scope:
+            if isinstance(ttype, solnodes2.ResolvedUserType):
+                type_key = ttype.value.x.name.text
+            else:
+                type_key = symtab.type_key(ttype)
+            scope = base.scope.find_single(type_key)
+            assert isinstance(scope, symtab.Scope)
+            return scope
 
         symbol = None
         scope = None
@@ -509,7 +775,6 @@ class Builder:
         if isinstance(base, solnodes1.GetMember):
             # Find the symbol, get its type, get the scope of the type
             symbol = self.follow_get_member(base)
-
         elif isinstance(base, solnodes1.Ident):
             if base.text == 'this':
                 scope = get_member.scope.find_first_ancestor_of((symtab.ContractOrInterfaceScope, symtab.LibraryScope,
@@ -517,35 +782,19 @@ class Builder:
             else:
                 symbol = get_member.scope.find_single(base.text)
         else:
-            self._todo(base)
+            new_expr = self.refine_expr(base)
+            scope = scope_for_type(new_expr.type_of())
 
         if symbol:
-            ttype = self.symbol_to_ast2_type(symbol)
-
-            if isinstance(ttype, solnodes2.ResolvedUserType):
-                type_key = ttype.value.x.name.text
-            else:
-                type_key = symtab.type_key(ttype)
-
-            scope = base.scope.find_single(type_key)
+            ttype = self.type_helper.symbol_to_ast2_type(symbol)
+            scope = scope_for_type(ttype)
 
         if get_member.name.text == 'selector':
             raise ValueError('selector is not a concrete ref')
 
-        return scope.find_single(get_member.name.text)
+        result = scope.find_single(get_member.name.text)
 
-    def symbol_to_ast2_type(self, symbol) -> solnodes2.Type:
-        value = symbol.value
-
-        if self.is_top_level(value):
-            # Contract, interface, struct, library
-            return self.get_contract_type(symbol)
-        elif isinstance(value, (solnodes1.Parameter, solnodes1.Var)):
-            return self.map_type(value.var_type)
-        else:
-            assert False, f'{type(value)}'
-
-
+        return result
 
     def is_subcontract(self, a: symtab.ContractOrInterfaceScope, b: symtab.ContractOrInterfaceScope):
         # TODO: quicker algorithm
@@ -563,6 +812,16 @@ class Builder:
         return False
 
     def refine_expr(self, expr: solnodes1.Expr):
+
+        def ff():
+            # check if its really a Stmt call, e.g. require(), assert(), revert etc
+            if isinstance(expr, solnodes1.CallFunction) and isinstance(expr.callee, solnodes1.Ident):
+                if expr.callee.text == 'require' or expr.callee.text == 'revert':
+                    return
+            print(f'{expr} => {self.type_helper.get_expr_type(expr, allow_multiple=True)}')
+
+        ff()
+
         if isinstance(expr, solnodes1.UnaryOp):
             return solnodes2.UnaryOp(self.refine_expr(expr.expr), expr.op, expr.is_pre)
         elif isinstance(expr, solnodes1.BinaryOp):
@@ -623,58 +882,62 @@ class Builder:
         elif isinstance(expr, solnodes1.GetMember):
             base = expr.obj_base
 
-            if expr.name.text == 'selector':
+            mname = expr.name.text
+
+            if mname == 'selector':
                 # the selector is a bytes4 ABI function selector
                 assert isinstance(base, solnodes1.GetMember)
                 base_scope = self.follow_get_member(base)
                 assert isinstance(base_scope.value, solnodes1.FunctionDefinition)
                 return solnodes2.ABISelector(solnodes2.Ref(base_scope.value.ast2_node))
 
+            if mname == 'length':
+                return solnodes2.DynamicBuiltInValue('length', solnodes2.UIntType(), self.refine_expr(base))
+
+            if mname == 'min' or mname == 'max' or mname == 'creationCode' or mname == 'interfaceId'\
+                    or mname == 'runtimeCode' or mname == 'name':
+                new_base = self.refine_expr(base)
+                assert isinstance(new_base.type_of(), solnodes2.MetaTypeType)
+                return solnodes2.DynamicBuiltInValue(mname, new_base.type_of(), new_base)
+
+            if mname == 'code':
+                new_base = self.refine_expr(base)
+                assert isinstance(new_base.type_of(), solnodes2.AddressType)
+                return solnodes2.DynamicBuiltInValue(mname, solnodes2.Bytes(), new_base)
+
+            if mname == 'balance':
+                return solnodes2.DynamicBuiltInValue('length', solnodes2.UIntType(), self.refine_expr(base))
+
             if isinstance(base, solnodes1.Ident):
                 if base.text == 'msg':
                     if expr.name.text == 'value':
-                        return solnodes2.BuiltInValue('msg.value', solnodes2.UIntType())
+                        return solnodes2.GlobalValue('msg.value', solnodes2.UIntType())
                     elif expr.name.text == 'gas':
-                        return solnodes2.BuiltInValue('msg.gas', solnodes2.UIntType())
+                        return solnodes2.GlobalValue('msg.gas', solnodes2.UIntType())
                     elif expr.name.text == 'sender':
-                        return solnodes2.BuiltInValue('msg.sender', solnodes2.AddressType(False))
+                        return solnodes2.GlobalValue('msg.sender', solnodes2.AddressType(False))
                     elif expr.name.text == 'data':
-                        return solnodes2.BuiltInValue('msg.data', solnodes2.ArrayType(solnodes2.ByteType()))
+                        return solnodes2.GlobalValue('msg.data', solnodes2.ArrayType(solnodes2.ByteType()))
                     elif expr.name.text == 'sig':
                         # FIXME: size
-                        return solnodes2.BuiltInValue('msg.sig', solnodes2.FixedLengthArrayType(solnodes2.UIntType()))
+                        return solnodes2.GlobalValue('msg.sig', solnodes2.FixedLengthArrayType(solnodes2.UIntType()))
 
                 # MyEnum.MYVALUE, don't want to pass Ident(text='MyEnum') to refine_expr as it's not an Expr that can
                 # be loaded as a base itself
                 target_symbols = base.scope.find(base.text)
                 if len(target_symbols) == 1 and isinstance(target_symbols[0], symtab.EnumScope):
-                    return solnodes2.EnumMemberLoad(self.get_contract_type(target_symbols[0]), solnodes2.Ident(expr.name.text))
+                    return solnodes2.EnumMemberLoad(self.get_contract_type(target_symbols[0]), solnodes2.Ident(mname))
 
+            ident_target = self.follow_get_member(expr)
             # this is assumed to be a field load only, i.e. x.y (in AST1 x.y would be a child of a FunctionCall
             # so x.y() should be a FunctionCall instead of the child of a FC)
             new_base = self.refine_expr(base)
-            return solnodes2.StateVarLoad(new_base, expr.name.text)
+            return solnodes2.StateVarLoad(new_base, mname)
         elif isinstance(expr, solnodes1.Literal):
             if isinstance(expr.value, tuple):
                 assert not expr.unit
 
-                def map_as_type_arg(arg):
-                    # grammar shenanigans again...
-                    # sometimes stuff like uint[] gets parsed as GetArrayValue(array_base=IntType(...), index=None))
-                    if isinstance(arg, solnodes1.Type):
-                        return arg
-                    if isinstance(arg, solnodes1.GetArrayValue):
-                        if isinstance(arg.array_base, solnodes1.Type):
-                            assert arg.index is None
-                            # make a copy of the base type and put it in an array
-                            type_copy = copy_dataclass(arg.array_base)
-                            return solnodes1.ArrayType(type_copy)
-                        elif arg.index is None:
-                            # could possibly be but haven't seen an array_base for this case yet...
-                            assert False
-                    return arg
-
-                type_args = [map_as_type_arg(arg) for arg in expr.value]
+                type_args = [self.type_helper.map_as_type_arg(arg) for arg in expr.value]
                 are_type_args = [isinstance(arg, solnodes1.Type) for arg in type_args]
                 assert self.any_or_all(are_type_args)
 
@@ -720,30 +983,7 @@ class Builder:
 
 
     def find_method(self, possible_matches: List[symtab.Symbol], arg_types: List[solnodes2.Type]):
-        # base_type: Type = base.type_of()
-        #
-        # if not base_type:
-        #     self._todo(base)
-        #
-        # # FIXME: this is wrong, don't lookup with str
-        # base_type_name: str = str(base_type)
-        # base_scope: symtab.Scope = scope.find_single(base_type_name)
-        # possible_matches: List[symtab.Symbol] = base_scope.find(name, find_base_symbol=False)
-
-        def can_fit_arg(target: solnodes2.Type, argument: solnodes2.Type) -> bool:
-            # Check whether the argument type can be passed when the target type is expected
-            if target == argument:
-                return True
-
-            # address payable can be cast to address
-            if isinstance(argument, solnodes2.AddressType) and argument.is_payable and isinstance(target, solnodes2.AddressType):
-                return True
-
-            # inty to intx if y <= x, same for uint, but not both at the same time
-            if isinstance(argument, solnodes2.IntType) and isinstance(target, solnodes2.IntType):
-                return argument.is_signed == target.is_signed and argument.size <= target.size
-
-            return False
+        assert not any([x is None for x in arg_types])
 
         def get_arg_types(func_scope: symtab.ModFunErrEvtScope) -> List[solnodes2.Type]:
             assert isinstance(func_scope, symtab.ModFunErrEvtScope)
@@ -767,14 +1007,7 @@ class Builder:
                 target_param_types = get_arg_types(s)
                 actual_param_types = arg_types
 
-            if not len(target_param_types) == len(actual_param_types):
-                return False
-
-            for a, b in zip(target_param_types, actual_param_types):
-                if not can_fit_arg(a, b):
-                    return False
-
-            return True
+            return solnodes2.Type.are_matching_types(target_param_types, actual_param_types)
 
         actual_matches = [x for x in possible_matches if check_arg_types(x)]
 

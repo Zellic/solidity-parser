@@ -46,6 +46,7 @@ class Type(Node, ABC):
         pass
 
 
+
 @dataclass
 class ArrayType(Type):
     """ Single dimension array type with no size attributes """

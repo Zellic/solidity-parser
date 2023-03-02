@@ -223,7 +223,7 @@ if __name__ == '__main__':
             if not hasattr(n, 'ast2_node') and ast2_builder.is_top_level(n):
                 ast2_builder.define_skeleton(n, fs.source_unit_name)
 
-    # fs = symtab_builder.process_or_find_from_base_dir('token/oft/v2/ProxyOFTV2.sol')
+    # fs = symtab_builder.process_or_find_from_base_dir('contracts/libraries/Flags.sol')
     # for s in fs.symbols.values():
     #     if len(s) != 1:
     #         continue
