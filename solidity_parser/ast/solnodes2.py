@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Any, Union, TypeVar, Generic
+from typing import List, Any, Union, TypeVar, Generic, Optional
 
 from solidity_parser.ast import solnodes as solnodes1
 
-import logging
+from solidity_parser.ast.mro_helper import c3_linearise
 
 T = TypeVar('T')
 
@@ -16,7 +16,7 @@ class Ref(Generic[T]):
 
 @dataclass
 class Node:
-    parent: 'Node' = field(init=False, repr=False, hash=False, compare=False)
+    parent: Optional['Node'] = field(init=False, repr=False, hash=False, compare=False)
 
     def get_children(self):
         for val in vars(self).values():
@@ -41,7 +41,22 @@ class Node:
 
 
 class Type(Node):
-    pass
+    @staticmethod
+    def are_matching_types(target_param_types, actual_param_types):
+        if not len(target_param_types) == len(actual_param_types):
+            return False
+
+        # check if the actual args types are passable to the target types
+        return all([a.can_implicitly_cast_from(b) for a,b in zip(target_param_types, actual_param_types)])
+
+    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
+        # Check whether actual_type can be converted to this type implicitly
+        # Default case is if the types are equal
+        return self == actual_type
+
+    def is_builtin(self) -> bool:
+        raise NotImplementedError()
+
 
 class Stmt(Node):
     pass
@@ -49,7 +64,8 @@ class Stmt(Node):
 
 class Expr(Node):
     def type_of(self) -> Type:
-        pass
+        raise NotImplementedError(f'{type(self)}')
+
 
 class Modifier(Node):
     pass
@@ -69,7 +85,7 @@ class NamedArgument(Node):
 @dataclass
 class TopLevelUnit(Node):
     source_unit_name: str
-
+    name: Ident
 
 
 @dataclass
@@ -78,6 +94,10 @@ class ArrayType(Type):
     base_type: Type
 
     def __str__(self): return f"{self.base_type}[]"
+
+    def is_builtin(self) -> bool:
+        # e.g. byte[] is builtin, string[] is builtin, MyContract[] is not
+        return self.base_type.is_builtin()
 
 
 @dataclass
@@ -103,12 +123,30 @@ class AddressType(Type):
 
     def __str__(self): return f"address{' payable' if self.is_payable else ''}"
 
+    def can_implicitly_cast_from(self, actual_type: Type) -> bool:
+        # address_payable(actual_type) can be cast to address implicitly
+        if isinstance(actual_type, AddressType):
+            # Matrix:
+            #  self <= actual_type = can_implicitly_cast_from
+            #  AP <= AP = true
+            #  AP <= A = false
+            #  A <= A = true
+            #  A <= AP = true
+            return not(self.is_payable and not actual_type.is_payable)
+        return False
+
+    def is_builtin(self) -> bool:
+        return True
+
 
 @dataclass
 class ByteType(Type):
     """ Single 8bit byte type """
 
     def __str__(self): return "byte"
+
+    def is_builtin(self) -> bool:
+        return True
 
 
 @dataclass
@@ -122,18 +160,40 @@ class IntType(Type):
 
     def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}"
 
+    def can_implicitly_cast_from(self, actual_type: Type) -> bool:
+        if isinstance(actual_type, IntType):
+            # inty(actual_type) to intx(self) if y <= x, same for uint, but not both at the same time
+            return actual_type.is_signed == self.is_signed and actual_type.size <= self.size
+        else:
+            return False
+
+    def is_builtin(self) -> bool:
+        return True
+
 
 def UIntType(size=256):
     return IntType(False, size)
 
-def Bytes(size):
-    return FixedLengthArrayType(ByteType(), size)
+
+def Bytes(size=None):
+    if size is not None:
+        if isinstance(size, int):
+            return FixedLengthArrayType(ByteType(), size)
+        elif isinstance(size, Expr):
+            return VariableLengthArrayType(ByteType(), size)
+        else:
+            raise NotImplementedError(f'{type(size)}')
+    else:
+        return ArrayType(ByteType())
 
 
 class BoolType(Type):
     """ Solidity native boolean type"""
 
     def __str__(self): return "bool"
+
+    def is_builtin(self) -> bool:
+        return True
 
 
 @dataclass
@@ -144,6 +204,9 @@ class StringType(ArrayType):
     base_type: Type = field(default=ByteType(), init=False)
 
     def __str__(self): return "string"
+
+    def is_builtin(self) -> bool:
+        return True
 
 
 @dataclass
@@ -157,21 +220,57 @@ class MappingType(Type):
 
     def __str__(self): return f"({self.src} => {self.dst})"
 
+    def is_builtin(self) -> bool:
+        return False
+
 
 @dataclass
 class ResolvedUserType(Type):
     # Ref so that we don't set the parent of the TopLevelUnit to this type instance
     value: Ref[TopLevelUnit] = field(repr=False)
 
+    # FIXME: The name of the unit isn't showing in pretty prints for some reason, just outputs ResolvedUserType()
+
     def __str__(self):
         return f'ResolvedUserType({self.value.x.name.text})'
+
     def __repr__(self):
         return self.__str__()
+
+    def is_builtin(self) -> bool:
+        return False
+
+
+@dataclass
+class BuiltinType(Type):
+    name: str
+
+    def __str__(self):
+        return f'Builtin<{self.name}>'
+
+    def is_builtin(self) -> bool:
+        return True
+
+
+def ABIType() -> BuiltinType:
+    return BuiltinType('abi')
+
+
+@dataclass
+class FunctionType(Type):
+    inputs: List[Type]
+    outputs: List[Type]
+
+    def is_builtin(self) -> bool:
+        return False
 
 
 @dataclass
 class TupleType(Type):
     ttypes: List[Type]
+
+    def is_builtin(self) -> bool:
+        return False
 
 
 @dataclass
@@ -198,7 +297,6 @@ class LibraryOverride(Node):
 
 @dataclass
 class ContractDefinition(TopLevelUnit):
-    name: Ident
     is_abstract: bool
     inherits: List[InheritSpecifier]
     parts: List[ContractPart]
@@ -207,7 +305,6 @@ class ContractDefinition(TopLevelUnit):
 
 @dataclass
 class InterfaceDefinition(TopLevelUnit):
-    name: Ident
     inherits: List[InheritSpecifier]
     parts: List[ContractPart]
     type_overrides: List[LibraryOverride]
@@ -215,14 +312,12 @@ class InterfaceDefinition(TopLevelUnit):
 
 @dataclass
 class LibraryDefinition(TopLevelUnit):
-    name: Ident
     parts: List[ContractPart]
     type_overrides: List[LibraryOverride]
 
 
 @dataclass
 class EnumDefinition(TopLevelUnit):
-    name: Ident
     values: List[Ident]
 
 
@@ -234,7 +329,6 @@ class StructMember(Node):
 
 @dataclass
 class StructDefinition(TopLevelUnit):
-    name: Ident
     members: List[StructMember]
 
 
@@ -246,7 +340,6 @@ class ErrorParameter(Node):
 
 @dataclass
 class ErrorDefinition(TopLevelUnit, ContractPart):
-    name: Ident
     inputs: List[ErrorParameter]
 
 
@@ -310,6 +403,7 @@ class Catch(Stmt):
     ident: Ident
     parameters: List[Parameter]
     body: Block
+
 
 @dataclass
 class Try(Stmt):
@@ -390,6 +484,7 @@ class TypeLiteral(Expr):
     def type_of(self):
         return self.ttypes
 
+
 @dataclass
 class UnaryOp(Expr):
     """ Single operand expression """
@@ -409,7 +504,7 @@ class BinaryOp(Expr):
                        solnodes1.BinaryOpCode.NEQ]:
             return BoolType()
         elif self.op in [solnodes1.BinaryOpCode.LTEQ, solnodes1.BinaryOpCode.LT, solnodes1.BinaryOpCode.GT,
-                        solnodes1.BinaryOpCode.GTEQ]:
+                         solnodes1.BinaryOpCode.GTEQ]:
             return BoolType()
         elif self.op in [solnodes1.BinaryOpCode.LSHIFT, solnodes1.BinaryOpCode.RSHIFT]:
             # result of a shift has the type of the left operand (from docs)
@@ -443,8 +538,19 @@ class SelfObject(Expr):
 
 
 @dataclass
-class SuperObject(Expr):
+class SuperType(Type):
     declarer: Ref[Union[ContractDefinition, InterfaceDefinition]] = field(repr=False)
+
+    def is_builtin(self) -> bool:
+        return False
+
+
+@dataclass
+class SuperObject(Expr):
+    ttype: SuperType
+
+    def type_of(self) -> Type:
+        return self.ttype
 
 
 @dataclass
@@ -458,7 +564,7 @@ class StateVarLoad(Expr):
 
         unit = base_type.value.x
 
-        matches = [p for p in unit.parts if p.name.text == self.name.text and isinstance(p, (StateVariableDeclaration))]
+        matches = [p for p in unit.parts if p.name.text == self.name.text and isinstance(p, StateVariableDeclaration)]
         assert len(matches) == 1
         return matches[0].ttype
 
@@ -498,6 +604,18 @@ class ArrayLoad(Expr):
     base: Expr
     index: Expr
 
+    def type_of(self) -> Type:
+        base_type = self.base.type_of()
+
+        if isinstance(base_type, MappingType):
+            assert base_type.src == self.index.type_of()
+            return base_type.dst
+        elif isinstance(base_type, ArrayType):
+            assert isinstance(self.index.type_of(), IntType)
+            return base_type.base_type
+        else:
+            raise ValueError(f'unknown base type: f{base_type}')
+
 
 @dataclass
 class ArrayStore(Expr):
@@ -507,7 +625,7 @@ class ArrayStore(Expr):
 
 
 @dataclass
-class BuiltInValue(Expr):
+class GlobalValue(Expr):
     name: str
     ttype: Type
 
@@ -529,6 +647,17 @@ class ABISelector(Expr):
 
 
 @dataclass
+class DynamicBuiltInValue(Expr):
+    # <base>.name
+    name: str
+    ttype: Type
+    base: Expr
+
+    def type_of(self) -> Type:
+        return self.ttype
+
+
+@dataclass
 class CreateMemoryArray(Expr):
     ttype: ArrayType
     size: Expr
@@ -545,16 +674,16 @@ class Call(Expr):
     named_args: List[NamedArgument]
     args: List[Expr]
 
+    def check_arg_types(self, f: FunctionDefinition) -> bool:
+        f_types = [x.var.ttype for x in f.inputs]
+        c_types = [a.type_of() for a in self.args]
+        return Type.are_matching_types(f_types, c_types)
+
 
 @dataclass
 class DirectCall(Call):
     ttype: ResolvedUserType
     name: Ident
-
-    def check_arg_types(self, f: FunctionDefinition) -> bool:
-        f_types = [x.var.ttype for x in f.inputs]
-        c_types = [a.type_of() for a in self.args]
-        return f_types == c_types
 
     def resolve_call(self) -> FunctionDefinition:
         unit = self.ttype.value.x
@@ -577,6 +706,39 @@ class DirectCall(Call):
 class FunctionCall(Call):
     base: Expr
     name: Ident
+
+    def get_supers(self, c):
+        # c.inherits are the InheritSpecifics
+        # s.name is the ResolvedUserType => .value.x is the Contract/InterfaceDefinition
+        return [s.name.value.x for s in c.inherits]
+
+    def resolve_call(self) -> FunctionDefinition:
+        if isinstance(self.base, SuperObject):
+            # E.g. super.xyz()
+            # First element will be the base type which we don't want to include in the MRO as its super call lookup
+            ref_lookup_order = c3_linearise(self.base.declarer.x, self.get_supers)[1:]
+        else:
+            # e.g. this.xyz() or abc.xyz()
+            ref_lookup_order = c3_linearise(self.base.type_of().value.x, self.get_supers)
+
+        for unit in ref_lookup_order:
+            matching_name_funcs = [p for p in unit.parts if isinstance(p, FunctionDefinition) and p.name.text == self.name.text]
+            matching_param_types = [f for f in matching_name_funcs if self.check_arg_types(f)]
+            if len(matching_param_types) == 1:
+                return matching_param_types[0]
+            elif len(matching_param_types) > 1:
+                assert False, 'Too many matches'
+
+        raise ValueError('No match')
+
+    def type_of(self) -> Type:
+        target_callee = self.resolve_call()
+        if len(target_callee.outputs) > 1:
+            # For functions that return multiple values return (t(r1), ... t(rk))
+            ttype = TupleType([out_param.var.ttype for out_param in target_callee.outputs])
+        else:
+            ttype = target_callee.outputs[0].var.ttype
+        return ttype
 
 
 @dataclass
@@ -603,9 +765,23 @@ class Cast(Expr):
 
 
 @dataclass
+class MetaTypeType(Type):
+    # type of a Solidity type, i.e. the type of type(X). This type has a few builtin fields such as min, max, name,
+    # creationCode, runtimeCode and interfaceId
+    ttype: Type
+
+    def is_builtin(self) -> bool:
+        return self.ttype.is_builtin()
+
+
+
+@dataclass
 class GetType(Expr):
     # type(MyContract)
     ttype: Type
+
+    def type_of(self) -> Type:
+        return MetaTypeType(self.ttype)
 
 
 @dataclass

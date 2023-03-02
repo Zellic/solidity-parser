@@ -28,11 +28,15 @@ def _merge(*sequences):
                 del seq[0]
 
 
-def c3_linearise(klass: ContractOrInterfaceScope) -> List[ContractOrInterfaceScope]:
-    superklasses = klass.get_supers()
+def c3_linearise(klass: ContractOrInterfaceScope, get_supers=None) -> List[ContractOrInterfaceScope]:
+    if get_supers is not None:
+        superklasses = get_supers(klass)
+    else:
+        superklasses = klass.get_supers()
+
     # In solidity this is reversed for some reason
     superklasses = list(reversed(superklasses))
     if not superklasses:
         return [klass]
     else:
-        return [klass] + _merge(*[c3_linearise(k) for k in superklasses], superklasses)
+        return [klass] + _merge(*[c3_linearise(k, get_supers) for k in superklasses], superklasses)
