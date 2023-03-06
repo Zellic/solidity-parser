@@ -217,7 +217,7 @@ if __name__ == '__main__':
     for f in all_files:
         fs = symtab_builder.process_or_find_from_base_dir(f)
         for s in fs.symbols.values():
-            if len(s) != 1:
+            if len(s) != 1 or s[0].parent_scope != fs:
                 continue
             n = s[0].value
             if not hasattr(n, 'ast2_node') and ast2_builder.is_top_level(n):
