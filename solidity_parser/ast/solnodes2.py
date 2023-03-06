@@ -87,6 +87,11 @@ class TopLevelUnit(Node):
     source_unit_name: str
     name: Ident
 
+    def get_supers(self):
+        # c.inherits are the InheritSpecifics
+        # s.name is the ResolvedUserType => .value.x is the Contract/InterfaceDefinition
+        return [s.name.value.x for s in self.inherits] if hasattr(self, 'inherits') else []
+
 
 @dataclass
 class ArrayType(Type):
@@ -98,6 +103,14 @@ class ArrayType(Type):
     def is_builtin(self) -> bool:
         # e.g. byte[] is builtin, string[] is builtin, MyContract[] is not
         return self.base_type.is_builtin()
+
+    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
+        if super().can_implicitly_cast_from(actual_type):
+            return True
+        if isinstance(self.base_type, ByteType) and isinstance(actual_type, StringType):
+            # cast string to byte array, TODO: do stricter checks based on sizing, etc
+            return True
+        return False
 
 
 @dataclass
@@ -185,6 +198,10 @@ def Bytes(size=None):
             raise NotImplementedError(f'{type(size)}')
     else:
         return ArrayType(ByteType())
+
+
+def is_byte_array(ttype: Type) -> bool:
+    return isinstance(ttype, ArrayType) and isinstance(ttype.base_type, ByteType)
 
 
 class BoolType(Type):
@@ -707,19 +724,14 @@ class FunctionCall(Call):
     base: Expr
     name: Ident
 
-    def get_supers(self, c):
-        # c.inherits are the InheritSpecifics
-        # s.name is the ResolvedUserType => .value.x is the Contract/InterfaceDefinition
-        return [s.name.value.x for s in c.inherits]
-
     def resolve_call(self) -> FunctionDefinition:
         if isinstance(self.base, SuperObject):
             # E.g. super.xyz()
             # First element will be the base type which we don't want to include in the MRO as its super call lookup
-            ref_lookup_order = c3_linearise(self.base.declarer.x, self.get_supers)[1:]
+            ref_lookup_order = c3_linearise(self.base.declarer.x)[1:]
         else:
             # e.g. this.xyz() or abc.xyz()
-            ref_lookup_order = c3_linearise(self.base.type_of().value.x, self.get_supers)
+            ref_lookup_order = c3_linearise(self.base.type_of().value.x)
 
         for unit in ref_lookup_order:
             matching_name_funcs = [p for p in unit.parts if isinstance(p, FunctionDefinition) and p.name.text == self.name.text]

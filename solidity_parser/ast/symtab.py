@@ -220,8 +220,8 @@ class RootScope(Scope):
         def bytes32():
             return solnodes.FixedLengthArrayType(solnodes.ByteType(), 32)
 
-        def uint256():
-            return solnodes.IntType(False, 256)
+        def uint(size=256):
+            return solnodes.IntType(False, size)
 
         abi_object = BuiltinObject('abi')
         # input_types == None means the function can take any parameters
@@ -240,17 +240,32 @@ class RootScope(Scope):
 
         self.add(abi_object)
 
+        block_object = BuiltinObject('block')
+        block_object.add(BuiltinValue('basefee', uint()))
+        block_object.add(BuiltinValue('chainid', uint()))
+        block_object.add(BuiltinValue('coinbase', solnodes.AddressType(True)))
+        block_object.add(BuiltinValue('difficulty', uint()))
+        block_object.add(BuiltinValue('gaslimit', uint()))
+        block_object.add(BuiltinValue('number', uint()))
+        block_object.add(BuiltinValue('timestamp', uint()))
+        self.add(block_object)
+
+        tx_object = BuiltinObject('tx')
+        tx_object.add(BuiltinValue('gasprice', uint()))
+        tx_object.add(BuiltinValue('origin', solnodes.AddressType(False)))
+        self.add(tx_object)
+
         # https://docs.soliditylang.org/en/latest/units-and-global-variables.html#members-of-address-types
         def address_object(payable):
             # key is <type: address> or <type: address payable>
             scope = BuiltinObject(type_key(solnodes.AddressType(payable)))
-            scope.add(BuiltinValue('balance', uint256()))
+            scope.add(BuiltinValue('balance', uint()))
             scope.add(BuiltinValue('code', bytes()))
             scope.add(BuiltinValue('codehash', bytes32()))
 
             if payable:
-                scope.add(BuiltinFunction('transfer', [uint256()], []))
-                scope.add(BuiltinFunction('transfer', [uint256()], [solnodes.BoolType()]))
+                scope.add(BuiltinFunction('transfer', [uint()], []))
+                scope.add(BuiltinFunction('transfer', [uint()], [solnodes.BoolType()]))
 
             scope.add(BuiltinFunction('call', [bytes()], [solnodes.BoolType(), bytes()]))
             scope.add(BuiltinFunction('delegatecall', [bytes()], [solnodes.BoolType(), bytes()]))
@@ -264,8 +279,14 @@ class RootScope(Scope):
         self.add(BuiltinFunction('keccak256', None, [bytes32()]))
         # addmod(uint x, uint y, uint k) returns (uint)
         # mulmod(uint x, uint y, uint k) returns (uint)
-        self.add(BuiltinFunction('addmod', [uint256(), uint256(), uint256()], [uint256()]))
-        self.add(BuiltinFunction('mulmod', [uint256(), uint256(), uint256()], [uint256()]))
+        self.add(BuiltinFunction('addmod', [uint(), uint(), uint()], [uint()]))
+        self.add(BuiltinFunction('mulmod', [uint(), uint(), uint()], [uint()]))
+
+        self.add(BuiltinFunction('ecrecover', [bytes32(), uint(8), bytes32(), bytes32()], [solnodes.AddressType(False)]))
+
+        self.add(BuiltinFunction('gasleft', [], [uint()]))
+
+        self.add(BuiltinFunction('blockhash', [uint()], [bytes32()]))
 
         # primitive types
 
@@ -592,6 +613,12 @@ class Builder2:
 
                 if isinstance(target_type, solnodes.UserType):
                     target_scope_name = target_type.name.text
+                    if '.' in target_scope_name:
+                        parts = target_scope_name.split('.')
+                        s = unit_scope
+                        for p in parts:
+                            s = s.find_single(p)
+                        target_scope_name = s.value.name.text
                 else:
                     target_scope_name = type_key(target_type)
 
