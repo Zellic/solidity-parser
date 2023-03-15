@@ -57,6 +57,21 @@ class Type(Node):
     def is_builtin(self) -> bool:
         raise NotImplementedError()
 
+    def is_array(self) -> bool:
+        return False
+
+    def is_string(self) -> bool:
+        return False
+
+    def is_function(self) -> bool:
+        return False
+
+    def is_int(self) -> bool:
+        return False
+
+    def is_user_type(self) -> bool:
+        return False
+
 
 class Stmt(Node):
     pass
@@ -92,6 +107,12 @@ class TopLevelUnit(Node):
         # s.name is the ResolvedUserType => .value.x is the Contract/InterfaceDefinition
         return [s.name.value.x for s in self.inherits] if hasattr(self, 'inherits') else []
 
+    def is_enum(self) -> bool:
+        return isinstance(self, EnumDefinition)
+
+    def is_struct(self) -> bool:
+        return isinstance(self, StructDefinition)
+
 
 @dataclass
 class ArrayType(Type):
@@ -111,6 +132,9 @@ class ArrayType(Type):
             # cast string to byte array, TODO: do stricter checks based on sizing, etc
             return True
         return False
+
+    def is_array(self) -> bool:
+        return True
 
 
 @dataclass
@@ -183,6 +207,9 @@ class IntType(Type):
     def is_builtin(self) -> bool:
         return True
 
+    def is_int(self) -> bool:
+        return True
+
 
 def UIntType(size=256):
     return IntType(False, size)
@@ -225,6 +252,9 @@ class StringType(ArrayType):
     def is_builtin(self) -> bool:
         return True
 
+    def is_string(self) -> bool:
+        return True
+
 
 @dataclass
 class MappingType(Type):
@@ -257,6 +287,9 @@ class ResolvedUserType(Type):
     def is_builtin(self) -> bool:
         return False
 
+    def is_user_type(self) -> bool:
+        return True
+
 
 @dataclass
 class BuiltinType(Type):
@@ -280,6 +313,9 @@ class FunctionType(Type):
 
     def is_builtin(self) -> bool:
         return False
+
+    def is_function(self) -> bool:
+        return True
 
 
 @dataclass
@@ -474,12 +510,6 @@ class VarDecl(Stmt):
 
 
 @dataclass
-class VarDecl(Stmt):
-    var: Var
-    value: Expr
-
-
-@dataclass
 class ExprStmt(Stmt):
     expr: Expr
 
@@ -581,14 +611,26 @@ class StateVarLoad(Expr):
 
         unit = base_type.value.x
 
-        matches = [p for p in unit.parts if p.name.text == self.name.text and isinstance(p, StateVariableDeclaration)]
+        if isinstance(unit, StructDefinition):
+            matches = [m for m in unit.members if
+                       m.name.text == self.name.text and isinstance(m, StructMember)]
+        else:
+            matches = [p for p in unit.parts if
+                       p.name.text == self.name.text and isinstance(p, StateVariableDeclaration)]
+
         assert len(matches) == 1
         return matches[0].ttype
 
 
 @dataclass
-class EnumMemberLoad(Expr):
-    enum: ResolvedUserType
+class StaticVarLoad(Expr):
+    ttype: ResolvedUserType
+    name: Ident
+
+
+@dataclass
+class EnumLoad(Expr):
+    ttype: ResolvedUserType
     name: Ident
 
 
@@ -617,6 +659,29 @@ class LocalVarStore(Expr):
 
 
 @dataclass
+class LocalTupleVarStore(Expr):
+    vars: List[Var]
+    value: Expr
+
+    def type_of(self) -> Type:
+        return TupleType([var.ttype for var in self.vars])
+
+
+@dataclass
+class TupleLoad(Expr):
+    base: Expr
+    index: int
+
+    def type_of(self) -> Type:
+        tuple_type = self.base.type_of()
+        assert isinstance(tuple_type, TupleType)
+
+        assert 0 <= self.index < len(tuple_type.ttypes)
+
+        return tuple_type.ttypes[self.index]
+
+
+@dataclass
 class ArrayLoad(Expr):
     base: Expr
     index: Expr
@@ -638,6 +703,19 @@ class ArrayLoad(Expr):
 class ArrayStore(Expr):
     base: Expr
     index: Expr
+    value: Expr
+
+
+@dataclass
+class MappingLoad(Expr):
+    base: Expr
+    key: Expr
+
+
+@dataclass
+class MappingStore(Expr):
+    base: Expr
+    key: Expr
     value: Expr
 
 
@@ -751,6 +829,16 @@ class FunctionCall(Call):
         else:
             ttype = target_callee.outputs[0].var.ttype
         return ttype
+
+
+@dataclass
+class DynamicBuiltInCall(Call):
+    ttype: Type
+    base: Expr
+    name: str
+
+    def type_of(self) -> Type:
+        return self.ttype
 
 
 @dataclass
