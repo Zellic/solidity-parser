@@ -1357,6 +1357,9 @@ class Builder:
     def parameter(self, node: solnodes1.Parameter):
         return solnodes2.Parameter(self.var(node))
 
+    def error_parameter(self, node: solnodes1.ErrorParameter):
+        return solnodes2.ErrorParameter(self.map_type(node.var_type), solnodes2.Ident(node.name.text))
+
     def modifier(self, node: solnodes1.Modifier):
         pass
 
@@ -1431,7 +1434,7 @@ class Builder:
             ast2_node.outputs = [self.parameter(x) for x in ast1_node.returns]
 
         if isinstance(ast1_node, solnodes1.ErrorDefinition):
-            ast2_node.inputs = [self.parameter(x) for x in ast1_node.parameters]
+            ast2_node.inputs = [self.error_parameter(x) for x in ast1_node.parameters]
 
         if isinstance(ast1_node, solnodes1.StateVariableDeclaration):
             ast2_node.ttype = self.map_type(ast1_node.var_type)
@@ -1451,7 +1454,7 @@ class Builder:
     def refine_unit_or_part(self, ast1_node: solnodes1.SourceUnit):
         if not isinstance(ast1_node, (solnodes1.ContractDefinition, solnodes1.InterfaceDefinition,
                                       solnodes1.StructDefinition, solnodes1.LibraryDefinition,
-                                      solnodes1.EnumDefinition,
+                                      solnodes1.EnumDefinition, solnodes1.ErrorDefinition,
                                       solnodes1.FunctionDefinition, solnodes1.EventDefinition,
                                       solnodes1.StateVariableDeclaration, solnodes1.ModifierDefinition)):
             raise ValueError('x')
@@ -1521,5 +1524,5 @@ class Builder:
         return None
 
     def is_top_level(self, node: solnodes1.Node):
-        # FunctionDefinitions are set as SourceUnits in AST1 but not in AST2
+        # Error and FunctionDefinitions are set as SourceUnits in AST1 but not in AST2
         return isinstance(node, solnodes1.SourceUnit) and not isinstance(node, (solnodes1.FunctionDefinition, solnodes1.ErrorDefinition))
