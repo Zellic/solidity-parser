@@ -758,9 +758,8 @@ class Builder2:
 
                 if not target_type_scope:
                     # We don't have a solid scope for this type, create the proxy as the base scope
-                    target_type_scope = make_proxy_scope(None)
-
-                if isinstance(target_type_scope, ProxyScope):
+                    proxy_scope = make_proxy_scope(None)
+                elif isinstance(target_type_scope, ProxyScope):
                     if target_type_scope.created_by != unit_scope:
                         # don't extend the parent proxy scope(using directives aren't inherited and even we allow them
                         # to be we would need to check the libraries to ensure symbols aren't duplicated)
@@ -773,7 +772,7 @@ class Builder2:
                         # a proxy scope created by this current contract but for a different lib (this can happen when
                         # multiple libraries are used for the same type)
                         lib = library_scope.value.name.text
-                        assert not lib in target_type_scope.libraries
+                        assert lib not in target_type_scope.libraries
                         target_type_scope.libraries.append(lib)
                         proxy_scope = target_type_scope
                 else:

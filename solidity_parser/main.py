@@ -177,8 +177,8 @@ if __name__ == '__main__':
     # print(x.name, x.hometown.name, x.hometown.id)
 
     # base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
-    # base_dir = 'C:/Users/bibl/Downloads/solidity-examples-main/contracts'
-    base_dir = 'C:/Users/bibl/Downloads/debridge-contracts-v1'
+    base_dir = 'C:/Users/bibl/Downloads/solidity-examples-main/contracts'
+    # base_dir = 'C:/Users/bibl/Downloads/debridge-contracts-v1'
     # base_dir = 'F:/Zellic/Workspace/solidity-parser/testcases'
     # lets say we're in the /examples folder and go backwards to StargateComposed.sol in CLI
     # cwd = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/examples'
