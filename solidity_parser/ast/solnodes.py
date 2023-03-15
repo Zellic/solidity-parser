@@ -45,6 +45,20 @@ class Type(Node, ABC):
     def __str__(self):
         pass
 
+    def is_array(self) -> bool:
+        return False
+
+    def is_string(self) -> bool:
+        return False
+
+    def is_function(self) -> bool:
+        return False
+
+    def is_int(self) -> bool:
+        return False
+
+    def is_mapping(self) -> bool:
+        return False
 
 
 @dataclass
@@ -53,6 +67,9 @@ class ArrayType(Type):
     base_type: Type
 
     def __str__(self): return f"{self.base_type}[]"
+
+    def is_array(self) -> bool:
+        return True
 
 
 @dataclass
@@ -97,6 +114,9 @@ class IntType(Type):
 
     def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}"
 
+    def is_int(self) -> bool:
+        return True
+
 
 class BoolType(Type):
     """ Solidity native boolean type"""
@@ -108,6 +128,12 @@ class StringType(Type):
     """ Solidity native string type"""
 
     def __str__(self): return "string"
+
+    def is_array(self) -> bool:
+        return True
+
+    def is_string(self) -> bool:
+        return True
 
 
 class VarType(Type):
@@ -144,6 +170,8 @@ class MappingType(Type):
 
     def __str__(self): return f"({self.src} => {self.dst})"
 
+    def is_mapping(self) -> bool:
+        return True
 
 class Location(Enum):
     """ Solidity reference type storage locations
@@ -675,3 +703,6 @@ class FunctionType(Type):
     def __str__(self):
         # TODO
         return f'FT'
+
+    def is_function(self) -> bool:
+        return True

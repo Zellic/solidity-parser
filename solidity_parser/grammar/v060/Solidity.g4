@@ -408,7 +408,8 @@ numberLiteral
   : (DecimalNumber | HexNumber) NumberUnit? ;
 
 identifier
-  : ('from' | 'calldata' | 'address' | Identifier) ;
+// commented out 'address' as an ident, it's a type...
+  : ('from' | 'calldata' | /*'address' |*/ Identifier) ;
 
 BooleanLiteral
   : 'true' | 'false' ;
