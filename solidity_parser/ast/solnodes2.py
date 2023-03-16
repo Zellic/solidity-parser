@@ -470,6 +470,7 @@ class Try(Stmt):
 class While(Stmt):
     condition: Expr
     body: Stmt
+    is_do_while: bool
 
 
 @dataclass
@@ -851,11 +852,6 @@ class BuiltInCall(Call):
 
 
 @dataclass
-class RequireExpr(Call):
-    pass
-
-
-@dataclass
 class Cast(Expr):
     ttype: Type
     value: Expr
@@ -891,15 +887,25 @@ class EmitEvent(Stmt):
 
 
 @dataclass
-class CreateError(Expr):
+class Revert(Stmt):
+    pass
+
+
+@dataclass
+class RevertWithError(Revert):
     error: Ref[ErrorDefinition]
     args: List[Expr]
 
 
 @dataclass
-class Revert(Stmt):
-    error: CreateError
-    reason: Expr
+class RevertWithReason(Revert):
+    reason: str
+
+
+@dataclass
+class Require(Stmt):
+    condition: Expr
+    reason: str
 
 
 @dataclass

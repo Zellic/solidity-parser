@@ -177,7 +177,8 @@ if __name__ == '__main__':
     # print(x.name, x.hometown.name, x.hometown.id)
 
     # base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
-    base_dir = 'C:/Users/bibl/Downloads/solidity-examples-main/contracts'
+    # base_dir = 'C:/Users/bibl/Downloads/solidity-examples-main/contracts'
+    base_dir = 'C:/Users/bibl/Downloads/ERC721A/contracts'
     # base_dir = 'C:/Users/bibl/Downloads/debridge-contracts-v1'
     # base_dir = 'F:/Zellic/Workspace/solidity-parser/testcases'
     # lets say we're in the /examples folder and go backwards to StargateComposed.sol in CLI
@@ -186,7 +187,7 @@ if __name__ == '__main__':
     node_modules_dir = 'C:/Users/bibl/AppData/Roaming/npm/node_modules'
     vfs = VirtualFileSystem(base_path=base_dir,
                             # cwd=cwd,
-                            include_paths=[node_modules_dir])
+                            include_paths=[])
 
     # vfs.process_cli_input_file('C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/StargateComposed.sol')
     # vfs.process_cli_input_file('C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/examples/ExampleOFT.sol')
