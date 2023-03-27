@@ -36,6 +36,9 @@ class Node:
 
     def __post_init__(self):
         self.parent = None
+        self._set_child_parents()
+
+    def _set_child_parents(self):
         for child in self.get_children():
             child.parent = self
 
@@ -72,6 +75,12 @@ class Type(Node):
     def is_user_type(self) -> bool:
         return False
 
+    def is_address(self) -> bool:
+        return False
+
+    def is_mapping(self) -> bool:
+        return False
+
 
 class Stmt(Node):
     pass
@@ -102,6 +111,9 @@ class TopLevelUnit(Node):
     source_unit_name: str
     name: Ident
 
+    def as_type(self):
+        return ResolvedUserType(Ref(self))
+
     def get_supers(self):
         # c.inherits are the InheritSpecifics
         # s.name is the ResolvedUserType => .value.x is the Contract/InterfaceDefinition
@@ -112,6 +124,12 @@ class TopLevelUnit(Node):
 
     def is_struct(self) -> bool:
         return isinstance(self, StructDefinition)
+
+    def is_contract(self) -> bool:
+        return isinstance(self, ContractDefinition)
+
+    def is_interface(self) -> bool:
+        return isinstance(self, InterfaceDefinition)
 
 
 @dataclass
@@ -128,10 +146,17 @@ class ArrayType(Type):
     def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
         if super().can_implicitly_cast_from(actual_type):
             return True
+        if not self.has_size() and actual_type.is_array() and actual_type.has_size():
+            # i.e. FixedLengthArrayType/VariableLengthArrayType can cast to the base ArrayType (but not each other)
+            # e.g. byte[4] casts to byte[] but not the other way around
+            return True
         if isinstance(self.base_type, ByteType) and isinstance(actual_type, StringType):
             # cast string to byte array, TODO: do stricter checks based on sizing, etc
             return True
         return False
+
+    def has_size(self) -> bool:
+        return hasattr(self, 'size')
 
     def is_array(self) -> bool:
         return True
@@ -162,7 +187,7 @@ class AddressType(Type):
 
     def can_implicitly_cast_from(self, actual_type: Type) -> bool:
         # address_payable(actual_type) can be cast to address implicitly
-        if isinstance(actual_type, AddressType):
+        if actual_type.is_address():
             # Matrix:
             #  self <= actual_type = can_implicitly_cast_from
             #  AP <= AP = true
@@ -170,9 +195,17 @@ class AddressType(Type):
             #  A <= A = true
             #  A <= AP = true
             return not(self.is_payable and not actual_type.is_payable)
+        # contracts can get cast to address (at least in solidity 0.4.23)
+        if actual_type.is_user_type():
+            definition = actual_type.value.x
+            if definition.is_contract() or definition.is_interface():
+                return True
         return False
 
     def is_builtin(self) -> bool:
+        return True
+
+    def is_address(self) -> bool:
         return True
 
 
@@ -269,6 +302,24 @@ class MappingType(Type):
 
     def is_builtin(self) -> bool:
         return False
+
+    def is_mapping(self) -> bool:
+        return True
+
+    def flatten(self) -> List[Type]:
+        # get a nested mapping types elements in a list
+        # e.g. (x => (y => z)) would return [x,y,z]
+        result = [self.src]
+        next_link = self.dst
+        while next_link:
+            if next_link.is_mapping():
+                result.append(next_link.src)
+                next_link = next_link.dst
+            else:
+                # base case, we hit the end of the chain
+                result.append(next_link)
+                next_link = None
+        return result
 
 
 @dataclass
@@ -370,8 +421,13 @@ class LibraryDefinition(TopLevelUnit):
 
 
 @dataclass
+class EnumMember(Node):
+    name: Ident
+
+
+@dataclass
 class EnumDefinition(TopLevelUnit):
-    values: List[Ident]
+    values: List[EnumMember]
 
 
 @dataclass
@@ -527,10 +583,10 @@ class Literal(Expr):
 
 @dataclass
 class TypeLiteral(Expr):
-    ttypes: TupleType
+    ttype: Type
 
     def type_of(self):
-        return self.ttypes
+        return self.ttype
 
 
 @dataclass
@@ -631,8 +687,11 @@ class StaticVarLoad(Expr):
 
 @dataclass
 class EnumLoad(Expr):
-    ttype: ResolvedUserType
-    name: Ident
+    member: Ref[EnumMember]
+
+    def type_of(self) -> Type:
+        # enum members type is its parent type
+        return self.member.x.parent.as_type()
 
 
 @dataclass
@@ -708,6 +767,24 @@ class ArrayStore(Expr):
 
 
 @dataclass
+class CreateInlineArray(Expr):
+    """ Solidity 8 inline array creation
+
+    An inline array is one where the elements are explicitly stated in the definition, for example:
+    'int[5]   foo2 = [1, 0, 0, 0, 0];'
+    """
+    elements: List[Expr]
+
+    def type_of(self) -> Type:
+        element_types = [e.type_of() for e in self.elements]
+        # need at least 1 element for this call to work, TODO: maybe store the type and decide whether to use it if
+        # there are elements
+        assert len(element_types) > 0
+        assert all([t == element_types[0] for t in element_types])
+        return FixedLengthArrayType(element_types[0], len(element_types))
+
+
+@dataclass
 class MappingLoad(Expr):
     base: Expr
     key: Expr
@@ -758,11 +835,27 @@ class CreateMemoryArray(Expr):
     ttype: ArrayType
     size: Expr
 
+    def type_of(self) -> Type:
+        return self.ttype
+
 
 @dataclass
 class CreateStruct(Expr):
     ttype: ResolvedUserType
     args: List[Expr]
+
+    def type_of(self) -> Type:
+        return self.ttype
+
+
+@dataclass
+class CreateAndDeployContract(Expr):
+    ttype: ResolvedUserType
+    named_args: List[NamedArgument]
+    args: List[Expr]
+
+    def type_of(self) -> Type:
+        return self.ttype
 
 
 @dataclass
@@ -899,13 +992,13 @@ class RevertWithError(Revert):
 
 @dataclass
 class RevertWithReason(Revert):
-    reason: str
+    reason: Expr
 
 
 @dataclass
 class Require(Stmt):
     condition: Expr
-    reason: str
+    reason: Expr
 
 
 @dataclass

@@ -1,4 +1,3 @@
-from solidity_parser.ast.symtab import ContractOrInterfaceScope
 from typing import List
 
 
@@ -28,7 +27,7 @@ def _merge(*sequences):
                 del seq[0]
 
 
-def c3_linearise(klass: ContractOrInterfaceScope, get_supers=None) -> List[ContractOrInterfaceScope]:
+def c3_linearise(klass, get_supers=None):
     if get_supers is not None:
         superklasses = get_supers(klass)
     else:

@@ -1,9 +1,11 @@
 from typing import Union, List, Dict, Optional, Type, Tuple
 from collections import defaultdict
+from enum import Enum
 
 from solidity_parser.ast import solnodes
 from solidity_parser.filesys import LoadedSource, VirtualFileSystem
 
+from solidity_parser.ast.mro_helper import c3_linearise
 
 Aliases = Union[str, List[str]]
 
@@ -62,6 +64,15 @@ class Symbol(Scopeable):
         return f"{type(self).__name__}: {self.aliases}{self.str_type()}"
 
 
+class CrossScopeSymbolAlias(Symbol):
+    def __init__(self, aliases: Aliases, other_symbol: Symbol):
+        Symbol.__init__(self, aliases, other_symbol.value)
+        self.other_symbol = other_symbol
+
+    def resolve_base_symbol(self) -> 'Symbol':
+        return self.other_symbol
+
+
 class Scope(Scopeable):
     def __init__(self, aliases: Optional[Aliases]):
         Scopeable.__init__(self, aliases)
@@ -114,17 +125,25 @@ class Scope(Scopeable):
         for scope in self.imported_scopes:
             # TODO: unsure whether this should be find_local or find. This is just the old import_symbols_from_scope
             #  functionality for now
-            syms = scope.find(name)
+            syms = scope.find_local(name)
             if syms:
                 return syms
         return []
 
-    def find(self, name: str, find_base_symbol: bool = False) -> Optional[List[Symbol]]:
+    def find(self, name: str, find_base_symbol: bool = False, predicate=None) -> Optional[List[Symbol]]:
+        if not predicate:
+            predicate = lambda x: True
+
+        def run_predicate(xs):
+            return [x for x in xs if predicate(x)]
+
         # check this scope first
-        found_symbols = self.find_local(name) + self.find_imported(name)
+        found_symbols = run_predicate(self.find_local(name))
+        if not found_symbols:
+            found_symbols = run_predicate(self.find_imported(name))
         # check the parent scope if it wasn't in this scope
         if not found_symbols and self.parent_scope is not None:
-            found_symbols = self.parent_scope.find(name)
+            found_symbols = run_predicate(self.parent_scope.find(name, predicate=predicate))
 
         if not found_symbols:
             return []
@@ -135,8 +154,8 @@ class Scope(Scopeable):
         else:
             return list(found_symbols)
 
-    def find_single(self, name: str, find_base_symbol: bool = False, default=None) -> Optional[Symbol]:
-        results = self.find(name, find_base_symbol)
+    def find_single(self, name: str, find_base_symbol: bool = False, default=None, predicate=None) -> Optional[Symbol]:
+        results = self.find(name, find_base_symbol=find_base_symbol, predicate=predicate)
 
         if len(results) == 1:
             return results[0]
@@ -172,10 +191,19 @@ class Scope(Scopeable):
                 # TODO: guard for the probably bit
                 # this is a primitive (probably). E.g. We look up <type: int256>
                 fields = []
+                methods = []
                 if ttype.is_function():
                     # Function selector, specific to the function type itself
                     fields.append(('selector', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
-                scope = create_builtin_scope(key, ttype, values=fields)
+                    # before solidity 0.7 instead of f{gas: x, value: y)(args), f.gas(x).value(y)(args) was the way
+                    # options were passed
+                    # To simulate this, we stub value and gas as functions that have the function type itself as the
+                    # return type
+                    methods = [
+                        ('value', [solnodes.IntType(False, 256)], [ttype]),
+                        ('gas', [solnodes.IntType(False, 256)], [ttype]),
+                    ]
+                scope = create_builtin_scope(key, ttype, values=fields, functions=methods)
             self.add_global_symbol(scope)
             return scope
         elif isinstance(scope, BuiltinObject):
@@ -300,9 +328,15 @@ class RootScope(Scope):
 
         msg_object = BuiltinObject('msg')
         msg_object.add(BuiltinValue('value', solnodes.IntType(False, 256)))
+        # The function gasleft was previously known as msg.gas, which was deprecated in version 0.4.21 and removed in
+        # version 0.5.0
         msg_object.add(BuiltinValue('gas', solnodes.IntType(False, 256)))
-        msg_object.add(BuiltinValue('sender', solnodes.AddressType(False)))
+        # FIXME: Sender is actually not payable as per 0.8 breaking changes, but if we make it not payable it breaks
+        #  some pre 0.8 contracts, need a way to version symtab behaviour in AST2
+        msg_object.add(BuiltinValue('sender', solnodes.AddressType(True)))
         msg_object.add(BuiltinValue('data', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+        msg_object.add(BuiltinValue('sig', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+
         self.add(msg_object)
 
         def bytes():
@@ -338,8 +372,10 @@ class RootScope(Scope):
         block_object.add(BuiltinValue('difficulty', uint()))
         block_object.add(BuiltinValue('gaslimit', uint()))
         block_object.add(BuiltinValue('number', uint()))
-        block_object.add(BuiltinValue('timestamp', uint()))
+        block_object.add(now_symbol := BuiltinValue('timestamp', uint()))  # now was used pre solidity 0.7 for block.timestamp
         self.add(block_object)
+
+        self.add(CrossScopeSymbolAlias('now', now_symbol))
 
         tx_object = BuiltinObject('tx')
         tx_object.add(BuiltinValue('gasprice', uint()))
@@ -357,7 +393,7 @@ class RootScope(Scope):
 
             if payable:
                 scope.add(BuiltinFunction('transfer', [uint()], []))
-                scope.add(BuiltinFunction('transfer', [uint()], [solnodes.BoolType()]))
+                scope.add(BuiltinFunction('send', [uint()], [solnodes.BoolType()]))
 
             scope.add(BuiltinFunction('call', [bytes()], [solnodes.BoolType(), bytes()]))
             scope.add(BuiltinFunction('delegatecall', [bytes()], [solnodes.BoolType(), bytes()]))
@@ -384,6 +420,7 @@ class RootScope(Scope):
         self.add(BuiltinFunction('require', [solnodes.BoolType()], []))
 
         self.add(BuiltinFunction('revert', [solnodes.StringType()], []))
+        self.add(BuiltinFunction('revert', [], []))
 
 
 class FileScope(ScopeAndSymbol):
@@ -424,16 +461,33 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
         assert isinstance(parent_scope, FileScope)
         return ScopeAndSymbol.set_parent_scope(self, parent_scope)
 
-    def find_local(self, name: str) -> Optional[List[Symbol]]:
-        found_symbols = Scope.find_local(self, name)
+    # def find_local(self, name: str) -> Optional[List[Symbol]]:
+    #     found_symbols = Scope.find_local(self, name)
+    #     if found_symbols:
+    #         return found_symbols
+    #     else:
+    #         for super_contract in self.get_supers():
+    #             found_symbols = super_contract.find(name, False)
+    #             if found_symbols:
+    #                 return found_symbols
+    #     return []
+    
+    def find_imported(self, name: str) -> Optional[List[Symbol]]:
+        found_symbols = Scope.find_imported(self, name)
         if found_symbols:
             return found_symbols
         else:
-            for super_contract in self.get_supers():
-                found_symbols = super_contract.find(name, False)
-                if found_symbols:
-                    return found_symbols
-        return []
+            return self.find_in_contract_hierarchy(name)
+        
+    def find_in_contract_hierarchy(self, name: str):
+        lookup_order = c3_linearise(self)[1:]
+        lookups = [syms for c in lookup_order if (syms := c.find_local(name))]
+        # if len(lookups) > 1:
+        #     raise ValueError()
+        if lookups:
+            return lookups[0]
+        else:
+            return []
 
     def get_supers(self) -> List['ContractOrInterfaceScope']:
         klass_file_scope: FileScope = self.parent_scope
@@ -583,17 +637,17 @@ class Builder2:
 
         fs = FileScope(self, self.vfs, source_unit_name)
 
-        context = Builder2.Context(fs, None)
-
         self.add_to_scope(self.root_scope, fs)
 
         for index, node in enumerate(source_units):
-            self.add_node_dfs(fs, node, context, index)
+            self.add_node_dfs(fs, node, Builder2.Context(fs, None), True, index)
 
+        for index, node in enumerate(source_units):
+            self.add_node_dfs(fs, node, Builder2.Context(fs, None), False, index)
 
         return fs
 
-    def add_node_dfs(self, parent_scope, node, context: Context, visit_index=0):
+    def add_node_dfs(self, parent_scope, node, context: Context, build_skeletons, visit_index=0):
         """
         Recursively traverse a node and its children and create symbols and scopes in a nested hierarchy
 
@@ -607,14 +661,16 @@ class Builder2:
         # we need to add any created symbols/scope to a parent
         assert parent_scope is not None, 'No parent scope'
 
-        # the nodes scope is the scope it was created in always
-        node.scope = parent_scope
+        if build_skeletons:
+            assert not hasattr(node, 'scope')
+            # the nodes scope is the scope it was created in always
+            node.scope = parent_scope
 
         # track the scope for the nodes children later
         current_scope = parent_scope
 
         # Process the node for new symbols or a new scope
-        scope_or_symbols = self.process_node(node, context, visit_index)
+        scope_or_symbols = self.process_node(node, context, build_skeletons, visit_index)
         if scope_or_symbols is None:
             new_symbols = []
         elif isinstance(scope_or_symbols, list):
@@ -628,8 +684,22 @@ class Builder2:
 
         # if it created a new scope, set the current scope to it so the nodes children are in that scope
         if isinstance(scope_or_symbols, Scope):
+            assert build_skeletons
             current_scope = scope_or_symbols
             node.owning_scope = current_scope
+
+            # update the context for the children if a new top level scope was made
+            if isinstance(scope_or_symbols, (ContractOrInterfaceScope, LibraryScope, StructScope, EnumScope)):
+                context = Builder2.Context(context.file_scope, scope_or_symbols)
+
+        if not build_skeletons and hasattr(node, 'owning_scope'):
+            current_scope = node.owning_scope
+
+            # update the context for the children if a new top level scope was made
+            if isinstance(current_scope, (ContractOrInterfaceScope, LibraryScope, StructScope, EnumScope)):
+                context = Builder2.Context(context.file_scope, current_scope)
+
+
 
         # add the created symbols under the parent scope. The process_node call above either makes a new
         # scope or new symbols, so don't think of this as adding new symbols to a newly created scope, that is
@@ -651,26 +721,34 @@ class Builder2:
         # V.scope.parent_scope == E.scope, so E.scope.find('decimals') == function scope for 'decimals' and
         # V.scope.find('decimals') == variable 'decimals'.
 
-        if isinstance(scope_or_symbols, (ContractOrInterfaceScope, LibraryScope, StructScope, EnumScope)):
-            # update the context for the children if a new top level scope was made
-            context = Builder2.Context(context.file_scope, scope_or_symbols)
-
-        child_scope = current_scope
+        latest_scope = current_scope
         for child_index, child_node in enumerate(node.get_children()):
+            # Enums values are shared between nodes, so they'd end up getting processed multiple times and their
+            # 'scope' would be inaccurate
+            if isinstance(child_node, Enum):
+                continue
+
             if isinstance(child_node, solnodes.VarDecl):
-                scope_name = ','.join([var.var_name.text for var in child_node.variables])
-                new_scope = self.make_scope(child_node, name=f'<vardecl:{scope_name}>')
+                if build_skeletons:
+                    # This is the synthetic scope in which the VarDecl is live
+                    scope_name = ','.join([var.var_name.text for var in child_node.variables])
+                    new_scope = self.make_scope(child_node, name=f'<vardecl:{scope_name}>')
 
-                self.add_to_scope(child_scope, new_scope)
+                    # Add it to the latest set/current parent scope
+                    self.add_to_scope(latest_scope, new_scope)
+                    child_node.owning_scope = new_scope
 
-                var_symbols = [self.make_symbol(var, name=var.var_name.text) for var in child_node.variables]
-                self.add_to_scope(new_scope, *var_symbols)
+                    # Define the LHS vars as symbols in this scope
+                    var_symbols = [self.make_symbol(var, name=var.var_name.text) for var in child_node.variables]
+                    self.add_to_scope(new_scope, *var_symbols)
 
-                # do this before setting the child scope
-                self.add_node_dfs(child_scope, child_node, context, child_index)
-                child_scope = new_scope
+                    # do this before setting the child scope
+                    self.add_node_dfs(latest_scope, child_node, context, build_skeletons, child_index)
+                    latest_scope = new_scope
+                else:
+                    latest_scope = child_node.owning_scope
             else:
-                self.add_node_dfs(child_scope, child_node, context, child_index)
+                self.add_node_dfs(latest_scope, child_node, context, build_skeletons, child_index)
 
     def add_to_scope(self, parent: Scope, *children: Symbol):
         if children is not None:
@@ -700,113 +778,124 @@ class Builder2:
         else:
             return scope.find_single(name)
 
-    def process_node(self, node, context: Context, visit_index: int):
-        if isinstance(node, solnodes.UsingDirective):
-            if isinstance(node.override_type, solnodes.AnyType):
-                raise NotImplemented("using X for *")
+    def process_using_directive(self, node: solnodes.UsingDirective, context: Context):
+        if isinstance(node.override_type, solnodes.AnyType):
+            raise NotImplemented("using X for *")
+        else:
+            # get the functions in the target library and import them under the scope of the 1st param type
+            # current_file_scope: FileScope = context.file_scope
+            unit_scope = context.unit_scope
+            library_scope: Scope = unit_scope.find(node.library_name.text)[0]
+            target_type = node.override_type
+
+            # TODO: Not sure if this is possible and I don't want to handle it(yet), just want to handle Types
+            #  for target_type
+            if isinstance(target_type, solnodes.Ident):
+                raise ValueError()
+
+            target_type_scope = None
+            target_scope_name = None
+
+            # Need to get the symbol name/alias/key for the target type, for primitives this is easy: just encode it
+            # as a type key. For user reference types, it depends on how it's referenced, e.g. it could be just
+            # MyT or could be qualified as A.B.MyT where B is in the scope of A and MyT is in the scope of B (etc)
+            if isinstance(target_type, solnodes.UserType):
+                # Resolve the name used here to the actual contract/struct/etc (symbol)
+                raw_name = target_type.name.text
+                target_type_scope = self.lookup_name_in_scope(unit_scope, raw_name)
+                # Use the name as defined by the target type symbol itself so that we can do definite checks against
+                # this type and the first parameter type later, i.e. for A.B.MyT, use MyT as the type key
+                target_scope_name = target_type_scope.value.name.text
             else:
-                # get the functions in the target library and import them under the scope of the 1st param type
-                # current_file_scope: FileScope = context.file_scope
-                unit_scope = context.unit_scope
-                library_scope: Scope = unit_scope.find(node.library_name.text)[0]
-                target_type = node.override_type
+                # Solidity type, e.g. <type:int>, <type:byte[]}, etc
+                # needs to be a list because
+                target_type_scope = unit_scope.find_type(target_type)
+                target_scope_name = target_type_scope.aliases[0]
 
-                # Not sure if this is possible and I don't want to handle it(yet), just want to handle Types
-                # for target_type
-                if isinstance(target_type, solnodes.Ident):
-                    raise ValueError()
+            # We find the scope for the target type (i.e. X in 'using Y for X') and create a proxy of that scope in
+            # our own local scope and add the functions from Y to the proxy(not the base scope of X)
+            # This is so we can lookup functions in like x.z() in the proxy scope (as it will not exist in the base
+            # scope) as the Using directive is only 'active' in the current scope (as opposed to on a global level)
 
-                target_type_scope = None
-                target_scope_name = None
+            def make_proxy_scope(base_scope):
+                new_proxy_scope = ProxyScope(target_scope_name, base_scope)
+                new_proxy_scope.created_by = unit_scope
 
-                # Need to get the symbol name/alias/key for the target type, for primitives this is easy: just encode it
-                # as a type key. For user reference types, it depends on how it's referenced, e.g. it could be just
-                # MyT or could be qualified as A.B.MyT where B is in the scope of A and MyT is in the scope of B (etc)
-                if isinstance(target_type, solnodes.UserType):
-                    # Resolve the name used here to the actual contract/struct/etc (symbol)
-                    raw_name = target_type.name.text
-                    target_type = self.lookup_name_in_scope(unit_scope, raw_name)
-                    # Use the name as defined by the target type symbol itself so that we can do definite checks against
-                    # this type and the first parameter type later, i.e. for A.B.MyT, use MyT as the type key
-                    target_scope_name = target_type.value.name.text
+                libs = base_scope.libraries[:] if base_scope and hasattr(base_scope, 'libraries') else []
+                lib = library_scope.value.name.text
+                if lib not in libs:
+                    libs.append(lib)
+                new_proxy_scope.libraries = libs
+
+                unit_scope.add(new_proxy_scope)
+                return new_proxy_scope
+
+            if not target_type_scope:
+                target_type_scope = unit_scope.find_single(target_scope_name)
+
+            if not target_type_scope:
+                # We don't have a solid scope for this type, create the proxy as the base scope
+                proxy_scope = make_proxy_scope(None)
+            elif isinstance(target_type_scope, ProxyScope):
+                if target_type_scope.created_by != unit_scope:
+                    # don't extend the parent proxy scope(using directives aren't inherited and even we allow them
+                    # to be we would need to check the libraries to ensure symbols aren't duplicated)
+                    # find its real base
+                    real_base = target_type_scope.find_first_ancestor(lambda x: not isinstance(x, ProxyScope),
+                                                                      lambda x: x.base_scope)
+                    assert real_base
+                    proxy_scope = make_proxy_scope(real_base)
                 else:
-                    # Solidity type, e.g. <type:int>, <type:byte[]}, etc
-                    # needs to be a list because
-                    target_type_scope = unit_scope.find_type(target_type)
-                    target_scope_name = target_type_scope.aliases[0]
-
-                # We find the scope for the target type (i.e. X in 'using Y for X') and create a proxy of that scope in
-                # our own local scope and add the functions from Y to the proxy(not the base scope of X)
-                # This is so we can lookup functions in like x.z() in the proxy scope (as it will not exist in the base
-                # scope) as the Using directive is only 'active' in the current scope (as opposed to on a global level)
-
-                def make_proxy_scope(base_scope):
-                    new_proxy_scope = ProxyScope(target_scope_name, base_scope)
-                    new_proxy_scope.created_by = unit_scope
-
-                    libs = base_scope.libraries[:] if base_scope and hasattr(base_scope, 'libraries') else []
+                    # a proxy scope created by this current contract but for a different lib (this can happen when
+                    # multiple libraries are used for the same type)
                     lib = library_scope.value.name.text
-                    if lib not in libs:
-                        libs.append(lib)
-                    new_proxy_scope.libraries = libs
+                    assert lib not in target_type_scope.libraries
+                    target_type_scope.libraries.append(lib)
+                    proxy_scope = target_type_scope
+            else:
+                # there exists a scope for this type but it's not a proxy scope, so it's most likely a
+                # user type or builtin scope: create a proxy for this using directive
+                proxy_scope = make_proxy_scope(target_type_scope)
 
-                    unit_scope.add(new_proxy_scope)
-                    return new_proxy_scope
-
-                if not target_type_scope:
-                    target_type_scope = unit_scope.find_single(target_scope_name)
-
-                if not target_type_scope:
-                    # We don't have a solid scope for this type, create the proxy as the base scope
-                    proxy_scope = make_proxy_scope(None)
-                elif isinstance(target_type_scope, ProxyScope):
-                    if target_type_scope.created_by != unit_scope:
-                        # don't extend the parent proxy scope(using directives aren't inherited and even we allow them
-                        # to be we would need to check the libraries to ensure symbols aren't duplicated)
-                        # find its real base
-                        real_base = target_type_scope.find_first_ancestor(lambda x: not isinstance(x, ProxyScope),
-                                                                          lambda x: x.base_scope)
-                        assert real_base
-                        proxy_scope = make_proxy_scope(real_base)
-                    else:
-                        # a proxy scope created by this current contract but for a different lib (this can happen when
-                        # multiple libraries are used for the same type)
-                        lib = library_scope.value.name.text
-                        assert lib not in target_type_scope.libraries
-                        target_type_scope.libraries.append(lib)
-                        proxy_scope = target_type_scope
-                else:
-                    # there exists a scope for this type but it's not a proxy scope, so it's most likely a
-                    # user type or builtin scope: create a proxy for this using directive
-                    proxy_scope = make_proxy_scope(target_type_scope)
-
-                for s in library_scope.all_symbols():
-                    func_def = s.value
-                    if not isinstance(func_def, solnodes.FunctionDefinition):
-                        continue
-                    if func_def.parameters:
-                        first_parameter_type = func_def.parameters[0].var_type
-                        # Resolve the parameter type if required (if it's a user defined type) and compared to the
-                        # target type
-                        if isinstance(first_parameter_type, solnodes.UserType):
-                            param_symbol = self.lookup_name_in_scope(library_scope, first_parameter_type.name.text)
-                            if param_symbol == target_type:
-                                proxy_scope.add(UsingFunctionSymbol(s, target_type))
-                        elif first_parameter_type == target_type:
+            for s in library_scope.all_symbols():
+                func_def = s.value
+                if not isinstance(func_def, solnodes.FunctionDefinition):
+                    continue
+                if func_def.parameters:
+                    first_parameter_type = func_def.parameters[0].var_type
+                    # Resolve the parameter type if required (if it's a user defined type) and compared to the
+                    # target type
+                    if isinstance(first_parameter_type, solnodes.UserType):
+                        param_symbol = self.lookup_name_in_scope(library_scope, first_parameter_type.name.text)
+                        if param_symbol.resolve_base_symbol() == target_type_scope.resolve_base_symbol():
                             proxy_scope.add(UsingFunctionSymbol(s, target_type))
-        elif isinstance(node, solnodes.PragmaDirective):
+                    elif first_parameter_type == target_type:
+                        proxy_scope.add(UsingFunctionSymbol(s, target_type))
+
+    def process_node(self, node, context: Context, build_skeletons: bool, visit_index: int):
+        # Only process these when not building skeletons as they can reference other nodes during creation
+        if not build_skeletons:
+            if isinstance(node, solnodes.UsingDirective):
+                return self.process_using_directive(node, context)
+            elif isinstance(node, solnodes.SymbolImportDirective):
+                return [AliasImportSymbol(node, i) for i in range(0, len(node.aliases))]
+            elif isinstance(node, solnodes.UnitImportDirective):
+                return UnitImportSymbol(node)
+            elif isinstance(node, solnodes.ImportDirective):
+                # This is an import that looks like: import "myfile.sol". All the symbols from myfile are loaded into
+                # the current file scope, so we have to load myfile, take its symbols and add them to the current file
+                # scope
+                current_file_scope = context.file_scope
+                imported_file = current_file_scope.get_imported_source_unit(node.path)
+                current_file_scope.import_symbols_from_scope(imported_file)
+                return None  # no new node is made from this
+            else:
+                # all other nodes are handled during skeleton building mode (below)
+                return []
+
+        # Skeleton building node processing
+        if isinstance(node, solnodes.PragmaDirective):
             return None
-        elif isinstance(node, solnodes.SymbolImportDirective):
-            return [AliasImportSymbol(node, i) for i in range(0, len(node.aliases))]
-        elif isinstance(node, solnodes.UnitImportDirective):
-            return UnitImportSymbol(node)
-        elif isinstance(node, solnodes.ImportDirective):
-            # This is an import that looks like: import "myfile.sol". All the symbols from myfile are loaded into
-            # the current file scope, so we have to load myfile, take its symbols and add them to the current file scope
-            current_file_scope = context.file_scope
-            imported_file = current_file_scope.get_imported_source_unit(node.path)
-            current_file_scope.import_symbols_from_scope(imported_file)
-            return None  # no new node is made from this
         elif isinstance(node, (solnodes.FunctionDefinition, solnodes.EventDefinition,
                                solnodes.ErrorDefinition, solnodes.ModifierDefinition)):
             return ModFunErrEvtScope(node)
@@ -824,18 +913,6 @@ class Builder2:
                 assert isinstance(c, solnodes.Ident)
                 scope.add(self.make_symbol(c, name=c.text))
             return scope
-        elif isinstance(node, solnodes.ContractPart):
-            # This catches: ModifierDefinition, StructDefinition, EnumDefinition,
-            # StateVariableDeclaration, EventDefinition, ErrorDefinition. These all have a 'name'
-            # UsingDirective and FunctionDefinition also are ContractParts but this needs to be handled differently
-            # (above)
-            return self.make_scope(node)
-        elif isinstance(node, solnodes.SourceUnit):
-            # This catches: PragmaDirective, ImportDirective, UnitImportDirective, SymbolImportDirective,
-            # ConstantVariableDeclaration, ContractDefinition, InterfaceDefinition, LibraryDefinition.
-            # Some ContractParts, import directives and PragmaDirective are also SourceUnits but handled separately
-            # above
-            return self.make_scope(node)
         elif isinstance(node, (solnodes.StateVariableDeclaration, solnodes.ConstantVariableDeclaration)):
             return self.make_symbol(node)
         elif isinstance(node, solnodes.StructMember):

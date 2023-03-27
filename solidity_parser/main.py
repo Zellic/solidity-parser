@@ -168,6 +168,52 @@ from glob import glob
 if __name__ == '__main__':
     pp.install_extras()
     logging.basicConfig( level=logging.DEBUG)
+
+    base_dir = 'F:/downloads/Contracts/00/00'
+    all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
+
+    # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
+
+    start_idx = 27
+    idx = 0
+
+    for file_name in all_files:
+        if idx < start_idx:
+            idx += 1
+            continue
+
+        with open(file_name, encoding='utf-8') as file:
+            descriptors = json.load(file)
+            assert isinstance(descriptors, list)
+            assert len(descriptors) == 1
+
+            desc = descriptors[0]
+
+            vfs = VirtualFileSystem(base_path='',
+                                    # cwd=cwd,
+                                    include_paths=[])
+            symtab_builder = symtab.Builder2(vfs)
+
+            loaded_source = vfs._add_loaded_source(desc['ContractName'] + '.sol', desc['SourceCode'])
+
+            file_scope = symtab_builder.process_or_find(loaded_source)
+            ast2_builder = Builder2()
+
+            for s in file_scope.symbols.values():
+                if len(s) != 1 or s[0].parent_scope != file_scope:
+                    continue
+                n = s[0].value
+                if not hasattr(n, 'ast2_node') and ast2_builder.is_top_level(n):
+                    ast2_builder.define_skeleton(n, file_scope.source_unit_name)
+
+            ast2_builder.process_all()
+            print("donezo")
+        idx += 1
+
+
+if __name__ == '__main__1':
+    pp.install_extras()
+    logging.basicConfig( level=logging.DEBUG)
     # p = Path('../example/TestInput.json').resolve()
     # with p.open(mode='r', encoding='utf-8') as f:
     #     data = f.read()
@@ -177,8 +223,8 @@ if __name__ == '__main__':
     # print(x.name, x.hometown.name, x.hometown.id)
 
     # base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
-    # base_dir = 'C:/Users/bibl/Downloads/solidity-examples-main/contracts'
-    base_dir = 'C:/Users/bibl/Downloads/ERC721A/contracts'
+    base_dir = 'C:/Users/bibl/Downloads/solidity-examples-main/contracts'
+    # base_dir = 'C:/Users/bibl/Downloads/ERC721A/contracts'
     # base_dir = 'C:/Users/bibl/Downloads/debridge-contracts-v1'
     # base_dir = 'F:/Zellic/Workspace/solidity-parser/testcases'
     # lets say we're in the /examples folder and go backwards to StargateComposed.sol in CLI
@@ -187,7 +233,7 @@ if __name__ == '__main__':
     node_modules_dir = 'C:/Users/bibl/AppData/Roaming/npm/node_modules'
     vfs = VirtualFileSystem(base_path=base_dir,
                             # cwd=cwd,
-                            include_paths=[])
+                            include_paths=[node_modules_dir])
 
     # vfs.process_cli_input_file('C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/StargateComposed.sol')
     # vfs.process_cli_input_file('C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/examples/ExampleOFT.sol')

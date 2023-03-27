@@ -60,6 +60,9 @@ class Type(Node, ABC):
     def is_mapping(self) -> bool:
         return False
 
+    def is_address(self) -> bool:
+        return False
+
 
 @dataclass
 class ArrayType(Type):
@@ -94,6 +97,9 @@ class AddressType(Type):
     is_payable: bool
 
     def __str__(self): return f"address{' payable' if self.is_payable else ''}"
+
+    def is_address(self) -> bool:
+        return True
 
 
 @dataclass
