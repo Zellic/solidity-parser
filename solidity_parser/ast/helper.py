@@ -17,24 +17,23 @@ from solidity_parser.ast.parsers.parsers080 import Parser080
 
 from solidity_parser.ast import solnodes
 
+
+def get_processors(version: int):
+    if version < 7:
+        return SolidityParser060, SolidityLexer060, Parser060()
+    elif 8 > version >= 7:
+        return SolidityParser070, SolidityLexer070, Parser070()
+    elif version >= 8:
+        return SolidityParser080, SolidityLexer080, Parser080()
+    else:
+        raise KeyError(f"Unsupported version: v{version}")
+
+
 def make_ast(input_src, version: int = None) -> List[solnodes.SourceUnit]:
     if version is None:
         version = collector.get_minor_ver(input_src)
 
-    if version < 7:
-        grammar_parser_type = SolidityParser060
-        grammar_lexer_type = SolidityLexer060
-        ast_parser = Parser060()
-    elif 8 > version >= 7:
-        grammar_parser_type = SolidityParser070
-        grammar_lexer_type = SolidityLexer070
-        ast_parser = Parser070()
-    elif version >= 8:
-        grammar_parser_type = SolidityParser080
-        grammar_lexer_type = SolidityLexer080
-        ast_parser = Parser080()
-    else:
-        raise KeyError(f"Unsupported version: v{version}")
+    grammar_parser_type, grammar_lexer_type, ast_parser = get_processors(version)
 
     contract_input = InputStream(input_src)
     lexer = grammar_lexer_type(contract_input)

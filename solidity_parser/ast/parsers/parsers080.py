@@ -101,11 +101,11 @@ def _path(parser, path: SolidityParser.PathContext):
 
 
 def _import_alias(parser, import_alias: SolidityParser.ImportAliasesContext):
-    symbol = parser.make(import_alias.symbol)
     return solnodes.SymbolAlias(
-        symbol,
-        # set the alias to the symbol itself if no alias is specified
-        parser.make(import_alias.alias) if import_alias.alias else symbol
+        parser.make(import_alias.symbol),
+        # set the alias to the symbol itself if no alias is specified but need to reparse to create a seaprate Ident
+        # node (so no node is shared)
+        parser.make(import_alias.alias) if import_alias.alias else parser.make(import_alias.symbol)
     )
 
 
@@ -546,8 +546,12 @@ def _function_type_name(parser, function_type: SolidityParser.FunctionTypeNameCo
 
 
 def _mapping_type(parser, mapping: SolidityParser.MappingTypeContext):
+    key = parser.make(mapping.key)
+    # Previous grammars had the key as a type, 0.8 grammar defined is as a raw ident path, so wrap it here
+    if isinstance(key, solnodes.Ident):
+        key = solnodes.UserType(key)
     return solnodes.MappingType(
-        parser.make(mapping.key),
+        key,
         parser.make(mapping.value)
     )
 

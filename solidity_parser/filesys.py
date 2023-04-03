@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union, Callable
 from collections import namedtuple
 from solidity_parser.ast import solnodes, helper as ast_helper
 
@@ -27,13 +27,20 @@ class StandardJsonInput:
 class LoadedSource:
     source_unit_name: str
     contents: str
+    ast_creator_callback: Optional[Callable[[str], List[solnodes.SourceUnit]]]
 
     @property
     def ast(self) -> List[solnodes.SourceUnit]:
         # Mechanism for creating the AST on demand and caching it
         if not hasattr(self, '_ast'):
             logging.getLogger('VFS').info(f'Parsing {self.source_unit_name}')
-            self._ast = ast_helper.make_ast(self.contents)
+
+            if not self.ast_creator_callback:
+                creator = ast_helper.make_ast
+            else:
+                creator = self.ast_creator_callback
+
+            self._ast = creator(self.contents)
         return self._ast
 
 
@@ -50,12 +57,19 @@ class VirtualFileSystem:
 
         if include_paths is None:
             include_paths = []
-        include_paths = [self._norm_vfs_path(p) for p in include_paths]
         self.include_paths = include_paths
 
         self.import_remaps: List[ImportMapping] = []
 
         self.sources: Dict[str, LoadedSource] = {}
+
+    @property
+    def include_paths(self):
+        return self._include_paths
+
+    @include_paths.setter
+    def include_paths(self, value):
+        self._include_paths = [self._norm_vfs_path(p) for p in value]
 
     def process_cli_input_file(self, file_path):
         # CLI load method
@@ -90,8 +104,8 @@ class VirtualFileSystem:
 
         raise f"Can't import {import_path} from {importer_source_unit_name}"
 
-    def _add_loaded_source(self, source_unit_name: str, source_code: str) -> LoadedSource:
-        loaded_source = LoadedSource(source_unit_name, source_code)
+    def _add_loaded_source(self, source_unit_name: str, source_code: str, creator=None) -> LoadedSource:
+        loaded_source = LoadedSource(source_unit_name, source_code, creator if creator else ast_helper.make_ast)
         self.sources[source_unit_name] = loaded_source
         return loaded_source
 

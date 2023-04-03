@@ -164,17 +164,22 @@ from solidity_parser.ast import funcanalysis
 from solidity_parser.ast import solnodes2
 from solidity_parser.ast.ast2builder import Builder as Builder2
 from glob import glob
+import re
+import solidity_parser.ast.helper as asthelper
+from solidity_parser.collectors import collector
+
+version_pattern = pattern = re.compile(r"v(\d)\.(\d)\.[0-9]+", re.IGNORECASE)
 
 if __name__ == '__main__':
     pp.install_extras()
-    logging.basicConfig( level=logging.DEBUG)
+    logging.basicConfig( level=logging.CRITICAL)
 
     base_dir = 'F:/downloads/Contracts/00/00'
     all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
 
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
 
-    start_idx = 27
+    start_idx = 50
     idx = 0
 
     for file_name in all_files:
@@ -182,32 +187,80 @@ if __name__ == '__main__':
             idx += 1
             continue
 
-        with open(file_name, encoding='utf-8') as file:
-            descriptors = json.load(file)
-            assert isinstance(descriptors, list)
-            assert len(descriptors) == 1
+        try:
+            with open(file_name, encoding='utf-8') as file:
+                descriptors = json.load(file)
+                assert isinstance(descriptors, list)
+                assert len(descriptors) == 1
+                desc = descriptors[0]
 
-            desc = descriptors[0]
+                vfs = VirtualFileSystem(base_path='',
+                                        # cwd=cwd,
+                                        include_paths=[])
 
-            vfs = VirtualFileSystem(base_path='',
-                                    # cwd=cwd,
-                                    include_paths=[])
-            symtab_builder = symtab.Builder2(vfs)
+                symtab_builder = symtab.Builder2(vfs)
 
-            loaded_source = vfs._add_loaded_source(desc['ContractName'] + '.sol', desc['SourceCode'])
+                file_scopes = []
 
-            file_scope = symtab_builder.process_or_find(loaded_source)
-            ast2_builder = Builder2()
+                version = int(pattern.match(desc['CompilerVersion']).group(2))
 
-            for s in file_scope.symbols.values():
-                if len(s) != 1 or s[0].parent_scope != file_scope:
-                    continue
-                n = s[0].value
-                if not hasattr(n, 'ast2_node') and ast2_builder.is_top_level(n):
-                    ast2_builder.define_skeleton(n, file_scope.source_unit_name)
+                def creator(input_src):
+                    v = collector.get_minor_ver(input_src) or version
+                    nodes = asthelper.make_ast(input_src, v)
+                    for n in nodes:
+                        if n:
+                            n.ver = v
+                    return nodes
 
-            ast2_builder.process_all()
-            print("donezo")
+                if desc['SourceCode'].startswith('{{') and desc['SourceCode'].endswith('}}'):
+                    source_contents = {}
+
+                    def _read_file_callback(su_name, base_dir, include_paths) -> str:
+                        return source_contents[su_name]
+
+                    add_loaded_source_original = vfs._add_loaded_source
+
+                    def _add_loaded_source(source_unit_name: str, source_code: str, _=None):
+                        return add_loaded_source_original(source_unit_name, source_code, creator)
+
+                    # required shims
+                    vfs._read_file_callback = _read_file_callback
+                    vfs._add_loaded_source = _add_loaded_source
+
+                    srcs = json.loads(desc['SourceCode'][1:-1])['sources']
+                    for c_name, vv in srcs.items():
+                        c_code = vv['content']
+                        source_contents[c_name] = c_code
+
+                    for f in source_contents.keys():
+                        fs = symtab_builder.process_or_find_from_base_dir(f)
+                        file_scopes.append(fs)
+                else:
+                    c_name = desc['ContractName'] + '.sol'
+                    c_code = desc['SourceCode']
+                    loaded_source = vfs._add_loaded_source(c_name, c_code, creator)
+                    file_scope = symtab_builder.process_or_find(loaded_source)
+                    file_scopes.append(file_scope)
+
+                ast2_builder = Builder2()
+
+                for file_scope in file_scopes:
+                    for s in file_scope.symbols.values():
+                        if len(s) != 1 or s[0].parent_scope != file_scope:
+                            continue
+                        n = s[0].value
+                        if not hasattr(n, 'ast2_node') and ast2_builder.is_top_level(n):
+                            ast2_builder.define_skeleton(n, file_scope.source_unit_name)
+
+                ast2_builder.process_all()
+                print(f"donezo {file_name} idx={idx}")
+        except Exception as e:
+            print(f"failure: idx={idx} {file_name}")
+            raise e
+            # print(contract_source)
+            # if idx is not None:
+            #     with open(f"../example/errors/Contract{idx}.sol", "w", encoding='utf-8') as text_file:
+            #         text_file.write(contract_source)
         idx += 1
 
 
