@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Any, Union, TypeVar, Generic, Optional
+from copy import deepcopy
 
 from solidity_parser.ast import solnodes as solnodes1
 
@@ -42,6 +43,27 @@ class Node:
         for child in self.get_children():
             child.parent = self
 
+    def __deepcopy__(self, memodict):
+        new_fields = {}
+        for name, dfield in self.__dataclass_fields__.items():
+            if name == 'parent':
+                # don't climb up the tree/copy the parent
+                continue
+            # just confirm it needs to be passed to the constructor
+            if not dfield.init:
+                continue
+
+            current_value = getattr(self, name)
+            if isinstance(current_value, (Node, list, tuple)) and not isinstance(current_value, Ref):
+                new_fields[name] = deepcopy(current_value, memodict)
+            else:
+                # copy stuff like str, int
+                new_fields[name] = current_value
+        klass = self.__class__
+        # create the copy by instantiating it like a normal Node, i.e. the parent of the children are set here
+        new_obj = klass(**new_fields)
+        return new_obj
+
 
 class Type(Node):
     @staticmethod
@@ -79,6 +101,12 @@ class Type(Node):
         return False
 
     def is_mapping(self) -> bool:
+        return False
+
+    def is_byte(self) -> bool:
+        return False
+
+    def is_tuple(self) -> bool:
         return False
 
 
@@ -149,7 +177,7 @@ class ArrayType(Type):
         if not self.has_size() and actual_type.is_array() and actual_type.has_size():
             # i.e. FixedLengthArrayType/VariableLengthArrayType can cast to the base ArrayType (but not each other)
             # e.g. byte[4] casts to byte[] but not the other way around
-            return True
+            return self.base_type.can_implicitly_cast_from(actual_type.base_type)
         if isinstance(self.base_type, ByteType) and isinstance(actual_type, StringType):
             # cast string to byte array, TODO: do stricter checks based on sizing, etc
             return True
@@ -157,6 +185,9 @@ class ArrayType(Type):
 
     def has_size(self) -> bool:
         return hasattr(self, 'size')
+
+    def is_fixed_size(self) -> bool:
+        return False
 
     def is_array(self) -> bool:
         return True
@@ -168,6 +199,9 @@ class FixedLengthArrayType(ArrayType):
     size: int
 
     def __str__(self): return f"{self.base_type}[{self.size}]"
+
+    def is_fixed_size(self) -> bool:
+        return True
 
 
 @dataclass
@@ -218,6 +252,9 @@ class ByteType(Type):
     def is_builtin(self) -> bool:
         return True
 
+    def is_byte(self) -> bool:
+        return True
+
 
 @dataclass
 class IntType(Type):
@@ -231,17 +268,35 @@ class IntType(Type):
     def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}"
 
     def can_implicitly_cast_from(self, actual_type: Type) -> bool:
-        if isinstance(actual_type, IntType):
+        if actual_type.is_int():
             # inty(actual_type) to intx(self) if y <= x, same for uint, but not both at the same time
-            return actual_type.is_signed == self.is_signed and actual_type.size <= self.size
-        else:
-            return False
+            if actual_type.is_signed == self.is_signed and actual_type.size <= self.size:
+                return True
+
+            if actual_type.is_precise_int() and not actual_type.is_signed:
+                # e.g. calling f(1 :: uint8) where f(x: int256)
+                return actual_type.real_bit_length < self.size
+        return False
+
+    def is_precise_int(self) -> bool:
+        return False
 
     def is_builtin(self) -> bool:
         return True
 
     def is_int(self) -> bool:
         return True
+
+
+@dataclass
+class PreciseIntType(IntType):
+    # The actual length of the literal in bits, must be less than the given 'size' of this int type
+    real_bit_length: int
+
+    def is_precise_int(self) -> bool:
+        return True
+
+    def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}({self.real_bit_length})"
 
 
 def UIntType(size=256):
@@ -376,6 +431,9 @@ class TupleType(Type):
     def is_builtin(self) -> bool:
         return False
 
+    def is_tuple(self) -> bool:
+        return True
+
 
 @dataclass
 class Error(Type):
@@ -457,6 +515,13 @@ class StateVariableDeclaration(ContractPart):
     name: Ident
     ttype: Type
     modifiers: List[Modifier]
+    value: Expr
+
+
+@dataclass
+class ConstantVariableDeclaration(ContractPart):
+    name: Ident
+    ttype: Type
     value: Expr
 
 
@@ -680,6 +745,14 @@ class StateVarLoad(Expr):
 
 
 @dataclass
+class ConstVarLoad(Expr):
+    var: Ref[ConstantVariableDeclaration]
+
+    def type_of(self) -> Type:
+        return self.var.x.ttype
+
+
+@dataclass
 class StaticVarLoad(Expr):
     ttype: ResolvedUserType
     name: Ident
@@ -719,12 +792,14 @@ class LocalVarStore(Expr):
 
 
 @dataclass
-class LocalTupleVarStore(Expr):
-    vars: List[Var]
+class ArrayLengthStore(Expr):
+    # resizing array length is deprecated since solidity 0.6
+    # The expr that loads the array e.g. this.myArray
+    base: Expr
     value: Expr
 
     def type_of(self) -> Type:
-        return TupleType([var.ttype for var in self.vars])
+        return UIntType(256)
 
 
 @dataclass
@@ -926,6 +1001,21 @@ class FunctionCall(Call):
 
 
 @dataclass
+class FunctionPointerCall(Call):
+    callee: Expr
+
+    def type_of(self) -> Type:
+        callee_ttype: FunctionType = self.callee.type_of()
+        output_ttypes = callee_ttype.outputs
+        assert len(output_ttypes) > 0
+
+        if len(output_ttypes) == 1:
+            return output_ttypes[0]
+        else:
+            return TupleType(output_ttypes)
+
+
+@dataclass
 class DynamicBuiltInCall(Call):
     ttype: Type
     base: Expr
@@ -963,7 +1053,6 @@ class MetaTypeType(Type):
         return self.ttype.is_builtin()
 
 
-
 @dataclass
 class GetType(Expr):
     # type(MyContract)
@@ -971,6 +1060,11 @@ class GetType(Expr):
 
     def type_of(self) -> Type:
         return MetaTypeType(self.ttype)
+
+
+@dataclass
+class GetFunctionPointer(Expr):
+    func: Ref[FunctionDefinition]
 
 
 @dataclass

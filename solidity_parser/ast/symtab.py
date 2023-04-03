@@ -7,7 +7,19 @@ from solidity_parser.filesys import LoadedSource, VirtualFileSystem
 
 from solidity_parser.ast.mro_helper import c3_linearise
 
+import logging
+
 Aliases = Union[str, List[str]]
+
+
+def ACCEPT(x):
+    return True
+
+
+def test_predicate(xs, predicate=None):
+    if not predicate:
+        predicate = ACCEPT
+    return [x for x in xs if predicate(x)]
 
 
 class Scopeable:
@@ -115,35 +127,33 @@ class Scope(Scopeable):
         for name in symbol.aliases:
             self.symbols[name].append(symbol)
 
+    def find_current_level(self, name: str, predicate=None) -> Optional[List[Symbol]]:
+        found_symbols = test_predicate(self.find_local(name), predicate)
+        if not found_symbols:
+            found_symbols = self.find_imported(name, predicate)
+        return found_symbols
+
     def find_local(self, name: str) -> Optional[List[Symbol]]:
         """Finds a mapped symbol in this scope only"""
         if name in self.symbols:
             return self.symbols[name]
         return []
 
-    def find_imported(self, name: str) -> Optional[List[Symbol]]:
+    def find_imported(self, name: str, predicate=None) -> Optional[List[Symbol]]:
         for scope in self.imported_scopes:
             # TODO: unsure whether this should be find_local or find. This is just the old import_symbols_from_scope
             #  functionality for now
-            syms = scope.find_local(name)
+            syms = test_predicate(scope.find_current_level(name), predicate)
             if syms:
                 return syms
         return []
 
     def find(self, name: str, find_base_symbol: bool = False, predicate=None) -> Optional[List[Symbol]]:
-        if not predicate:
-            predicate = lambda x: True
-
-        def run_predicate(xs):
-            return [x for x in xs if predicate(x)]
-
         # check this scope first
-        found_symbols = run_predicate(self.find_local(name))
-        if not found_symbols:
-            found_symbols = run_predicate(self.find_imported(name))
+        found_symbols = self.find_current_level(name, predicate)
         # check the parent scope if it wasn't in this scope
         if not found_symbols and self.parent_scope is not None:
-            found_symbols = run_predicate(self.parent_scope.find(name, predicate=predicate))
+            found_symbols = self.parent_scope.find(name, predicate=predicate)
 
         if not found_symbols:
             return []
@@ -419,6 +429,8 @@ class RootScope(Scope):
         self.add(BuiltinFunction('require', [solnodes.BoolType(), solnodes.StringType()], []))
         self.add(BuiltinFunction('require', [solnodes.BoolType()], []))
 
+        self.add(BuiltinFunction('assert', [solnodes.BoolType()], []))
+
         self.add(BuiltinFunction('revert', [solnodes.StringType()], []))
         self.add(BuiltinFunction('revert', [], []))
 
@@ -471,13 +483,13 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
     #             if found_symbols:
     #                 return found_symbols
     #     return []
-    
-    def find_imported(self, name: str) -> Optional[List[Symbol]]:
-        found_symbols = Scope.find_imported(self, name)
+
+    def find_imported(self, name: str, predicate=None) -> Optional[List[Symbol]]:
+        found_symbols = Scope.find_imported(self, name, predicate)
         if found_symbols:
             return found_symbols
         else:
-            return self.find_in_contract_hierarchy(name)
+            return test_predicate(self.find_in_contract_hierarchy(name), predicate)
         
     def find_in_contract_hierarchy(self, name: str):
         lookup_order = c3_linearise(self)[1:]
@@ -546,6 +558,33 @@ class ImportSymbol(ScopeAndSymbol):
         import_path = self.value.path
         return source_unit.get_imported_source_unit(import_path)
 
+    def find(self, name: str, find_base_symbol: bool = False, predicate=None) -> Optional[List[Symbol]]:
+        return self.resolve_base_symbol().find(name, find_base_symbol, predicate)
+
+    def find_type(self, ttype) -> Scope:
+        return self.resolve_base_symbol().find_type(ttype)
+
+    def find_metatype(self, ttype, is_interface) -> Scope:
+        return self.resolve_base_symbol().find_metatype(ttype, is_interface)
+
+    def find_local(self, name: str) -> Optional[List[Symbol]]:
+        return self.resolve_base_symbol().find_local(name)
+
+    def find_first_ancestor(self, predicate, get_parent=None):
+        return self.resolve_base_symbol().find_first_ancestor(predicate, get_parent)
+
+    def find_imported(self, name: str, predicate=None) -> Optional[List[Symbol]]:
+        return self.resolve_base_symbol().find_imported(name, predicate)
+
+    def find_current_level(self, name: str, predicate=None) -> Optional[List[Symbol]]:
+        return self.resolve_base_symbol().find_current_level(name, predicate)
+
+    def find_first_ancestor_of(self, ttype: Union[Type, Tuple[Type]]):
+        return self.resolve_base_symbol().find(ttype)
+
+    def find_single(self, name: str, find_base_symbol: bool = False, default=None, predicate=None) -> Optional[Symbol]:
+        return self.resolve_base_symbol().find_single(name, find_base_symbol, default, predicate)
+
 
 class AliasImportSymbol(ImportSymbol):
     def __init__(self, ast_node: solnodes.SymbolImportDirective, alias_index):
@@ -560,7 +599,7 @@ class AliasImportSymbol(ImportSymbol):
         alias: solnodes.SymbolAlias = self.value.aliases[self.alias_index]
         symbol_name = alias.symbol.text
         imported_scope = self.get_imported_scope()
-        return imported_scope.find(symbol_name)
+        return imported_scope.find_single(symbol_name)
 
 
 class UnitImportSymbol(ImportSymbol):
@@ -614,7 +653,7 @@ class Builder2:
             assert len(found_fs) == 1
             found_fs = found_fs[0]
 
-        print(f'FS {loaded_source.source_unit_name} exists={bool(found_fs)}')
+        logging.getLogger('ST').debug(f'FS {loaded_source.source_unit_name} exists={bool(found_fs)}')
 
         if not found_fs:
             found_fs = self.process_file(loaded_source.source_unit_name, loaded_source.ast)
