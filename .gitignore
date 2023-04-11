@@ -15,4 +15,10 @@ Solidity.py
 venv
 .DS_Store/
 .idea
-build
+
+# local build files
+.eggs/
+build/
+
+# leave this out for now as we don't have stable builds yet
+dist/
