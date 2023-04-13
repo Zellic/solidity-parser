@@ -29,6 +29,12 @@ class Node:
             yield direct_child
             yield from direct_child.get_all_children()
 
+    def linenumber(self) -> int:
+        return int(self.location.split(":")[0])
+
+    def offset(self) -> int:
+        return int(self.location.split(":")[1])
+
 
 class Stmt(Node):
     pass
@@ -598,7 +604,7 @@ class SpecialFunctionKind(Enum):
     FALLBACK = '<<fallback>>'
 
     def __str__(self):
-        return self.value
+        return self.value[2:-2]
 
 
 @dataclass

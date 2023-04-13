@@ -28,7 +28,15 @@ class ParserBase:
             parsed_rule = subparser(self, rule)
 
             if isinstance(parsed_rule, Node):
-                parsed_rule.location = f'{rule.start.line}:{rule.start.start}'
+                if isinstance(rule.start.start, int):
+                    # this is the normal case
+                    parsed_rule.location = f'{rule.start.line}:{rule.start.start}'
+                else:
+                    # this is a hack to support fcremo's codebase
+                    # see: c3c05f5625b36a6b22a701031416d303a5605e0d
+                    # this is not the ideal way to solve it, but is good enough
+                    # for now (doesn't break other codebases)
+                    parsed_rule.location = f'{rule.start.start.line}:{rule.start.start.start}'
 
             return parsed_rule
         else:
