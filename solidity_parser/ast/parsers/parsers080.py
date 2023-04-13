@@ -631,8 +631,8 @@ def _number_literal(parser, literal: SolidityParser.NumberLiteralContext):
         str_val = literal.DecimalNumber().getText()
         # parse unit float() instead of int() as it handles the decimal point and exponent stuff
         value = float(str_val)
-        assert value.is_integer()
-        value = int(value)
+        if value.is_integer():
+            value = int(value)
     else:
         value = int(literal.HexNumber().getText(), 16)
 

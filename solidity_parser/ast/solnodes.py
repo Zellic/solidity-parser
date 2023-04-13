@@ -230,17 +230,38 @@ class NamedArg(Expr):
 
 class Unit(Enum):
     """ Solidity numerical unit types """
-    GWEI = 'gwei'
-    WEI = 'wei'
-    SZABO = 'szabo'
-    FINNEY = 'finney'
-    ETHER = 'ether'
-    SECONDS = 'seconds'
-    MINUTES = 'minutes'
-    HOURS = 'hours'
-    DAYS = 'days'
-    WEEKS = 'weeks'
-    YEARS = 'years'
+    WEI = ('wei', 1)
+    GWEI = ('gwei', 1e9)
+    SZABO = ('szabo', 1e12)
+    FINNEY = ('finney', 1e15)
+    ETHER = ('ether', 1e18)
+    SECONDS = ('seconds', 1)
+    MINUTES = ('minutes', 60)
+    HOURS = ('hours', 60*60)
+    DAYS = ('days', 24*60*60)
+    WEEKS = ('weeks', 7*24*60*60)
+    # Take care if you perform calendar calculations using these units, because not every year equals 365 days and not
+    # even every day has 24 hours because of leap seconds. Due to the fact that leap seconds cannot be predicted,
+    # an exact calendar library has to be updated by an external oracle.
+    # The suffix years has been removed in version 0.5.0 due to the reasons above.
+    YEARS = ('years', 7*24*60*60*365)
+
+    def __new__(cls, *args, **kwargs):
+        obj = object.__new__(cls)
+        obj._value_ = args[0]
+        return obj
+
+    # ignore the first param since it's already set by __new__
+    def __init__(self, _: str, multiplier: int):
+        self._multiplier_ = multiplier
+
+    def __str__(self):
+        return self.value
+
+    # this makes sure that the multiplier is read-only
+    @property
+    def multiplier(self) -> int:
+        return self._multiplier_
 
 
 @dataclass

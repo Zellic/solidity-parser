@@ -325,11 +325,14 @@ def _primary(parser, expr: SolidityParser.PrimaryExpressionContext):
 
 
 def _number_literal(parser, literal: SolidityParser.NumberLiteralContext):
+    # floats aren't allowed in Solidity, if there is a numeric literal ith a decimal point, it needs to have an exponent
+    # (or a unit?) so that the complete value of the literal evaluates to an integer
     if literal.DecimalNumber():
         str_val = literal.DecimalNumber().getText()
+        # parse unit float() instead of int() as it handles the decimal point and exponent stuff
         value = float(str_val)
-        assert value.is_integer()
-        value = int(value)
+        if value.is_integer():
+            value = int(value)
     else:
         value = int(literal.HexNumber().getText(), 16)
 
@@ -476,11 +479,38 @@ def _module_import(parser, module_import: SolidityParser.ModuleImportContext):
 
 
 def _alias_import(parser, alias_import: SolidityParser.AliasImportContext):
-    pass
+    path = alias_import.StringLiteralFragment().getText()[1:-1]
+
+    if not alias_import.symbol:
+        alias = parser.make(alias_import.unitAlias)
+        return solnodes.UnitImportDirective(path, alias)
+    else:
+        symbol = parser.make(alias_import.symbol)
+        alias = parser.make(alias_import.unitAlias)
+        return solnodes.SymbolImportDirective(
+            path,
+            [solnodes.SymbolAlias(symbol, alias)]
+        )
 
 
 def _symbol_import(parser, symbol_import: SolidityParser.SymbolImportContext):
-    pass
+    path = symbol_import.StringLiteralFragment().getText()[1:-1]
+
+    return solnodes.SymbolImportDirective(
+        path,
+        parser.make_all_rules(symbol_import.importDeclaration())
+    )
+
+
+def _import_declaration(parser, import_declaration: SolidityParser.ImportDeclarationContext):
+    # X as Y
+    ids = import_declaration.identifier()
+    return solnodes.SymbolAlias(
+        parser.make(ids[0]),
+        # set the alias to the symbol itself if no alias is specified but need to reparse to create a seaprate Ident
+        # node (so no node is shared)
+        parser.make(ids[1]) if len(ids) > 1 else parser.make(ids[0])
+    )
 
 
 def var_to_struct_member(var: solnodes.Var):

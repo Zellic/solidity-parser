@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Any, Union, TypeVar, Generic, Optional
 from copy import deepcopy
+from collections import deque
 
 from solidity_parser.ast import solnodes as solnodes1
 
@@ -109,6 +110,8 @@ class Type(Node):
     def is_tuple(self) -> bool:
         return False
 
+    def is_literal_type(self) -> bool:
+        return False
 
 class Stmt(Node):
     pass
@@ -139,6 +142,17 @@ class TopLevelUnit(Node):
     source_unit_name: str
     name: Ident
 
+    def is_subttype_of(self, other_contract: 'TopLevelUnit') -> bool:
+        to_check = deque()
+        to_check.append(self)
+
+        while to_check:
+            next = to_check.popleft()
+            if next == other_contract:
+                return True
+            to_check.extend(next.get_supers())
+        return False
+
     def as_type(self):
         return ResolvedUserType(Ref(self))
 
@@ -162,7 +176,9 @@ class TopLevelUnit(Node):
 
 @dataclass
 class ArrayType(Type):
-    """ Single dimension array type with no size attributes """
+    """ Single dimension array type with no size attributes
+    This is most often used for 'bytes' which is a array of bytes of unknown/variable length
+    """
     base_type: Type
 
     def __str__(self): return f"{self.base_type}[]"
@@ -178,9 +194,9 @@ class ArrayType(Type):
             # i.e. FixedLengthArrayType/VariableLengthArrayType can cast to the base ArrayType (but not each other)
             # e.g. byte[4] casts to byte[] but not the other way around
             return self.base_type.can_implicitly_cast_from(actual_type.base_type)
-        if isinstance(self.base_type, ByteType) and isinstance(actual_type, StringType):
-            # cast string to byte array, TODO: do stricter checks based on sizing, etc
+        if self.base_type.is_byte() and not self.has_size() and actual_type.is_literal_type():
             return True
+
         return False
 
     def has_size(self) -> bool:
@@ -202,6 +218,20 @@ class FixedLengthArrayType(ArrayType):
 
     def is_fixed_size(self) -> bool:
         return True
+
+    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
+        if super().can_implicitly_cast_from(actual_type):
+            return True
+        # Decimal number literals cannot be implicitly converted to fixed-size byte arrays. Hexadecimal number literals
+        # can be, but only if the number of hex digits exactly fits the size of the bytes type. As an exception both
+        # decimal and hexadecimal literals which have a value of zero can be converted to any fixed-size bytes type:
+        if self.base_type.is_byte() and actual_type.is_int() and actual_type.is_literal_type():
+            return self.size >= (actual_type.size / 8)
+        if self.base_type.is_byte() and actual_type.is_string() and actual_type.is_literal_type():
+            # e.g. bytes32 samevar = "stringliteral"
+            return self.size >= actual_type.real_size
+
+        return False
 
 
 @dataclass
@@ -234,6 +264,18 @@ class AddressType(Type):
             definition = actual_type.value.x
             if definition.is_contract() or definition.is_interface():
                 return True
+        # uint160 can cast to address, I've seen this in a contract but AfterObol.sol:
+        # _mint(0x0CA5cD5790695055F0a01F73A47160C35f9d3A46, 100000000 * 10 ** decimals());
+        # but not sure how this is allowed exactly
+        # UPDATE:
+        # "Hexadecimal literals that pass the address checksum test, for example
+        # 0xdCad3a6d3569DF655070DEd06cb7A1b2Ccd1D3AF are of address type. Hexadecimal literals that are between 39 and
+        # 41 digits long and do not pass the checksum test produce an error. You can prepend (for integer types) or
+        # append (for bytesNN types) zeros to remove the error."
+        # We can't do a check for hex literals (without changing some parsing code) just do it for any int
+        if not self.is_payable and actual_type.is_int() and not actual_type.is_signed and actual_type.size == 160:
+            return True
+
         return False
 
     def is_builtin(self) -> bool:
@@ -273,12 +315,9 @@ class IntType(Type):
             if actual_type.is_signed == self.is_signed and actual_type.size <= self.size:
                 return True
 
-            if actual_type.is_precise_int() and not actual_type.is_signed:
+            if actual_type.is_int() and actual_type.is_literal_type() and not actual_type.is_signed:
                 # e.g. calling f(1 :: uint8) where f(x: int256)
                 return actual_type.real_bit_length < self.size
-        return False
-
-    def is_precise_int(self) -> bool:
         return False
 
     def is_builtin(self) -> bool:
@@ -290,10 +329,10 @@ class IntType(Type):
 
 @dataclass
 class PreciseIntType(IntType):
-    # The actual length of the literal in bits, must be less than the given 'size' of this int type
     real_bit_length: int
+    value: int
 
-    def is_precise_int(self) -> bool:
+    def is_literal_type(self) -> bool:
         return True
 
     def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}({self.real_bit_length})"
@@ -342,6 +381,18 @@ class StringType(ArrayType):
 
     def is_string(self) -> bool:
         return True
+
+
+@dataclass
+class PreciseStringType(StringType):
+    """String literal type that has a known length at compile time"""
+
+    real_size: int
+
+    def is_literal_type(self) -> bool:
+        return True
+
+    def __str__(self): return f"string({self.real_size})"
 
 
 @dataclass
@@ -396,6 +447,14 @@ class ResolvedUserType(Type):
     def is_user_type(self) -> bool:
         return True
 
+    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
+        if super().can_implicitly_cast_from(actual_type):
+            return True
+
+        if actual_type.is_user_type():
+            return actual_type.value.x.is_subttype_of(self.value.x)
+
+        return False
 
 @dataclass
 class BuiltinType(Type):

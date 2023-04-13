@@ -1,6 +1,7 @@
 from typing import List
 
-from antlr4 import InputStream, CommonTokenStream
+from antlr4 import InputStream, CommonTokenStream, BailErrorStrategy
+from antlr4.error.ErrorListener import ErrorListener
 
 from solidity_parser.collectors import collector
 
@@ -18,15 +19,46 @@ from solidity_parser.ast.parsers.parsers080 import Parser080
 from solidity_parser.ast import solnodes
 
 
+class MyErrorListener(ErrorListener):
+
+    def __init__(self):
+        super().__init__()
+
+    def add_error(self, recognizer, line, column, msg):
+        try:
+            errors = recognizer.errors
+        except AttributeError:
+            errors = []
+            recognizer.errors = errors
+
+        errors.append((line, column, msg))
+
+    def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
+        self.add_error(recognizer, line, column, msg)
+
+
 def get_processors(version: int):
-    if version < 7:
-        return SolidityParser060, SolidityLexer060, Parser060()
-    elif 8 > version >= 7:
-        return SolidityParser070, SolidityLexer070, Parser070()
-    elif version >= 8:
-        return SolidityParser080, SolidityLexer080, Parser080()
-    else:
-        raise KeyError(f"Unsupported version: v{version}")
+    def _wrap(clazz):
+        def create_lexer(*args, **kwargs):
+            obj = clazz(*args, **kwargs)
+            obj.removeErrorListeners()
+            obj.addErrorListener(BailErrorStrategy())
+            return obj
+        return create_lexer
+
+    def get():
+        if version < 7:
+            return SolidityParser060, SolidityLexer060, Parser060()
+        elif 8 > version >= 7:
+            return SolidityParser070, SolidityLexer070, Parser070()
+        elif version >= 8:
+            return SolidityParser080, SolidityLexer080, Parser080()
+        else:
+            raise KeyError(f"Unsupported version: v{version}")
+
+    # sp, sl, p = get()
+    # return _wrap(sp), _wrap(sl), p
+    return get()
 
 
 def make_ast(input_src, version: int = None) -> List[solnodes.SourceUnit]:
@@ -39,9 +71,13 @@ def make_ast(input_src, version: int = None) -> List[solnodes.SourceUnit]:
     lexer = grammar_lexer_type(contract_input)
     stream = CommonTokenStream(lexer)
     parser = grammar_parser_type(stream)
+    parser.addErrorListener(MyErrorListener())
 
     parse_tree = parser.sourceUnit()
     source_units = parse_tree.children
+
+    # if hasattr(parser, 'errors') and parser.errors:
+    #     raise ValueError("Parsing error")
 
     return list(map(ast_parser.make, source_units))
 

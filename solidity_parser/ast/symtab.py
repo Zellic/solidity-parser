@@ -101,21 +101,6 @@ class Scope(Scopeable):
 
     def import_symbols_from_scope(self, other_scope: 'Scope'):
         self.imported_scopes.append(other_scope)
-        # the scope to import may contain symbols that we already have
-        # _new_symbols = defaultdict(set)
-        #
-        # for (k, v) in self.symbols.items():
-        #     for s in v:
-        #         _new_symbols[k].add(s)
-        # for (k,v) in other_scope.symbols.items():
-        #     for s in v:
-        #         _new_symbols[k].add(s)
-        #
-        # new_symbols2 = defaultdict(list)
-        # for k, v in _new_symbols.items():
-        #     new_symbols2[k].extend(v)
-        #
-        # self.symbols = new_symbols2
 
     def add_global_symbol(self, symbol: Symbol):
         root_scope = self.find_first_ancestor_of(RootScope)
@@ -401,13 +386,19 @@ class RootScope(Scope):
             scope.add(BuiltinValue('code', bytes()))
             scope.add(BuiltinValue('codehash', bytes32()))
 
-            if payable:
-                scope.add(BuiltinFunction('transfer', [uint()], []))
-                scope.add(BuiltinFunction('send', [uint()], [solnodes.BoolType()]))
 
-            scope.add(BuiltinFunction('call', [bytes()], [solnodes.BoolType(), bytes()]))
+            # These functions are only available for address payable but for some old solidity contracts this wasn't
+            # enforced in the compiler...
+            # if payable:
+            scope.add(BuiltinFunction('transfer', [uint()], []))
+            scope.add(BuiltinFunction('send', [uint()], [solnodes.BoolType()]))
+
+            scope.add(BuiltinFunction('call', None, [solnodes.BoolType(), bytes()]))
+            # scope.add(BuiltinFunction('call', [bytes()], [solnodes.BoolType(), bytes()]))
+            # scope.add(BuiltinFunction('call', [], [solnodes.BoolType(), bytes()]))
             scope.add(BuiltinFunction('delegatecall', [bytes()], [solnodes.BoolType(), bytes()]))
             scope.add(BuiltinFunction('staticcall', [bytes()], [solnodes.BoolType(), bytes()]))
+
             return scope
 
         self.add(address_object(True))
@@ -433,6 +424,8 @@ class RootScope(Scope):
 
         self.add(BuiltinFunction('revert', [solnodes.StringType()], []))
         self.add(BuiltinFunction('revert', [], []))
+
+        self.add(BuiltinFunction('selfdestruct', [solnodes.AddressType(is_payable=False)], []))
 
 
 class FileScope(ScopeAndSymbol):
@@ -468,23 +461,29 @@ class LibraryScope(ScopeAndSymbol):
 class ContractOrInterfaceScope(ScopeAndSymbol):
     def __init__(self, ast_node: Union[solnodes.ContractDefinition, solnodes.InterfaceDefinition]):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
+        self._proxy_address_called = False
 
     def set_parent_scope(self, parent_scope: Scope):
         assert isinstance(parent_scope, FileScope)
         return ScopeAndSymbol.set_parent_scope(self, parent_scope)
 
-    # def find_local(self, name: str) -> Optional[List[Symbol]]:
-    #     found_symbols = Scope.find_local(self, name)
-    #     if found_symbols:
-    #         return found_symbols
-    #     else:
-    #         for super_contract in self.get_supers():
-    #             found_symbols = super_contract.find(name, False)
-    #             if found_symbols:
-    #                 return found_symbols
-    #     return []
+    # def _proxy_address_scope(self):
+        # "Prior to version 0.5.0, Solidity allowed address members to be accessed by a contract instance, for example
+        # this.balance. This is now forbidden and an explicit conversion to address must be done: address(this).balance"
+        #
+        #  We import the address symbols here as we need to do this after this Contract scope has been fully loaded,
+        # i.e. if we did this during symbol table creation, we would need to add a DFS postorder hook. Instead I've
+        # just deferred it to the first time it's required
+
+        # if self._proxy_address_called:
+        #     return
+        # self._proxy_address_called = True
+        # 
+        # address_scope = self.find_type(solnodes.AddressType(False))
+        # self.import_symbols_from_scope(address_scope)
 
     def find_imported(self, name: str, predicate=None) -> Optional[List[Symbol]]:
+        # self._proxy_address_scope()
         found_symbols = Scope.find_imported(self, name, predicate)
         if found_symbols:
             return found_symbols
@@ -492,6 +491,7 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
             return test_predicate(self.find_in_contract_hierarchy(name), predicate)
         
     def find_in_contract_hierarchy(self, name: str):
+        # dont look in self
         lookup_order = c3_linearise(self)[1:]
         lookups = [syms for c in lookup_order if (syms := c.find_local(name))]
         # if len(lookups) > 1:
@@ -557,6 +557,9 @@ class ImportSymbol(ScopeAndSymbol):
         source_unit: FileScope = self.parent_scope
         import_path = self.value.path
         return source_unit.get_imported_source_unit(import_path)
+
+    def all_symbols(self):
+        return self.resolve_base_symbol().all_symbols()
 
     def find(self, name: str, find_base_symbol: bool = False, predicate=None) -> Optional[List[Symbol]]:
         return self.resolve_base_symbol().find(name, find_base_symbol, predicate)
@@ -824,7 +827,7 @@ class Builder2:
             # get the functions in the target library and import them under the scope of the 1st param type
             # current_file_scope: FileScope = context.file_scope
             unit_scope = context.unit_scope
-            library_scope: Scope = unit_scope.find(node.library_name.text)[0]
+            library_scope: Scope = unit_scope.find(node.library_name.text, find_base_symbol=True)[0]
             target_type = node.override_type
 
             # TODO: Not sure if this is possible and I don't want to handle it(yet), just want to handle Types

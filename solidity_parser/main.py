@@ -1,3 +1,5 @@
+import sys
+
 from antlr4 import InputStream, CommonTokenStream, TerminalNode
 
 from solidity_parser.grammar.v060.SolidityLexer import SolidityLexer as SolidityLexer060
@@ -179,7 +181,7 @@ if __name__ == '__main__':
 
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
 
-    start_idx = 50
+    start_idx = 174
     idx = 0
 
     for file_name in all_files:
@@ -202,45 +204,54 @@ if __name__ == '__main__':
 
                 file_scopes = []
 
-                version = int(pattern.match(desc['CompilerVersion']).group(2))
+                try:
+                    def creator(input_src):
+                        v = collector.get_minor_ver(input_src) or int(pattern.match(desc['CompilerVersion']).group(2))
+                        nodes = asthelper.make_ast(input_src, v)
+                        for n in nodes:
+                            if n:
+                                n.ver = v
+                        return nodes
 
-                def creator(input_src):
-                    v = collector.get_minor_ver(input_src) or version
-                    nodes = asthelper.make_ast(input_src, v)
-                    for n in nodes:
-                        if n:
-                            n.ver = v
-                    return nodes
+                    if desc['SourceCode'].startswith('{{') and desc['SourceCode'].endswith('}}'):
+                        source_contents = {}
 
-                if desc['SourceCode'].startswith('{{') and desc['SourceCode'].endswith('}}'):
-                    source_contents = {}
 
-                    def _read_file_callback(su_name, base_dir, include_paths) -> str:
-                        return source_contents[su_name]
+                        def _read_file_callback(su_name, base_dir, include_paths) -> str:
+                            return source_contents[su_name]
 
-                    add_loaded_source_original = vfs._add_loaded_source
 
-                    def _add_loaded_source(source_unit_name: str, source_code: str, _=None):
-                        return add_loaded_source_original(source_unit_name, source_code, creator)
+                        add_loaded_source_original = vfs._add_loaded_source
 
-                    # required shims
-                    vfs._read_file_callback = _read_file_callback
-                    vfs._add_loaded_source = _add_loaded_source
 
-                    srcs = json.loads(desc['SourceCode'][1:-1])['sources']
-                    for c_name, vv in srcs.items():
-                        c_code = vv['content']
-                        source_contents[c_name] = c_code
+                        def _add_loaded_source(source_unit_name: str, source_code: str, _=None):
+                            return add_loaded_source_original(source_unit_name, source_code, creator)
 
-                    for f in source_contents.keys():
-                        fs = symtab_builder.process_or_find_from_base_dir(f)
-                        file_scopes.append(fs)
-                else:
-                    c_name = desc['ContractName'] + '.sol'
-                    c_code = desc['SourceCode']
-                    loaded_source = vfs._add_loaded_source(c_name, c_code, creator)
-                    file_scope = symtab_builder.process_or_find(loaded_source)
-                    file_scopes.append(file_scope)
+
+                        # required shims
+                        vfs._read_file_callback = _read_file_callback
+                        vfs._add_loaded_source = _add_loaded_source
+
+                        srcs = json.loads(desc['SourceCode'][1:-1])['sources']
+                        for c_name, vv in srcs.items():
+                            c_code = vv['content']
+                            source_contents[c_name] = c_code
+
+                        for f in source_contents.keys():
+                            fs = symtab_builder.process_or_find_from_base_dir(f)
+                            file_scopes.append(fs)
+                    else:
+                        c_name = desc['ContractName'] + '.sol'
+                        c_code = desc['SourceCode']
+                        loaded_source = vfs._add_loaded_source(c_name, c_code, creator)
+                        file_scope = symtab_builder.process_or_find(loaded_source)
+                        file_scopes.append(file_scope)
+                except Exception as e:
+                    # i.e. malformed syntax inputs
+                    print(f"ast1 parsing error idx={idx}")
+                    print(e)
+                    # continue
+                    # raise e
 
                 ast2_builder = Builder2()
 
@@ -261,7 +272,9 @@ if __name__ == '__main__':
             # if idx is not None:
             #     with open(f"../example/errors/Contract{idx}.sol", "w", encoding='utf-8') as text_file:
             #         text_file.write(contract_source)
-        idx += 1
+        finally:
+            idx += 1
+
 
 
 if __name__ == '__main__1':
