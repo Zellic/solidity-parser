@@ -2,7 +2,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Optional, Union, Callable
 from collections import namedtuple
-from solidity_parser.ast import solnodes, helper as ast_helper
+from solidity_parser.ast import solnodes
+from solidity_parser.ast import helper as ast_helper
 
 import os
 import logging

@@ -1,14 +1,12 @@
 from dataclasses import dataclass, replace as copy_dataclass
-from typing import List, Tuple, Union, Optional, Dict, Set, Deque, NamedTuple
-from collections import deque, namedtuple
+from typing import List, Union, Dict, Deque
+from collections import deque
 from copy import deepcopy
 
 from solidity_parser.ast import solnodes as solnodes1
-from solidity_parser.ast import solnodes2 as solnodes2
-from solidity_parser.ast import symtab
+from solidity_parser.ast import solnodes2 as solnodes2, symtab
 
 import logging
-import math
 from solidity_parser.ast.mro_helper import c3_linearise
 
 
@@ -66,7 +64,7 @@ class TypeHelper:
             return self.map_type(expr)
         elif isinstance(expr, solnodes1.Ident):
             def get_current_contract():
-                return self.symbol_to_ast2_type(self.builder.get_declaring_contract(expr))
+                return self.symbol_to_ast2_type(self.builder.get_declaring_contract_scope(expr))
 
             text = expr.text
             if text == 'this':
@@ -207,7 +205,7 @@ class TypeHelper:
                 if expr.op != solnodes1.BinaryOpCode.ASSIGN:
                     # can only compare ints, but we can't use t1 == t2 as we can compare different int types, e.g.
                     # this.x (uint256) == 0 (uint8)
-                    assert (t1.is_int() and t2.is_int()) or\
+                    assert (t1.is_int() and t2.is_int()) or \
                            (solnodes2.is_byte_array(t1) and solnodes2.is_byte_array(t2)) or \
                            (solnodes2.is_byte_array(t1) and t2.is_int())
 
@@ -470,7 +468,7 @@ class TypeHelper:
 
     def scope_for_type(self, node: solnodes1.Node, ttype: solnodes2.Type) -> List[symtab.Scope]:
         if isinstance(ttype, solnodes2.SuperType):
-            return c3_linearise(self.builder.get_declaring_contract(node))
+            return c3_linearise(self.builder.get_declaring_contract_scope(node))
         elif isinstance(ttype, solnodes2.ResolvedUserType):
             scope = node.scope.find_single(ttype.value.x.name.text, predicate=self._symtab_top_level_predicate())
 
@@ -480,9 +478,14 @@ class TypeHelper:
                 # T isn't imported in the contract. This is the AddressSlot case in ERC1967Upgrade
                 scope = ttype.scope
 
-            # "Prior to version 0.5.0, Solidity allowed address members to be accessed by a contract instance, for example
-            # this.balance. This is now forbidden and an explicit conversion to address must be done: address(this).balance"
-            return [scope, scope.find_type(solnodes1.AddressType(False))]
+            # "Prior to version 0.5.0, Solidity allowed address members to be accessed by a contract instance, for
+            # example this.balance. This is now forbidden and an explicit conversion to address must be done:
+            # address(this).balance"
+
+            scopes = [scope]
+            if ttype.value.x.is_contract():
+                scopes.append(scope.find_type(solnodes1.AddressType(False)))
+            return scopes
         elif isinstance(ttype, solnodes2.BuiltinType):
             scope = node.scope.find_single(ttype.name)
         elif isinstance(ttype, solnodes2.MetaTypeType):
@@ -536,7 +539,11 @@ class TypeHelper:
 
     def get_contract_type(self, user_type_symbol: symtab.Symbol) -> solnodes2.ResolvedUserType:
         assert isinstance(user_type_symbol, symtab.Scope)
-        ttype = solnodes2.ResolvedUserType(solnodes2.Ref(self.builder.load_if_required(user_type_symbol)))
+        if isinstance(user_type_symbol, symtab.FileScope):
+            contract = self.builder.synthetic_toplevels[user_type_symbol.source_unit_name]
+        else:
+            contract = self.builder.load_if_required(user_type_symbol)
+        ttype = solnodes2.ResolvedUserType(solnodes2.Ref(contract))
         ttype.scope = user_type_symbol
         return ttype
 
@@ -569,7 +576,7 @@ class TypeHelper:
 class Builder:
 
     def __init__(self):
-        self.user_types: Dict[str, solnodes2.ContractDefinition] = {}
+        self.synthetic_toplevels: Dict[str, solnodes2.FileDefinition] = {}
         self.type_helper = TypeHelper(self)
         self.to_refine: Deque[solnodes1.SourceUnit] = deque()
 
@@ -624,7 +631,6 @@ class Builder:
             return ast2_node
         else:
             raise ValueError(f"Invalid user type resolve: {type(ast1_node)}")
-
 
     def _todo(self, node):
         raise ValueError(f'TODO: {type(node)}')
@@ -730,21 +736,24 @@ class Builder:
             return solnodes2.RevertWithError(solnodes2.Ref(error_def), new_args)
         self._todo(node)
 
-    def get_declaring_contract(self, node: solnodes1.Node) -> Union[symtab.ContractOrInterfaceScope, symtab.LibraryScope,
-                                                                 symtab.EnumScope, symtab.StructScope, symtab.EnumScope]:
-        return self.get_declaring_contract_in_scope(node.scope)
+    def get_declaring_contract_scope(self, node: solnodes1.Node) -> Union[
+        symtab.ContractOrInterfaceScope, symtab.LibraryScope, symtab.EnumScope, symtab.StructScope, symtab.EnumScope, symtab.FileScope]:
+        return self.get_declaring_contract_scope_in_scope(node.scope)
 
-    def get_declaring_contract_in_scope(self, scope: symtab.Scope) -> Union[symtab.ContractOrInterfaceScope, symtab.LibraryScope, symtab.EnumScope, symtab.StructScope, symtab.EnumScope]:
+    def get_declaring_contract_scope_in_scope(self, scope: symtab.Scope) -> Union[
+        symtab.ContractOrInterfaceScope, symtab.LibraryScope, symtab.EnumScope, symtab.StructScope, symtab.EnumScope, symtab.FileScope]:
         return scope.find_first_ancestor_of((symtab.ContractOrInterfaceScope, symtab.LibraryScope,
-                                                  symtab.EnumScope, symtab.StructScope, symtab.EnumScope))
+                                             symtab.EnumScope, symtab.StructScope, symtab.EnumScope,
+                                             # required for ownerless definitions
+                                             symtab.FileScope))
 
     def get_self_object(self, node: Union[solnodes1.Stmt, solnodes1.Expr]):
-        ast1_current_contract = self.get_declaring_contract(node)
+        ast1_current_contract = self.get_declaring_contract_scope(node)
         contract_type: solnodes2.ResolvedUserType = self.type_helper.get_contract_type(ast1_current_contract)
         return solnodes2.SelfObject(contract_type.value)
 
     def get_super_object(self, node: Union[solnodes1.Stmt, solnodes1.Expr]):
-        ast1_current_contract = self.get_declaring_contract(node)
+        ast1_current_contract = self.get_declaring_contract_scope(node)
         contract_type: solnodes2.ResolvedUserType = self.type_helper.get_contract_type(ast1_current_contract)
         return solnodes2.SuperObject(solnodes2.SuperType(contract_type.value))
 
@@ -954,8 +963,8 @@ class Builder:
             # TODO: check for None possible_base in refine_expr
             pb2 = possible_base
 
-            current_contract = self.get_declaring_contract(expr)
-            func_declaring_contract = self.get_declaring_contract(sym.value)
+            current_contract = self.get_declaring_contract_scope(expr)
+            func_declaring_contract = self.get_declaring_contract_scope(sym.value)
 
             is_local_call = self.is_subcontract(current_contract, func_declaring_contract)
 
@@ -1001,8 +1010,8 @@ class Builder:
             assert allow_event
             assert not out_type
 
-            current_contract = self.get_declaring_contract(expr)
-            func_declaring_contract = self.get_declaring_contract(sym.value)
+            current_contract = self.get_declaring_contract_scope(expr)
+            func_declaring_contract = self.get_declaring_contract_scope(sym.value)
 
             is_local_call = self.is_subcontract(current_contract, func_declaring_contract)
 
@@ -1100,7 +1109,8 @@ class Builder:
                 # for some reason solidity allows myArray.length -= 1
                 is_array_length_minus = isinstance(left, solnodes2.DynamicBuiltInValue) and left.name == 'length' and left.base.type_of().is_array()
 
-                assert is_array_length_minus or isinstance(left, (solnodes2.StateVarLoad, solnodes2.LocalVarLoad, solnodes2.ArrayLoad))
+                assert is_array_length_minus or isinstance(left, (
+                solnodes2.StateVarLoad, solnodes2.LocalVarLoad, solnodes2.ArrayLoad))
 
                 if expr.op != solnodes1.BinaryOpCode.ASSIGN:
                     value = solnodes2.BinaryOp(left, right, self.ASSIGN_TO_OP[expr.op])
@@ -1144,7 +1154,7 @@ class Builder:
                     if isinstance(s.value, solnodes1.Var):
                         # local var has no base
                         return None
-                    s_contract = self.get_declaring_contract_in_scope(s)
+                    s_contract = self.get_declaring_contract_scope_in_scope(s)
                     return self.type_helper.get_contract_type(s_contract)
                 def symbol_bases(bucket):
                     bases = [symbol_base(s) for s in bucket]
@@ -1184,8 +1194,8 @@ class Builder:
             elif isinstance(ident_target, solnodes1.StateVariableDeclaration):
                 # i.e. Say we are in contract C and ident is 'x', check that 'x' is declared in C
                 # this is so that we know the 'base' of this load will be 'self'
-                ast1_current_contract = self.get_declaring_contract(expr)
-                var_declaring_contract = self.get_declaring_contract(ident_target)
+                ast1_current_contract = self.get_declaring_contract_scope(expr)
+                var_declaring_contract = self.get_declaring_contract_scope(ident_target)
 
                 assert self.is_subcontract(ast1_current_contract, var_declaring_contract)
 
@@ -1416,7 +1426,21 @@ class Builder:
         else:
             return solnodes2.Block([], False)
 
+    def get_synthetic_owner(self, source_unit_name, ast1_node):
+        if source_unit_name in self.synthetic_toplevels:
+            return self.synthetic_toplevels[source_unit_name]
+        toplevel = solnodes2.FileDefinition(source_unit_name, solnodes2.Ident('$synthetic$'), [])
+        # Set the 'scope' of this ast2 node. This is only done for this node type as it acts as an ast1 node during
+        # refinement
+        toplevel.scope = ast1_node.scope.find_first_ancestor_of(symtab.FileScope)
+        toplevel.ast2_node = toplevel
+        # Pass this FileDefinition to the to_refine queue, note it's parsed specially
+        self.to_refine.append(toplevel)
+        self.synthetic_toplevels[source_unit_name] = toplevel
+        return toplevel
+
     def define_skeleton(self, ast1_node: solnodes1.SourceUnit, source_unit_name: str) -> solnodes2.TopLevelUnit:
+        assert self.should_create_skeleton(ast1_node)
         """
         Makes a skeleton of the given AST1 node without processing the details. This is required as user types are
         loaded on demand(when they're used in code/parameter lists/declarations, etc). This skeleton is used as a
@@ -1425,7 +1449,17 @@ class Builder:
         assert not hasattr(ast1_node, 'ast2_node')
 
         # Source unit name is only used for source units/top level units
-        assert bool(source_unit_name) == self.is_top_level(ast1_node)
+        # This is the case where we have functions, errors, event, constants that are defined outside of a top level
+        # node like a contract or interface, i.e. parentless definitions
+        if source_unit_name and not self.is_top_level(ast1_node):
+            # For these nodes we create a synthetic top level unit
+            synthetic_toplevel = self.get_synthetic_owner(source_unit_name, ast1_node)
+            # For normal definitions that have an owner, source_unit_name passed in is None. This skips this block and
+            # creates the ast2 skeleton and returns it us here
+            ast2_node = self.define_skeleton(ast1_node, None)
+            synthetic_toplevel.parts.append(ast2_node)
+            # MUST return here, we have already processed this ast1_node above
+            return ast2_node
 
         def _make_new_node(n):
             if isinstance(n, solnodes1.FunctionDefinition):
@@ -1468,9 +1502,9 @@ class Builder:
                     self.load_if_required(p.owning_scope)
 
             for p in ast1_node.parts:
+                # don't need usings or pragmas for AST2
                 if not self.is_top_level(p) and not isinstance(p,
                                                                (solnodes1.UsingDirective, solnodes1.PragmaDirective)):
-                    # don't need usings or pragmas for AST2
                     ast2_node.parts.append(self.define_skeleton(p, None))
 
         # need to define inputs (and maybe outputs) for functions so that function calls can be resolved during
@@ -1500,13 +1534,16 @@ class Builder:
 
         return ast2_node
 
-    def refine_unit_or_part(self, ast1_node: solnodes1.SourceUnit):
+    def refine_unit_or_part(self, ast1_node: Union[solnodes1.SourceUnit, solnodes2.FileDefinition]):
+        is_file_def = isinstance(ast1_node, solnodes2.FileDefinition)
         if not isinstance(ast1_node, (solnodes1.ContractDefinition, solnodes1.InterfaceDefinition,
                                       solnodes1.StructDefinition, solnodes1.LibraryDefinition,
                                       solnodes1.EnumDefinition, solnodes1.ErrorDefinition,
                                       solnodes1.FunctionDefinition, solnodes1.EventDefinition,
                                       solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration,
-                                      solnodes1.ModifierDefinition)):
+                                      solnodes1.ModifierDefinition,
+                                      # Special case
+                                      solnodes2.FileDefinition)) and not is_file_def:
             raise ValueError('x')
 
         ast2_node = ast1_node.ast2_node
@@ -1514,7 +1551,7 @@ class Builder:
         if hasattr(ast2_node, 'refined') and ast2_node.refined:
             return
 
-        if self.is_top_level(ast1_node):
+        if self.is_top_level(ast1_node) or is_file_def:
             if isinstance(ast1_node, solnodes1.ContractDefinition):
                 ast2_node.is_abstract = ast1_node.is_abstract
 
@@ -1525,7 +1562,7 @@ class Builder:
                     for x in ast1_node.inherits
                 ]
 
-            # contracts, interfaces, libraries
+            # contracts, interfaces, libraries, filedef
             if hasattr(ast1_node, 'parts'):
                 for part in ast1_node.parts:
                     if isinstance(part, solnodes1.UsingDirective):
@@ -1533,15 +1570,17 @@ class Builder:
                         library_scope = part.scope.find_single(part.library_name.text, find_base_symbol=True)
                         assert isinstance(library_scope.value, solnodes1.LibraryDefinition)
                         library = self.type_helper.get_contract_type(part.scope.find_single(part.library_name.text))
-                        ast2_node.type_overrides.append(solnodes2.LibraryOverride(self.type_helper.map_type(part.override_type), library))
+                        ast2_node.type_overrides.append(
+                            solnodes2.LibraryOverride(self.type_helper.map_type(part.override_type), library))
 
                     if hasattr(part, 'ast2_node'):
                         self.refine_unit_or_part(part)
 
             # structs
             if hasattr(ast1_node, 'members'):
-                ast2_node.members = [solnodes2.StructMember(self.type_helper.map_type(x.member_type), solnodes2.Ident(x.name.text)) for x in
-                                     ast1_node.members]
+                ast2_node.members = [
+                    solnodes2.StructMember(self.type_helper.map_type(x.member_type), solnodes2.Ident(x.name.text)) for x in
+                    ast1_node.members]
 
         if isinstance(ast1_node, solnodes1.FunctionDefinition):
             ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
@@ -1576,4 +1615,7 @@ class Builder:
 
     def is_top_level(self, node: solnodes1.Node):
         # Error and FunctionDefinitions are set as SourceUnits in AST1 but not in AST2
-        return isinstance(node, solnodes1.SourceUnit) and not isinstance(node, (solnodes1.FunctionDefinition, solnodes1.ErrorDefinition, solnodes1.ImportDirective, solnodes1.ConstantVariableDeclaration))
+        return isinstance(node, solnodes1.SourceUnit) and not isinstance(node, (solnodes1.ImportDirective, solnodes1.FunctionDefinition, solnodes1.ErrorDefinition, solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration))
+
+    def should_create_skeleton(self, node: solnodes1.Node) -> bool:
+        return isinstance(node, (solnodes1.SourceUnit, solnodes1.ContractPart)) and not isinstance(node, (solnodes1.ImportDirective, solnodes1.PragmaDirective, solnodes1.UsingDirective))

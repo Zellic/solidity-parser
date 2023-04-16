@@ -1,7 +1,4 @@
 from solidity_parser.ast import solnodes
-from solidity_parser.ast import symtab
-
-import prettyprinter as pp
 
 
 def type_of(expr):
