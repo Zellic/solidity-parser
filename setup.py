@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='solp',
+    name='solidity-parser',
 
     setuptools_git_versioning={
         "enabled": True,
