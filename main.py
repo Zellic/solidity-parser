@@ -157,7 +157,7 @@ import logging
 from solidity_parser.ast.ast2builder import Builder as Builder2
 from glob import glob
 import re
-import src.solidity_parser.ast.helper as asthelper
+import solidity_parser.ast.helper as asthelper
 from solidity_parser.collectors import collector
 
 version_pattern = pattern = re.compile(r"v(\d)\.(\d)\.[0-9]+", re.IGNORECASE)

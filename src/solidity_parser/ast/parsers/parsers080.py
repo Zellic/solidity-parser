@@ -1,7 +1,7 @@
 import sys
 from solidity_parser.ast.parsers.common import ParserBase, get_subparsers_from_methods, get_all_subparsers, map_helper
 from solidity_parser.ast.parsers.errors import assert_invalid_path, unsupported_feature
-import src.solidity_parser.ast.parsers.parsers060 as parsers060
+import solidity_parser.ast.parsers.parsers060 as parsers060
 from solidity_parser.grammar.v080.SolidityParser import SolidityParser
 from solidity_parser.ast import solnodes
 
