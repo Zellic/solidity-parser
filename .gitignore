@@ -19,7 +19,7 @@ venv
 # local build files
 .eggs/
 build/
-solidity_parser/solidity_parser.egg-info
+src/solp.egg-info/
 
 # leave this out for now as we don't have stable builds yet
 dist/

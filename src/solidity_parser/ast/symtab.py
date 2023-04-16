@@ -411,7 +411,8 @@ class RootScope(Scope):
         self.add(BuiltinFunction('addmod', [uint(), uint(), uint()], [uint()]))
         self.add(BuiltinFunction('mulmod', [uint(), uint(), uint()], [uint()]))
 
-        self.add(BuiltinFunction('ecrecover', [bytes32(), uint(8), bytes32(), bytes32()], [solnodes.AddressType(False)]))
+        self.add(BuiltinFunction('ecrecover', [bytes32(), uint(8), bytes32(), bytes32()], [
+            solnodes.AddressType(False)]))
 
         self.add(BuiltinFunction('gasleft', [], [uint()]))
 

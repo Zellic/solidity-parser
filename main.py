@@ -1,6 +1,4 @@
-import sys
-
-from antlr4 import InputStream, CommonTokenStream, TerminalNode
+from antlr4 import InputStream, CommonTokenStream
 
 from solidity_parser.grammar.v060.SolidityLexer import SolidityLexer as SolidityLexer060
 from solidity_parser.grammar.v060.SolidityParser import SolidityParser as SolidityParser060
@@ -15,7 +13,7 @@ from solidity_parser.grammar.v080.SolidityParser import SolidityParser as Solidi
 from solidity_parser.grammar.v088.SolidityLexer import SolidityLexer as SolidityLexer088
 from solidity_parser.grammar.v088.SolidityParser import SolidityParser as SolidityParser088
 
-from solidity_parser.collectors.collector import collect_top_level_objects, get_minor_ver
+from solidity_parser.collectors.collector import get_minor_ver
 # from solidity_parser.ast.nodes import Contract, ContractType
 import prettyprinter as pp
 
@@ -24,13 +22,11 @@ from solidity_parser.ast.parsers.parsers070 import Parser070
 from solidity_parser.ast.parsers.parsers080 import Parser080
 from solidity_parser.ast.parsers.parsers088 import Parser088
 
-from solidity_parser.ast import solnodes, symtab
+from solidity_parser.ast import solnodes
+from solidity_parser.ast import symtab
 
 import os
 import json
-from json import JSONDecoder
-
-from pathlib import Path
 
 from solidity_parser.filesys import VirtualFileSystem
 from solidity_parser.ast.helper import make_ast
@@ -157,17 +153,11 @@ def dfs(node):
                 dfs(x)
 
 
-from types import SimpleNamespace
-import jsons
-from solidity_parser.filesys import StandardJsonInput
 import logging
-from solidity_parser.ast.mro_helper import c3_linearise
-from solidity_parser.ast import funcanalysis
-from solidity_parser.ast import solnodes2
 from solidity_parser.ast.ast2builder import Builder as Builder2
 from glob import glob
 import re
-import solidity_parser.ast.helper as asthelper
+import src.solidity_parser.ast.helper as asthelper
 from solidity_parser.collectors import collector
 
 version_pattern = pattern = re.compile(r"v(\d)\.(\d)\.[0-9]+", re.IGNORECASE)
@@ -181,7 +171,7 @@ if __name__ == '__main__':
 
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
 
-    start_idx = 174
+    start_idx = 22
     idx = 0
 
     for file_name in all_files:
@@ -256,12 +246,14 @@ if __name__ == '__main__':
                 ast2_builder = Builder2()
 
                 for file_scope in file_scopes:
-                    for s in file_scope.symbols.values():
-                        if len(s) != 1 or s[0].parent_scope != file_scope:
-                            continue
-                        n = s[0].value
-                        if not hasattr(n, 'ast2_node') and ast2_builder.is_top_level(n):
-                            ast2_builder.define_skeleton(n, file_scope.source_unit_name)
+                    for ss in file_scope.symbols.values():
+                        for s in ss:
+                            if s.parent_scope != file_scope:
+                                # don't process imported symbols under this file scope
+                                continue
+                            n = s.value
+                            if not hasattr(n, 'ast2_node') and ast2_builder.should_create_skeleton(n):
+                                ast2_builder.define_skeleton(n, file_scope.source_unit_name)
 
                 ast2_builder.process_all()
                 print(f"donezo {file_name} idx={idx}")
@@ -472,7 +464,7 @@ if __name__ == "__main__1":
     pp.install_extras()
     input_src = open(
         # sys.argv[1],
-        '../example/cryptokitties.sol',
+        'example/cryptokitties.sol',
         # '../example/greedy-airdropper.sol',
         # '../example/AaveToken.sol',
         'r').read()

@@ -517,6 +517,13 @@ class LibraryOverride(Node):
 
 
 @dataclass
+class FileDefinition(TopLevelUnit):
+    # This is currently only used for ownerless definitions, i.e. contracts/interfaces/etc don't have this as a parent
+    # and this isn't created for most processed source files
+    parts: List[ContractPart]
+
+
+@dataclass
 class ContractDefinition(TopLevelUnit):
     is_abstract: bool
     inherits: List[InheritSpecifier]
@@ -1025,6 +1032,7 @@ class DirectCall(Call):
         return ttype
 
 
+# x.y
 @dataclass
 class FunctionCall(Call):
     base: Expr
