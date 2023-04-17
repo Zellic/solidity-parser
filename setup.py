@@ -22,7 +22,13 @@ setup(
     setuptools_git_versioning={
         "enabled": True,
     },
-    setup_requires=["setuptools-git-versioning<2"],
+    setup_requires=[
+        "setuptools-git-versioning<2",
+        "antlr4-python3-runtime==4.11.1",
+        "parameterized",
+        "mock",
+        "jsons"
+    ],
 
     packages=find_packages(where='src'),
     package_dir={'': 'src'}
