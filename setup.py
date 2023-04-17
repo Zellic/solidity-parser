@@ -22,7 +22,7 @@ setup(
     setuptools_git_versioning={
         "enabled": True,
     },
-    setup_requires=[
+    install_requires=[
         "setuptools-git-versioning<2",
         "antlr4-python3-runtime==4.11.1",
         "parameterized",
