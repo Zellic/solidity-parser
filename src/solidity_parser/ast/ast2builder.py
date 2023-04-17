@@ -577,8 +577,23 @@ class Builder:
 
     def __init__(self):
         self.synthetic_toplevels: Dict[str, solnodes2.FileDefinition] = {}
+        self.normal_toplevels = []
         self.type_helper = TypeHelper(self)
         self.to_refine: Deque[solnodes1.SourceUnit] = deque()
+
+    def get_top_level_units(self) -> List[solnodes2.TopLevelUnit]:
+        return list(self.synthetic_toplevels.values()) + self.normal_toplevels
+
+    def enqueue_files(self, files: List[symtab.FileScope]):
+        for file_scope in files:
+            for ss in file_scope.symbols.values():
+                for s in ss:
+                    if s.parent_scope != file_scope:
+                        # don't process imported symbols under this file scope
+                        continue
+                    n = s.value
+                    if not hasattr(n, 'ast2_node') and self.should_create_skeleton(n):
+                        self.define_skeleton(n, file_scope.source_unit_name)
 
     def process_all(self):
         while self.to_refine:
@@ -1530,6 +1545,7 @@ class Builder:
             ast2_node.inputs = [self.parameter(x) for x in ast1_node.parameters]
 
         if self.is_top_level(ast1_node):
+            self.normal_toplevels.append(ast2_node)
             self.to_refine.append(ast1_node)
 
         return ast2_node

@@ -244,17 +244,7 @@ if __name__ == '__main__':
                     # raise e
 
                 ast2_builder = Builder2()
-
-                for file_scope in file_scopes:
-                    for ss in file_scope.symbols.values():
-                        for s in ss:
-                            if s.parent_scope != file_scope:
-                                # don't process imported symbols under this file scope
-                                continue
-                            n = s.value
-                            if not hasattr(n, 'ast2_node') and ast2_builder.should_create_skeleton(n):
-                                ast2_builder.define_skeleton(n, file_scope.source_unit_name)
-
+                ast2_builder.enqueue_files(file_scopes)
                 ast2_builder.process_all()
                 print(f"donezo {file_name} idx={idx}")
         except Exception as e:
