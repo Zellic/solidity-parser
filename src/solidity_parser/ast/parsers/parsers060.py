@@ -434,11 +434,11 @@ def _modifier_invocation(parser, modifier: SolidityParser.ModifierInvocationCont
 
 
 def _state_mutability(parser, modifier: SolidityParser.StateMutabilityContext):
-    return solnodes.MutabilityModifier(modifier.getText())
+    return solnodes.MutabilityModifier2(solnodes.MutabilityModifierKind(modifier.getText()))
 
 
 def _visibility_modifier(parser, modifier: SolidityParser.VisibilityModifierContext):
-    return solnodes.VisibilityModifier(modifier.getText())
+    return solnodes.VisibilityModifier2(solnodes.VisibilityModifierKind(modifier.getText()))
 
 
 def _pragma_directive(parser, pragma_directive: SolidityParser.PragmaDirectiveContext):
@@ -574,19 +574,24 @@ def _state_variable_declaration(parser, state_variable_declaration: SolidityPars
     modifiers = []
 
     if state_variable_declaration.PublicKeyword():
-        modifiers.append(solnodes.VisibilityModifier.PUBLIC)
+        modifiers.append(parser.wrap_node(state_variable_declaration.PublicKeyword(0).symbol,
+                                          solnodes.VisibilityModifier2(solnodes.VisibilityModifierKind.PUBLIC)))
 
     if state_variable_declaration.InternalKeyword():
-        modifiers.append(solnodes.VisibilityModifier.INTERNAL)
+        modifiers.append(parser.wrap_node(state_variable_declaration.InternalKeyword(0).symbol,
+                                          solnodes.VisibilityModifier2(solnodes.VisibilityModifierKind.INTERNAL)))
 
     if state_variable_declaration.PrivateKeyword():
-        modifiers.append(solnodes.VisibilityModifier.PRIVATE)
+        modifiers.append(parser.wrap_node(state_variable_declaration.PrivateKeyword(0).symbol,
+                                          solnodes.VisibilityModifier2(solnodes.VisibilityModifierKind.PRIVATE)))
 
     if state_variable_declaration.ConstantKeyword():
-        modifiers.append(solnodes.MutabilityModifier.CONSTANT)
+        modifiers.append(parser.wrap_node(state_variable_declaration.ConstantKeyword(0).symbol,
+                                          solnodes.MutabilityModifier2(solnodes.MutabilityModifierKind.CONSTANT)))
 
     if state_variable_declaration.ImmutableKeyword():
-        modifiers.append(solnodes.MutabilityModifier.IMMUTABLE)
+        modifiers.append(parser.wrap_node(state_variable_declaration.ImmutableKeyword(0).symbol,
+                                          solnodes.MutabilityModifier2(solnodes.MutabilityModifierKind.IMMUTABLE)))
 
     modifiers += parser.make_all_rules(state_variable_declaration.overrideSpecifier())
 
@@ -620,7 +625,8 @@ def _modifier_definition(parser, modifier_definition: SolidityParser.ModifierDef
     modifiers = []
 
     if modifier_definition.VirtualKeyword():
-        modifiers.append(solnodes.VisibilityModifier.VIRTUAL)
+        modifiers.append(parser.wrap_node(modifier_definition.VirtualKeyword(0).symbol,
+                                          solnodes.VisibilityModifier2(solnodes.VisibilityModifierKind.VIRTUAL)))
 
     modifiers += parser.make_all_rules(modifier_definition.overrideSpecifier())
 

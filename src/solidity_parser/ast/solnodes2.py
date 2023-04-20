@@ -1,3 +1,4 @@
+from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Any, Union, TypeVar, Generic, Optional
@@ -11,12 +12,23 @@ from solidity_parser.ast.mro_helper import c3_linearise
 T = TypeVar('T')
 
 
+def NodeDataclass(cls, *args, **kwargs):
+    # Add a hash based on the elements that make up this node. This is required because dataclass doesn't generate a
+    # hash for us unless we pass in unsafe_hash=True on the decorator for every node subclass and even if we do that
+    # it can't hash lists. Since get_all_children returns a generator of nodes (i.e. no lists), we can hash it as a
+    # tuple, i.e. a "snapshot hash"
+    def __node__hash(self):
+        return hash(tuple(self.get_all_children()))
+    cls.__hash__ = __node__hash
+    return dataclass(*[cls, *args], **kwargs)
+
+
 @dataclass
 class Ref(Generic[T]):
     x: T
 
 
-@dataclass
+@NodeDataclass
 class Node:
     parent: Optional['Node'] = field(init=False, repr=False, hash=False, compare=False)
 
@@ -65,8 +77,12 @@ class Node:
         new_obj = klass(**new_fields)
         return new_obj
 
+    def code_str(self):
+        raise NotImplementedError()
 
-class Type(Node):
+
+@NodeDataclass
+class Type(Node, ABC):
     @staticmethod
     def are_matching_types(target_param_types, actual_param_types):
         if not len(target_param_types) == len(actual_param_types):
@@ -113,31 +129,62 @@ class Type(Node):
     def is_literal_type(self) -> bool:
         return False
 
-class Stmt(Node):
+
+@NodeDataclass
+class Stmt(Node, ABC):
     pass
 
 
-class Expr(Node):
+@NodeDataclass
+class Expr(Node, ABC):
     def type_of(self) -> Type:
         raise NotImplementedError(f'{type(self)}')
 
 
-class Modifier(Node):
+@NodeDataclass
+class Modifier(Node, ABC):
     pass
 
 
-@dataclass
+@NodeDataclass
+class VisibilityModifier(Modifier):
+    kind: solnodes1.VisibilityModifierKind
+
+    def code_str(self):
+        return str(self.kind.value)
+
+
+@NodeDataclass
+class MutabilityModifier(Modifier):
+    kind: solnodes1.MutabilityModifierKind
+
+    def code_str(self):
+        return str(self.kind.value)
+
+
+@NodeDataclass
+class OverrideSpecifier(Modifier):
+    bases: List['ResolvedUserType']
+
+
+@NodeDataclass
+class SuperConstructorInvocationModifier(Modifier):
+    base_ttype: 'ResolvedUserType'
+    inputs: List[Expr]
+
+
+@NodeDataclass
 class Ident(Node):
     text: str
 
 
-@dataclass
+@NodeDataclass
 class NamedArgument(Node):
     name: Ident
     expr: Expr
 
 
-@dataclass
+@NodeDataclass
 class TopLevelUnit(Node):
     source_unit_name: str
     name: Ident
@@ -156,10 +203,13 @@ class TopLevelUnit(Node):
     def as_type(self):
         return ResolvedUserType(Ref(self))
 
-    def get_supers(self):
+    def get_supers(self) -> List[Union['ContractDefinition', 'InterfaceDefinition']]:
         # c.inherits are the InheritSpecifics
         # s.name is the ResolvedUserType => .value.x is the Contract/InterfaceDefinition
         return [s.name.value.x for s in self.inherits] if hasattr(self, 'inherits') else []
+
+    def get_subtypes(self) -> List[Union['ContractDefinition', 'InterfaceDefinition']]:
+        return [s.x for s in self._subtypes] if hasattr(self, '_subtypes') else []
 
     def is_enum(self) -> bool:
         return isinstance(self, EnumDefinition)
@@ -174,7 +224,7 @@ class TopLevelUnit(Node):
         return isinstance(self, InterfaceDefinition)
 
 
-@dataclass
+@NodeDataclass
 class ArrayType(Type):
     """ Single dimension array type with no size attributes
     This is most often used for 'bytes' which is a array of bytes of unknown/variable length
@@ -209,7 +259,7 @@ class ArrayType(Type):
         return True
 
 
-@dataclass
+@NodeDataclass
 class FixedLengthArrayType(ArrayType):
     """ Array type with a known length that is determined at compile time """
     size: int
@@ -234,7 +284,7 @@ class FixedLengthArrayType(ArrayType):
         return False
 
 
-@dataclass
+@NodeDataclass
 class VariableLengthArrayType(ArrayType):
     """ Array type with a length that is determined at runtime"""
     size: Expr
@@ -242,7 +292,7 @@ class VariableLengthArrayType(ArrayType):
     def __str__(self): return f"{self.base_type}[{self.size}]"
 
 
-@dataclass
+@NodeDataclass
 class AddressType(Type):
     """ Solidity address/address payable type, functionally this is a uint160"""
     is_payable: bool
@@ -285,7 +335,7 @@ class AddressType(Type):
         return True
 
 
-@dataclass
+@NodeDataclass
 class ByteType(Type):
     """ Single 8bit byte type """
 
@@ -298,7 +348,7 @@ class ByteType(Type):
         return True
 
 
-@dataclass
+@NodeDataclass
 class IntType(Type):
     """ Solidity native integer type of various bit length and signedness"""
 
@@ -327,7 +377,7 @@ class IntType(Type):
         return True
 
 
-@dataclass
+@NodeDataclass
 class PreciseIntType(IntType):
     real_bit_length: int
     value: int
@@ -367,7 +417,7 @@ class BoolType(Type):
         return True
 
 
-@dataclass
+@NodeDataclass
 class StringType(ArrayType):
     """ Solidity native string type"""
 
@@ -383,7 +433,7 @@ class StringType(ArrayType):
         return True
 
 
-@dataclass
+@NodeDataclass
 class PreciseStringType(StringType):
     """String literal type that has a known length at compile time"""
 
@@ -395,7 +445,7 @@ class PreciseStringType(StringType):
     def __str__(self): return f"string({self.real_size})"
 
 
-@dataclass
+@NodeDataclass
 class MappingType(Type):
     """ Type that represents a function mapping definition
 
@@ -428,7 +478,7 @@ class MappingType(Type):
         return result
 
 
-@dataclass
+@NodeDataclass
 class ResolvedUserType(Type):
     # Ref so that we don't set the parent of the TopLevelUnit to this type instance
     value: Ref[TopLevelUnit] = field(repr=False)
@@ -456,7 +506,11 @@ class ResolvedUserType(Type):
 
         return False
 
-@dataclass
+    def get_types_for_declared_type(self) -> List[TopLevelUnit]:
+        return [self.value.x] + self.value.x.get_subtypes()
+
+
+@NodeDataclass
 class BuiltinType(Type):
     name: str
 
@@ -471,7 +525,7 @@ def ABIType() -> BuiltinType:
     return BuiltinType('abi')
 
 
-@dataclass
+@NodeDataclass
 class FunctionType(Type):
     inputs: List[Type]
     outputs: List[Type]
@@ -483,7 +537,7 @@ class FunctionType(Type):
         return True
 
 
-@dataclass
+@NodeDataclass
 class TupleType(Type):
     ttypes: List[Type]
 
@@ -494,89 +548,98 @@ class TupleType(Type):
         return True
 
 
-@dataclass
+@NodeDataclass
 class Error(Type):
     def __str__(self):
         return '<Error>()'
 
 
+@NodeDataclass
 class ContractPart(Node):
-    pass
+    def has_modifier_kind(self, *kinds: Union[solnodes1.VisibilityModifierKind, solnodes1.MutabilityModifierKind]):
+        if hasattr(self, 'modifiers'):
+            own_kinds = [m.kind for m in self.modifiers if hasattr(m, 'kind')]
+            for k in kinds:
+                if k in own_kinds:
+                    return True
+        return False
 
 
-@dataclass
+@NodeDataclass
 class InheritSpecifier(Node):
     name: ResolvedUserType
     args: List[Expr]
 
 
-@dataclass
+@NodeDataclass
 class LibraryOverride(Node):
     overriden_type: Type
     library: ResolvedUserType
 
 
-@dataclass
+@NodeDataclass
 class FileDefinition(TopLevelUnit):
     # This is currently only used for ownerless definitions, i.e. contracts/interfaces/etc don't have this as a parent
     # and this isn't created for most processed source files
     parts: List[ContractPart]
 
 
-@dataclass
+@NodeDataclass
 class ContractDefinition(TopLevelUnit):
     is_abstract: bool
     inherits: List[InheritSpecifier]
     parts: List[ContractPart]
     type_overrides: List[LibraryOverride]
+    _subtypes: List[Ref[Union['ContractDefinition', 'InterfaceDefinition']]] = field(default_factory=list, init=False, hash=False, compare=False, repr=False)
 
 
-@dataclass
+@NodeDataclass
 class InterfaceDefinition(TopLevelUnit):
     inherits: List[InheritSpecifier]
     parts: List[ContractPart]
     type_overrides: List[LibraryOverride]
+    _subtypes: List[Ref[Union['ContractDefinition', 'InterfaceDefinition']]] = field(default_factory=list, init=False, hash=False, compare=False, repr=False)
 
 
-@dataclass
+@NodeDataclass
 class LibraryDefinition(TopLevelUnit):
     parts: List[ContractPart]
     type_overrides: List[LibraryOverride]
 
 
-@dataclass
+@NodeDataclass
 class EnumMember(Node):
     name: Ident
 
 
-@dataclass
+@NodeDataclass
 class EnumDefinition(TopLevelUnit):
     values: List[EnumMember]
 
 
-@dataclass
+@NodeDataclass
 class StructMember(Node):
     ttype: Type
     name: Ident
 
 
-@dataclass
+@NodeDataclass
 class StructDefinition(TopLevelUnit):
     members: List[StructMember]
 
 
-@dataclass
+@NodeDataclass
 class ErrorParameter(Node):
     ttype: Type
     name: Ident
 
 
-@dataclass
+@NodeDataclass
 class ErrorDefinition(TopLevelUnit, ContractPart):
     inputs: List[ErrorParameter]
 
 
-@dataclass
+@NodeDataclass
 class StateVariableDeclaration(ContractPart):
     name: Ident
     ttype: Type
@@ -584,21 +647,21 @@ class StateVariableDeclaration(ContractPart):
     value: Expr
 
 
-@dataclass
+@NodeDataclass
 class ConstantVariableDeclaration(ContractPart):
     name: Ident
     ttype: Type
     value: Expr
 
 
-@dataclass
+@NodeDataclass
 class EventParameter(Node):
     name: Ident
     ttype: Type
     is_indexed: bool
 
 
-@dataclass
+@NodeDataclass
 class EventDefinition(ContractPart):
     name: Ident
     inputs: List[EventParameter]
@@ -613,39 +676,39 @@ class Location(Enum):
     def __str__(self): return self.value
 
 
-@dataclass
+@NodeDataclass
 class Var(Node):
     name: Ident
     ttype: Type
     location: Location
 
 
-@dataclass
+@NodeDataclass
 class Parameter(Node):
     var: Var
 
 
-@dataclass
+@NodeDataclass
 class Block(Stmt):
     stmts: List[Stmt]
     is_unchecked: bool
 
 
-@dataclass
+@NodeDataclass
 class If(Stmt):
     condition: Expr
     true_branch: Stmt
     false_branch: Stmt
 
 
-@dataclass
+@NodeDataclass
 class Catch(Stmt):
     ident: Ident
     parameters: List[Parameter]
     body: Block
 
 
-@dataclass
+@NodeDataclass
 class Try(Stmt):
     expr: Expr
     return_parameters: List[Parameter]
@@ -653,14 +716,14 @@ class Try(Stmt):
     catch_clauses: List[Catch]
 
 
-@dataclass
+@NodeDataclass
 class While(Stmt):
     condition: Expr
     body: Stmt
     is_do_while: bool
 
 
-@dataclass
+@NodeDataclass
 class For(Stmt):
     initialiser: Stmt
     condition: Expr
@@ -668,7 +731,7 @@ class For(Stmt):
     body: Stmt
 
 
-@dataclass
+@NodeDataclass
 class FunctionDefinition(ContractPart):
     name: Ident
     inputs: List[Parameter]
@@ -677,7 +740,7 @@ class FunctionDefinition(ContractPart):
     code: Block
 
 
-@dataclass
+@NodeDataclass
 class ModifierDefinition(ContractPart):
     name: Ident
     inputs: List[Parameter]
@@ -685,24 +748,24 @@ class ModifierDefinition(ContractPart):
     code: Block
 
 
-@dataclass
+@NodeDataclass
 class TupleVarDecl(Stmt):
     vars: List[Var]
     value: Expr
 
 
-@dataclass
+@NodeDataclass
 class VarDecl(Stmt):
     var: Var
     value: Expr
 
 
-@dataclass
+@NodeDataclass
 class ExprStmt(Stmt):
     expr: Expr
 
 
-@dataclass
+@NodeDataclass
 class Literal(Expr):
     value: Any
     ttype: Type
@@ -712,7 +775,7 @@ class Literal(Expr):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class TypeLiteral(Expr):
     ttype: Type
 
@@ -720,15 +783,21 @@ class TypeLiteral(Expr):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class UnaryOp(Expr):
     """ Single operand expression """
     expr: Expr
     op: solnodes1.UnaryOpCode
     is_pre: bool
 
+    def type_of(self) -> Type:
+        expr_ttype = self.expr.type_of()
+        # FIXME: could be 'delete', never seen it though
+        assert expr_ttype.is_int()
+        return expr_ttype
 
-@dataclass
+
+@NodeDataclass
 class BinaryOp(Expr):
     left: Expr
     right: Expr
@@ -748,23 +817,26 @@ class BinaryOp(Expr):
             # result is type of the base
             return self.left.type_of()
         elif self.op in [solnodes1.BinaryOpCode.MUL, solnodes1.BinaryOpCode.DIV, solnodes1.BinaryOpCode.MOD,
-                         solnodes1.BinaryOpCode.ADD, solnodes1.BinaryOpCode.SUB]:
+                         solnodes1.BinaryOpCode.ADD, solnodes1.BinaryOpCode.SUB,
+                         solnodes1.BinaryOpCode.BIT_AND, solnodes1.BinaryOpCode.BIT_OR,
+                         solnodes1.BinaryOpCode.BIT_XOR
+                         ]:
             t1 = self.left.type_of()
             t2 = self.right.type_of()
-            assert t1 == t2
+            assert t1.can_implicitly_cast_from(t2)
             return t1
         else:
             raise ValueError(f'{self.op}')
 
 
-@dataclass
+@NodeDataclass
 class TernaryOp(Expr):
     condition: Expr
     left: Expr
     right: Expr
 
 
-@dataclass
+@NodeDataclass
 class SelfObject(Expr):
     declarer: Ref[Union[ContractDefinition, InterfaceDefinition]] = field(repr=False)
 
@@ -772,15 +844,19 @@ class SelfObject(Expr):
         return ResolvedUserType(self.declarer)
 
 
-@dataclass
+@NodeDataclass
 class SuperType(Type):
     declarer: Ref[Union[ContractDefinition, InterfaceDefinition]] = field(repr=False)
 
     def is_builtin(self) -> bool:
         return False
+    
+    def get_types_for_declared_type(self) -> List[TopLevelUnit]:
+        # FIXME: return bases
+        return self.declarer.x.get_supers()
 
 
-@dataclass
+@NodeDataclass
 class SuperObject(Expr):
     ttype: SuperType
 
@@ -788,7 +864,7 @@ class SuperObject(Expr):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class StateVarLoad(Expr):
     base: Expr
     name: Ident
@@ -810,7 +886,7 @@ class StateVarLoad(Expr):
         return matches[0].ttype
 
 
-@dataclass
+@NodeDataclass
 class ConstVarLoad(Expr):
     var: Ref[ConstantVariableDeclaration]
 
@@ -818,13 +894,13 @@ class ConstVarLoad(Expr):
         return self.var.x.ttype
 
 
-@dataclass
+@NodeDataclass
 class StaticVarLoad(Expr):
     ttype: ResolvedUserType
     name: Ident
 
 
-@dataclass
+@NodeDataclass
 class EnumLoad(Expr):
     member: Ref[EnumMember]
 
@@ -833,14 +909,14 @@ class EnumLoad(Expr):
         return self.member.x.parent.as_type()
 
 
-@dataclass
+@NodeDataclass
 class StateVarStore(Expr):
     base: Expr
     name: Ident
     value: Expr
 
 
-@dataclass
+@NodeDataclass
 class LocalVarLoad(Expr):
     var: Var
 
@@ -848,7 +924,7 @@ class LocalVarLoad(Expr):
         return self.var.ttype
 
 
-@dataclass
+@NodeDataclass
 class LocalVarStore(Expr):
     var: Var
     value: Expr
@@ -857,7 +933,7 @@ class LocalVarStore(Expr):
         return self.var.ttype
 
 
-@dataclass
+@NodeDataclass
 class ArrayLengthStore(Expr):
     # resizing array length is deprecated since solidity 0.6
     # The expr that loads the array e.g. this.myArray
@@ -868,7 +944,7 @@ class ArrayLengthStore(Expr):
         return UIntType(256)
 
 
-@dataclass
+@NodeDataclass
 class TupleLoad(Expr):
     base: Expr
     index: int
@@ -882,7 +958,7 @@ class TupleLoad(Expr):
         return tuple_type.ttypes[self.index]
 
 
-@dataclass
+@NodeDataclass
 class ArrayLoad(Expr):
     base: Expr
     index: Expr
@@ -900,14 +976,14 @@ class ArrayLoad(Expr):
             raise ValueError(f'unknown base type: f{base_type}')
 
 
-@dataclass
+@NodeDataclass
 class ArrayStore(Expr):
     base: Expr
     index: Expr
     value: Expr
 
 
-@dataclass
+@NodeDataclass
 class CreateInlineArray(Expr):
     """ Solidity 8 inline array creation
 
@@ -925,20 +1001,20 @@ class CreateInlineArray(Expr):
         return FixedLengthArrayType(element_types[0], len(element_types))
 
 
-@dataclass
+@NodeDataclass
 class MappingLoad(Expr):
     base: Expr
     key: Expr
 
 
-@dataclass
+@NodeDataclass
 class MappingStore(Expr):
     base: Expr
     key: Expr
     value: Expr
 
 
-@dataclass
+@NodeDataclass
 class GlobalValue(Expr):
     name: str
     ttype: Type
@@ -947,7 +1023,7 @@ class GlobalValue(Expr):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class ABISelector(Expr):
     function: Ref[FunctionDefinition]
 
@@ -960,7 +1036,7 @@ class ABISelector(Expr):
         return f'{owner_name}.{f.name.text}.selector'
 
 
-@dataclass
+@NodeDataclass
 class DynamicBuiltInValue(Expr):
     # <base>.name
     name: str
@@ -971,7 +1047,7 @@ class DynamicBuiltInValue(Expr):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class CreateMemoryArray(Expr):
     ttype: ArrayType
     size: Expr
@@ -980,7 +1056,7 @@ class CreateMemoryArray(Expr):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class CreateStruct(Expr):
     ttype: ResolvedUserType
     args: List[Expr]
@@ -989,7 +1065,7 @@ class CreateStruct(Expr):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class CreateAndDeployContract(Expr):
     ttype: ResolvedUserType
     named_args: List[NamedArgument]
@@ -999,7 +1075,7 @@ class CreateAndDeployContract(Expr):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class Call(Expr):
     named_args: List[NamedArgument]
     args: List[Expr]
@@ -1010,7 +1086,7 @@ class Call(Expr):
         return Type.are_matching_types(f_types, c_types)
 
 
-@dataclass
+@NodeDataclass
 class DirectCall(Call):
     ttype: ResolvedUserType
     name: Ident
@@ -1033,7 +1109,7 @@ class DirectCall(Call):
 
 
 # x.y
-@dataclass
+@NodeDataclass
 class FunctionCall(Call):
     base: Expr
     name: Ident
@@ -1067,7 +1143,7 @@ class FunctionCall(Call):
         return ttype
 
 
-@dataclass
+@NodeDataclass
 class FunctionPointerCall(Call):
     callee: Expr
 
@@ -1082,7 +1158,7 @@ class FunctionPointerCall(Call):
             return TupleType(output_ttypes)
 
 
-@dataclass
+@NodeDataclass
 class DynamicBuiltInCall(Call):
     ttype: Type
     base: Expr
@@ -1092,7 +1168,7 @@ class DynamicBuiltInCall(Call):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class BuiltInCall(Call):
     name: str
     ttype: Type
@@ -1101,7 +1177,7 @@ class BuiltInCall(Call):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class Cast(Expr):
     ttype: Type
     value: Expr
@@ -1110,7 +1186,7 @@ class Cast(Expr):
         return self.ttype
 
 
-@dataclass
+@NodeDataclass
 class MetaTypeType(Type):
     # type of a Solidity type, i.e. the type of type(X). This type has a few builtin fields such as min, max, name,
     # creationCode, runtimeCode and interfaceId
@@ -1120,7 +1196,7 @@ class MetaTypeType(Type):
         return self.ttype.is_builtin()
 
 
-@dataclass
+@NodeDataclass
 class GetType(Expr):
     # type(MyContract)
     ttype: Type
@@ -1129,40 +1205,40 @@ class GetType(Expr):
         return MetaTypeType(self.ttype)
 
 
-@dataclass
+@NodeDataclass
 class GetFunctionPointer(Expr):
     func: Ref[FunctionDefinition]
 
 
-@dataclass
+@NodeDataclass
 class EmitEvent(Stmt):
     event: Ref[EventDefinition]
     args: List[Expr]
 
 
-@dataclass
+@NodeDataclass
 class Revert(Stmt):
     pass
 
 
-@dataclass
+@NodeDataclass
 class RevertWithError(Revert):
     error: Ref[ErrorDefinition]
     args: List[Expr]
 
 
-@dataclass
+@NodeDataclass
 class RevertWithReason(Revert):
     reason: Expr
 
 
-@dataclass
+@NodeDataclass
 class Require(Stmt):
     condition: Expr
     reason: Expr
 
 
-@dataclass
+@NodeDataclass
 class Return(Stmt):
     values: List[Expr]
 
@@ -1175,13 +1251,13 @@ class Break(Stmt):
     pass
 
 
-@dataclass
+@NodeDataclass
 class Assembly(Stmt):
     # TODO: full assembly code representation
     code: str
 
 
-@dataclass
+@NodeDataclass
 class ExecModifiedCode(Stmt):
     # _; statement in modifier code bodies that show where modified function code gets executed
     pass

@@ -241,7 +241,7 @@ if __name__ == '__main__':
                     print(f"ast1 parsing error idx={idx}")
                     print(e)
                     # continue
-                    # raise e
+                    raise e
 
                 ast2_builder = Builder2()
                 ast2_builder.enqueue_files(file_scopes)
