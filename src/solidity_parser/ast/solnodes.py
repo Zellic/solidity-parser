@@ -522,15 +522,17 @@ class Return(Stmt):
     value: Expr
 
 
+@dataclass
 class Throw(Stmt):
     pass
 
 
+@dataclass
 class Modifier(Node):
     pass
 
 
-class VisibilityModifier(Modifier, Enum):
+class VisibilityModifierKind(Enum):
     EXTERNAL = 'external'
     PUBLIC = 'public'
     INTERNAL = 'internal'
@@ -538,12 +540,22 @@ class VisibilityModifier(Modifier, Enum):
     VIRTUAL = 'virtual'
 
 
-class MutabilityModifier(Modifier, Enum):
+class MutabilityModifierKind(Enum):
     PURE = 'pure'
     CONSTANT = 'constant'
     VIEW = 'view'
     PAYABLE = 'payable'
     IMMUTABLE = 'immutable'
+
+
+@dataclass
+class VisibilityModifier2(Modifier):
+    kind: VisibilityModifierKind
+
+
+@dataclass
+class MutabilityModifier2(Modifier):
+    kind: MutabilityModifierKind
 
 
 @dataclass

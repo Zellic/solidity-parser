@@ -26,19 +26,7 @@ class ParserBase:
         if subparser_lookup_key in self.subparsers:
             subparser = self.subparsers[subparser_lookup_key]
             parsed_rule = subparser(self, rule)
-
-            if isinstance(parsed_rule, Node):
-                if isinstance(rule.start.start, int):
-                    # this is the normal case
-                    parsed_rule.location = f'{rule.start.line}:{rule.start.start}'
-                else:
-                    # this is a hack to support fcremo's codebase
-                    # see: c3c05f5625b36a6b22a701031416d303a5605e0d
-                    # this is not the ideal way to solve it, but is good enough
-                    # for now (doesn't break other codebases)
-                    parsed_rule.location = f'{rule.start.start.line}:{rule.start.start.start}'
-
-            return parsed_rule
+            return self.wrap_node(rule, parsed_rule)
         else:
             raise KeyError('No parser for ' + subparser_lookup_key)
 
@@ -68,6 +56,22 @@ class ParserBase:
             return []
         else:
             return map_helper(self.make, [r for r in rules if is_grammar_rule(r)])
+
+    def wrap_node(self, rule, node):
+        if isinstance(node, Node):
+            if isinstance(rule.start, int):
+                # for terminal node symbols
+                node.location = f'{rule.line}:{rule.start}'
+            elif isinstance(rule.start.start, int):
+                # this is the normal case
+                node.location = f'{rule.start.line}:{rule.start.start}'
+            else:
+                # this is a hack to support fcremo's codebase
+                # see: c3c05f5625b36a6b22a701031416d303a5605e0d
+                # this is not the ideal way to solve it, but is good enough
+                # for now (doesn't break other codebases)
+                node.location = f'{rule.start.start.line}:{rule.start.start.start}'
+        return node
 
 
 def get_grammar_children(rule: antlr4.ParserRuleContext):

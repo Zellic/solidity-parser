@@ -897,7 +897,7 @@ class Builder:
                     input_types = flattened_types[:-1]
                 else:
                     assert isinstance(s.value, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration))
-                    assert solnodes1.VisibilityModifier.PUBLIC in s.value.modifiers
+                    assert solnodes1.VisibilityModifierKind.PUBLIC in [m.kind for m in s.value.modifiers]
                     # synthetic getter method for a public field, e.g. a public field 'data', expr is data()
                     input_types = []
                     is_synthetic = True
@@ -1276,7 +1276,7 @@ class Builder:
                         # else it's an instance member load which requires an expr base
                         if isinstance(new_base, solnodes2.Type):
                             assert isinstance(new_base, solnodes2.ResolvedUserType)
-                            assert solnodes1.MutabilityModifier.CONSTANT in referenced_member.modifiers
+                            assert solnodes1.MutabilityModifierKind.CONSTANT in [m.kind for m in referenced_member.modifiers]
                             return solnodes2.StaticVarLoad(new_base, solnodes2.Ident(referenced_member.name.text))
                     elif isinstance(referenced_member, solnodes1.Ident) and isinstance(referenced_member.parent,
                                                                                        solnodes1.EnumDefinition):
@@ -1430,7 +1430,18 @@ class Builder:
         return solnodes2.ErrorParameter(self.type_helper.map_type(node.var_type), solnodes2.Ident(node.name.text))
 
     def modifier(self, node: solnodes1.Modifier):
-        pass
+        if isinstance(node, solnodes1.VisibilityModifier2):
+            return solnodes2.VisibilityModifier(node.kind)
+        elif isinstance(node, solnodes1.MutabilityModifier2):
+            return solnodes2.MutabilityModifier(node.kind)
+        elif isinstance(node, solnodes1.OverrideSpecifier):
+            return solnodes2.OverrideSpecifier([self.type_helper.get_user_type(t) for t in node.arguments])
+        elif isinstance(node, solnodes1.InvocationModifier):
+            target = self.type_helper.get_expr_type(node.name)
+            if isinstance(target, solnodes2.ResolvedUserType):
+                return solnodes2.SuperConstructorInvocationModifier(target,
+                                                                    [self.refine_expr(e) for e in node.arguments])
+        self._todo(node)
 
     def block(self, node: solnodes1.Block):
         if node:
