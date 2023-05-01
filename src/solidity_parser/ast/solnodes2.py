@@ -12,6 +12,10 @@ from solidity_parser.ast.mro_helper import c3_linearise
 T = TypeVar('T')
 
 
+def raiseNotPrintable():
+    raise ValueError('Not a real Solidity element')
+
+
 def NodeDataclass(cls, *args, **kwargs):
     # Add a hash based on the elements that make up this node. This is required because dataclass doesn't generate a
     # hash for us unless we pass in unsafe_hash=True on the decorator for every node subclass and even if we do that
@@ -166,16 +170,34 @@ class MutabilityModifier(Modifier):
 class OverrideSpecifier(Modifier):
     bases: List['ResolvedUserType']
 
+    def code_str(self):
+        return f'override' + f'({", ".join(b.code_str() for b in self.bases)})' if self.bases else ''
+
 
 @NodeDataclass
 class SuperConstructorInvocationModifier(Modifier):
     base_ttype: 'ResolvedUserType'
     inputs: List[Expr]
 
+    def code_str(self):
+        return f'{self.base_ttype.code_str()}({", ".join(e.code_str() for e in self.inputs)})'
+
+
+@NodeDataclass
+class FunctionInvocationModifier(Modifier):
+    modifier: Ref['ModifierDefinition']
+    inputs: List[Expr]
+
+    def code_str(self):
+        return f'{self.modifier.x.name.code_str()}({", ".join(e.code_str() for e in self.inputs)})'
+
 
 @NodeDataclass
 class Ident(Node):
     text: str
+
+    def code_str(self):
+        return self.text
 
 
 @NodeDataclass
@@ -183,9 +205,12 @@ class NamedArgument(Node):
     name: Ident
     expr: Expr
 
+    def code_str(self):
+        return f'{self.name.code_str()}: {self.expr.code_str()}'
+
 
 @NodeDataclass
-class TopLevelUnit(Node):
+class TopLevelUnit(Node, ABC):
     source_unit_name: str
     name: Ident
 
@@ -258,6 +283,9 @@ class ArrayType(Type):
     def is_array(self) -> bool:
         return True
 
+    def code_str(self):
+        return f'{self.base_type.code_str()}[]'
+
 
 @NodeDataclass
 class FixedLengthArrayType(ArrayType):
@@ -283,6 +311,9 @@ class FixedLengthArrayType(ArrayType):
 
         return False
 
+    def code_str(self):
+        return f'{self.base_type.code_str()}[{str(self.size)}]'
+
 
 @NodeDataclass
 class VariableLengthArrayType(ArrayType):
@@ -290,6 +321,9 @@ class VariableLengthArrayType(ArrayType):
     size: Expr
 
     def __str__(self): return f"{self.base_type}[{self.size}]"
+
+    def code_str(self):
+        return f'{self.base_type.code_str()}[{self.size.code_str()}]'
 
 
 @NodeDataclass
@@ -334,6 +368,9 @@ class AddressType(Type):
     def is_address(self) -> bool:
         return True
 
+    def code_str(self):
+        return 'address' + 'payable' if self.is_payable else ''
+
 
 @NodeDataclass
 class ByteType(Type):
@@ -346,6 +383,9 @@ class ByteType(Type):
 
     def is_byte(self) -> bool:
         return True
+
+    def code_str(self):
+        return 'byte'
 
 
 @NodeDataclass
@@ -376,6 +416,9 @@ class IntType(Type):
     def is_int(self) -> bool:
         return True
 
+    def code_str(self):
+        return ('u' if not self.is_signed else '') + 'int' + str(self.size)
+
 
 @NodeDataclass
 class PreciseIntType(IntType):
@@ -386,6 +429,9 @@ class PreciseIntType(IntType):
         return True
 
     def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}({self.real_bit_length})"
+
+    def code_str(self):
+        return raiseNotPrintable()
 
 
 def UIntType(size=256):
@@ -416,6 +462,9 @@ class BoolType(Type):
     def is_builtin(self) -> bool:
         return True
 
+    def code_str(self):
+        return 'bool'
+
 
 @NodeDataclass
 class StringType(ArrayType):
@@ -432,6 +481,9 @@ class StringType(ArrayType):
     def is_string(self) -> bool:
         return True
 
+    def code_str(self):
+        return 'string'
+
 
 @NodeDataclass
 class PreciseStringType(StringType):
@@ -443,6 +495,9 @@ class PreciseStringType(StringType):
         return True
 
     def __str__(self): return f"string({self.real_size})"
+
+    def code_str(self):
+        return raiseNotPrintable()
 
 
 @NodeDataclass
@@ -477,6 +532,9 @@ class MappingType(Type):
                 next_link = None
         return result
 
+    def code_str(self):
+        return f"({self.src} => {self.dst})"
+
 
 @NodeDataclass
 class ResolvedUserType(Type):
@@ -509,6 +567,9 @@ class ResolvedUserType(Type):
     def get_types_for_declared_type(self) -> List[TopLevelUnit]:
         return [self.value.x] + self.value.x.get_subtypes()
 
+    def code_str(self):
+        return self.value.x.name.text
+
 
 @NodeDataclass
 class BuiltinType(Type):
@@ -519,6 +580,9 @@ class BuiltinType(Type):
 
     def is_builtin(self) -> bool:
         return True
+
+    def code_str(self):
+        return self.name
 
 
 def ABIType() -> BuiltinType:
@@ -536,6 +600,10 @@ class FunctionType(Type):
     def is_function(self) -> bool:
         return True
 
+    def code_str(self):
+        # function (<parameter types>) {internal|external} [pure|view|payable] [returns (<return types>)]
+        return f'function ({", ".join(t.code_str() for t in self.inputs)}) return ({", ".join(t.code_str() for t in self.outputs)})'
+
 
 @NodeDataclass
 class TupleType(Type):
@@ -547,15 +615,12 @@ class TupleType(Type):
     def is_tuple(self) -> bool:
         return True
 
-
-@NodeDataclass
-class Error(Type):
-    def __str__(self):
-        return '<Error>()'
+    def code_str(self):
+        return f'({", ".join(t.code_str() for t in self.ttypes)})'
 
 
 @NodeDataclass
-class ContractPart(Node):
+class ContractPart(Node, ABC):
     def has_modifier_kind(self, *kinds: Union[solnodes1.VisibilityModifierKind, solnodes1.MutabilityModifierKind]):
         if hasattr(self, 'modifiers'):
             own_kinds = [m.kind for m in self.modifiers if hasattr(m, 'kind')]
@@ -569,6 +634,9 @@ class ContractPart(Node):
 class InheritSpecifier(Node):
     name: ResolvedUserType
     args: List[Expr]
+
+    def code_str(self):
+        return self.name.code_str() + f'({", ".join(e.code_str() for e in self.args)})'
 
 
 @NodeDataclass
@@ -682,6 +750,9 @@ class Var(Node):
     ttype: Type
     location: Location
 
+    def code_str(self):
+        return raiseNotPrintable()
+
 
 @NodeDataclass
 class Parameter(Node):
@@ -770,9 +841,15 @@ class Literal(Expr):
     value: Any
     ttype: Type
     unit: solnodes1.Unit = None
-    
+
     def type_of(self) -> Type:
         return self.ttype
+
+    def code_str(self):
+        if isinstance(self.value, str):
+            return f'"{self.value}"'
+        else:
+            return str(self.value)
 
 
 @NodeDataclass
@@ -781,6 +858,9 @@ class TypeLiteral(Expr):
 
     def type_of(self):
         return self.ttype
+
+    def code_str(self):
+        return self.ttype.code_str()
 
 
 @NodeDataclass
@@ -795,6 +875,12 @@ class UnaryOp(Expr):
         # FIXME: could be 'delete', never seen it though
         assert expr_ttype.is_int()
         return expr_ttype
+
+    def code_str(self):
+        if self.is_pre:
+            return f'{str(self.op.value)}{self.expr.code_str()}'
+        else:
+            return f'{self.expr.code_str()}{str(self.op.value)}'
 
 
 @NodeDataclass
@@ -828,12 +914,18 @@ class BinaryOp(Expr):
         else:
             raise ValueError(f'{self.op}')
 
+    def code_str(self):
+        return f'{self.left.code_str()}{str(self.op.value)}{self.right.code_str()}'
+
 
 @NodeDataclass
 class TernaryOp(Expr):
     condition: Expr
     left: Expr
     right: Expr
+
+    def code_str(self):
+        return f'{self.condition.code_str()} ? {self.left.code_str()} : {self.right.code_str()}'
 
 
 @NodeDataclass
@@ -843,6 +935,9 @@ class SelfObject(Expr):
     def type_of(self) -> Type:
         return ResolvedUserType(self.declarer)
 
+    def code_str(self):
+        return 'this'
+
 
 @NodeDataclass
 class SuperType(Type):
@@ -850,10 +945,13 @@ class SuperType(Type):
 
     def is_builtin(self) -> bool:
         return False
-    
+
     def get_types_for_declared_type(self) -> List[TopLevelUnit]:
         # FIXME: return bases
         return self.declarer.x.get_supers()
+
+    def code_str(self):
+        return raiseNotPrintable()
 
 
 @NodeDataclass
@@ -862,6 +960,9 @@ class SuperObject(Expr):
 
     def type_of(self) -> Type:
         return self.ttype
+
+    def code_str(self):
+        return 'super'
 
 
 @NodeDataclass
@@ -885,6 +986,9 @@ class StateVarLoad(Expr):
         assert len(matches) == 1
         return matches[0].ttype
 
+    def code_str(self):
+        return f'{self.base.code_str()}.{self.name.code_str()}'
+
 
 @NodeDataclass
 class ConstVarLoad(Expr):
@@ -893,11 +997,17 @@ class ConstVarLoad(Expr):
     def type_of(self) -> Type:
         return self.var.x.ttype
 
+    def code_str(self):
+        raise NotImplementedError('Not sure if needed')
+
 
 @NodeDataclass
 class StaticVarLoad(Expr):
     ttype: ResolvedUserType
     name: Ident
+
+    def code_str(self):
+        return f'{self.ttype.code_str()}.{self.name.code_str()}'
 
 
 @NodeDataclass
@@ -908,12 +1018,19 @@ class EnumLoad(Expr):
         # enum members type is its parent type
         return self.member.x.parent.as_type()
 
+    def code_str(self):
+        enum_def = self.member.x.parent
+        return f'{enum_def.name.code_str()}.{self.member.x.name.code_str()}'
+
 
 @NodeDataclass
 class StateVarStore(Expr):
     base: Expr
     name: Ident
     value: Expr
+
+    def code_str(self):
+        return f'{self.base.code_str()}.{self.name.code_str()} = {self.value.code_str()}'
 
 
 @NodeDataclass
@@ -923,6 +1040,9 @@ class LocalVarLoad(Expr):
     def type_of(self) -> Type:
         return self.var.ttype
 
+    def code_str(self):
+        return self.var.name.code_str()
+
 
 @NodeDataclass
 class LocalVarStore(Expr):
@@ -931,6 +1051,9 @@ class LocalVarStore(Expr):
 
     def type_of(self) -> Type:
         return self.var.ttype
+
+    def code_str(self):
+        return f'{self.var.code_str()} = {self.value.code_str()}'
 
 
 @NodeDataclass
@@ -942,6 +1065,9 @@ class ArrayLengthStore(Expr):
 
     def type_of(self) -> Type:
         return UIntType(256)
+
+    def code_str(self):
+        raise NotImplementedError()
 
 
 @NodeDataclass
@@ -956,6 +1082,9 @@ class TupleLoad(Expr):
         assert 0 <= self.index < len(tuple_type.ttypes)
 
         return tuple_type.ttypes[self.index]
+
+    def code_str(self):
+        return raiseNotPrintable()
 
 
 @NodeDataclass
@@ -975,12 +1104,18 @@ class ArrayLoad(Expr):
         else:
             raise ValueError(f'unknown base type: f{base_type}')
 
+    def code_str(self):
+        return f'{self.base.code_str()}[{self.index.code_str()}]'
+
 
 @NodeDataclass
 class ArrayStore(Expr):
     base: Expr
     index: Expr
     value: Expr
+
+    def code_str(self):
+        return f'{self.base.code_str()}[{self.index.code_str()}] = {self.value.code_str()}'
 
 
 @NodeDataclass
@@ -1000,11 +1135,17 @@ class CreateInlineArray(Expr):
         assert all([t == element_types[0] for t in element_types])
         return FixedLengthArrayType(element_types[0], len(element_types))
 
+    def code_str(self):
+        return f'[{", ".join(e.code_str() for e in self.elements)}]'
+
 
 @NodeDataclass
 class MappingLoad(Expr):
     base: Expr
     key: Expr
+
+    def code_str(self):
+        return f'{self.base.code_str()}[{self.key.code_str()}]'
 
 
 @NodeDataclass
@@ -1012,6 +1153,9 @@ class MappingStore(Expr):
     base: Expr
     key: Expr
     value: Expr
+
+    def code_str(self):
+        return f'{self.base.code_str()}[{self.key.code_str()}] = {self.value.code_str()}'
 
 
 @NodeDataclass
@@ -1021,6 +1165,9 @@ class GlobalValue(Expr):
 
     def type_of(self) -> Type:
         return self.ttype
+
+    def code_str(self):
+        return self.name
 
 
 @NodeDataclass
@@ -1035,6 +1182,9 @@ class ABISelector(Expr):
         owner_name = f.parent.source_unit_name
         return f'{owner_name}.{f.name.text}.selector'
 
+    def code_str(self):
+        return str(self)
+
 
 @NodeDataclass
 class DynamicBuiltInValue(Expr):
@@ -1046,6 +1196,9 @@ class DynamicBuiltInValue(Expr):
     def type_of(self) -> Type:
         return self.ttype
 
+    def code_str(self):
+        return f'{self.base.code_str()}.{self.name}'
+
 
 @NodeDataclass
 class CreateMemoryArray(Expr):
@@ -1055,6 +1208,9 @@ class CreateMemoryArray(Expr):
     def type_of(self) -> Type:
         return self.ttype
 
+    def code_str(self):
+        return f'new {self.ttype.code_str()}[{self.size.code_str()}]'
+
 
 @NodeDataclass
 class CreateStruct(Expr):
@@ -1063,6 +1219,9 @@ class CreateStruct(Expr):
 
     def type_of(self) -> Type:
         return self.ttype
+
+    def code_str(self):
+        return f'{self.ttype.code_str()}({", ".join(e.code_str() for e in self.args)})'
 
 
 @NodeDataclass
@@ -1074,9 +1233,12 @@ class CreateAndDeployContract(Expr):
     def type_of(self) -> Type:
         return self.ttype
 
+    def code_str(self):
+        return f"new {self.ttype.code_str()}" + Call.param_str(self)
+
 
 @NodeDataclass
-class Call(Expr):
+class Call(Expr, ABC):
     named_args: List[NamedArgument]
     args: List[Expr]
 
@@ -1084,6 +1246,10 @@ class Call(Expr):
         f_types = [x.var.ttype for x in f.inputs]
         c_types = [a.type_of() for a in self.args]
         return Type.are_matching_types(f_types, c_types)
+
+    def param_str(self):
+        return ('{' + ', '.join(e.code_str() for e in self.named_args) + '}') if len(
+            self.named_args) > 0 else '' + f'({", ".join(e.code_str() for e in self.args)})'
 
 
 @NodeDataclass
@@ -1106,6 +1272,9 @@ class DirectCall(Call):
         else:
             ttype = target_callee.outputs[0].var.ttype
         return ttype
+
+    def code_str(self):
+        return f'{self.ttype.code_str()}.{self.name.code_str()}{self.param_str()}'
 
 
 # x.y
@@ -1142,6 +1311,9 @@ class FunctionCall(Call):
             ttype = target_callee.outputs[0].var.ttype
         return ttype
 
+    def code_str(self):
+        return f'{self.base.code_str()}.{self.name.code_str()}{self.param_str()}'
+
 
 @NodeDataclass
 class FunctionPointerCall(Call):
@@ -1157,6 +1329,9 @@ class FunctionPointerCall(Call):
         else:
             return TupleType(output_ttypes)
 
+    def code_str(self):
+        return f'{self.callee.code_str()}{self.param_str()}'
+
 
 @NodeDataclass
 class DynamicBuiltInCall(Call):
@@ -1167,6 +1342,9 @@ class DynamicBuiltInCall(Call):
     def type_of(self) -> Type:
         return self.ttype
 
+    def code_str(self):
+        return f'{self.ttype.code_str()}.{self.name}{self.param_str()}'
+
 
 @NodeDataclass
 class BuiltInCall(Call):
@@ -1176,6 +1354,9 @@ class BuiltInCall(Call):
     def type_of(self) -> Type:
         return self.ttype
 
+    def code_str(self):
+        return f'{self.name}{self.param_str()}'
+
 
 @NodeDataclass
 class Cast(Expr):
@@ -1184,6 +1365,9 @@ class Cast(Expr):
 
     def type_of(self) -> Type:
         return self.ttype
+
+    def code_str(self):
+        return f'{self.ttype.code_str()}({self.value.code_str()})'
 
 
 @NodeDataclass
@@ -1195,6 +1379,9 @@ class MetaTypeType(Type):
     def is_builtin(self) -> bool:
         return self.ttype.is_builtin()
 
+    def code_str(self):
+        return raiseNotPrintable()
+
 
 @NodeDataclass
 class GetType(Expr):
@@ -1204,10 +1391,16 @@ class GetType(Expr):
     def type_of(self) -> Type:
         return MetaTypeType(self.ttype)
 
+    def code_str(self):
+        return f'type({self.ttype.code_str()})'
+
 
 @NodeDataclass
 class GetFunctionPointer(Expr):
     func: Ref[FunctionDefinition]
+
+    def code_str(self):
+        raise NotImplementedError()
 
 
 @NodeDataclass

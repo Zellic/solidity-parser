@@ -7,7 +7,10 @@ from solidity_parser.ast import solnodes as solnodes1
 from solidity_parser.ast import solnodes2 as solnodes2, symtab
 
 import logging
+import functools
+
 from solidity_parser.ast.mro_helper import c3_linearise
+from solidity_parser.errors import CodeProcessingError
 
 
 # This is not a real type, hence why it's not defined in the AST2 nodes file, but the solidity
@@ -464,6 +467,8 @@ class TypeHelper:
                 # this is an enum member, the type is the enum itself
                 assert isinstance(value.scope, symtab.EnumScope)
                 return self.symbol_to_ast2_type(value.scope)
+        elif isinstance(value, solnodes1.ModifierDefinition):
+            return solnodes2.FunctionType(self.param_types(value.parameters), [])
         assert False, f'{type(value)}'
 
     def scope_for_type(self, node: solnodes1.Node, ttype: solnodes2.Type) -> List[symtab.Scope]:
@@ -575,11 +580,37 @@ class TypeHelper:
 
 class Builder:
 
+    @dataclass
+    class State:
+        current_node: solnodes1.Node
+
     def __init__(self):
         self.synthetic_toplevels: Dict[str, solnodes2.FileDefinition] = {}
         self.normal_toplevels = []
         self.type_helper = TypeHelper(self)
         self.to_refine: Deque[solnodes1.SourceUnit] = deque()
+
+        self.state = None
+
+    def error_context(func):
+        @functools.wraps(func)
+        def with_error_context(self: 'Builder', node, *args, **kwargs):
+            # Store current state
+            prev_state = self.state
+            # Update current state
+            self.state = Builder.State(node)
+            try:
+                result = func(self, node, *args, **kwargs)
+            finally:
+                # Restore state after call
+                self.state = prev_state
+            return result
+        return with_error_context
+
+    def _error(self, msg):
+        node = self.state.current_node
+        file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
+        raise CodeProcessingError(msg, file_scope.source_unit_name, node.linenumber(), node.offset())
 
     def get_top_level_units(self) -> List[solnodes2.TopLevelUnit]:
         return list(self.synthetic_toplevels.values()) + self.normal_toplevels
@@ -648,8 +679,9 @@ class Builder:
             raise ValueError(f"Invalid user type resolve: {type(ast1_node)}")
 
     def _todo(self, node):
-        raise ValueError(f'TODO: {type(node)}')
+        self._error(f'{type(node)} not supported/implemented')
 
+    @error_context
     def refine_stmt(self, node: solnodes1.Stmt, allow_none=False):
         if node is None:
             assert allow_none
@@ -1071,6 +1103,7 @@ class Builder:
 
         return False
 
+    @error_context
     def refine_expr(self, expr: solnodes1.Expr, is_function_callee=False, allow_type=False, allow_tuple_exprs=False,
                     allow_multiple_exprs=False, allow_none=True, allow_stmt=False, is_argument=False,
                     is_assign_rhs=False, allow_event=False):
@@ -1191,7 +1224,11 @@ class Builder:
                     bucket = expr.scope.find(expr.text)
                     return [Builder.FunctionCallee(symbol_bases(bucket), bucket)]
 
-            ident_symbol = expr.scope.find_single(expr.text).resolve_base_symbol()
+            ident_symbol = expr.scope.find_single(expr.text)
+            if not ident_symbol:
+                self._error(f'Unresolved reference to {expr.text}')
+
+            ident_symbol = ident_symbol.resolve_base_symbol()
             assert ident_symbol  # must be resolved to something
 
             if isinstance(ident_symbol, symtab.BuiltinValue):
@@ -1439,8 +1476,16 @@ class Builder:
         elif isinstance(node, solnodes1.InvocationModifier):
             target = self.type_helper.get_expr_type(node.name)
             if isinstance(target, solnodes2.ResolvedUserType):
-                return solnodes2.SuperConstructorInvocationModifier(target,
-                                                                    [self.refine_expr(e) for e in node.arguments])
+                node_klass = solnodes2.SuperConstructorInvocationModifier
+            elif target.is_function():
+                # actually it's a modifier definition that this resolves to
+                mod_def = node.scope.find_single(node.name.text).value
+                node_klass = solnodes2.FunctionInvocationModifier
+                target = solnodes2.Ref(mod_def)
+            else:
+                self._todo(node)
+            return node_klass(target, [self.refine_expr(e) for e in node.arguments] if node.arguments else [])
+
         self._todo(node)
 
     def block(self, node: solnodes1.Block):

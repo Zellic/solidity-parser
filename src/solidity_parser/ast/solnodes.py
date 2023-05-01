@@ -575,7 +575,7 @@ class SourceUnit(Node):
 
 @dataclass
 class PragmaDirective(SourceUnit):
-    name: str
+    name: Ident
     value: Union[str, Expr]
 
 

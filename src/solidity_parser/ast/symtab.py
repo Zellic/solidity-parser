@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from typing import Union, List, Dict, Optional, Type, Tuple
 from collections import defaultdict
 from enum import Enum
@@ -6,11 +7,13 @@ from solidity_parser.ast import solnodes
 from solidity_parser.filesys import LoadedSource, VirtualFileSystem
 
 from solidity_parser.ast.mro_helper import c3_linearise
-
+import solidity_parser.errors as errors
 import logging
 
-Aliases = Union[str, List[str]]
+import solidity_parser.util.version_util as version_util
 
+
+Aliases = Union[str, List[str]]
 
 def ACCEPT(x):
     return True
@@ -133,12 +136,16 @@ class Scope(Scopeable):
                 return syms
         return []
 
+    def find_from_parent(self, name: str, predicate=None):
+        return self.parent_scope.find(name, predicate=predicate) if self.parent_scope else []
+
     def find(self, name: str, find_base_symbol: bool = False, predicate=None) -> Optional[List[Symbol]]:
         # check this scope first
         found_symbols = self.find_current_level(name, predicate)
+
         # check the parent scope if it wasn't in this scope
-        if not found_symbols and self.parent_scope is not None:
-            found_symbols = self.parent_scope.find(name, predicate=predicate)
+        if not found_symbols:
+            found_symbols = self.find_from_parent(name, predicate=predicate)
 
         if not found_symbols:
             return []
@@ -155,7 +162,8 @@ class Scope(Scopeable):
         if len(results) == 1:
             return results[0]
 
-        assert len(results) == 0
+        if len(results) > 1:
+            raise ValueError(f'Expected 1 but got {len(results)} symbols for "{name}" in scope {self.aliases[0]}')
 
         return default
 
@@ -178,6 +186,7 @@ class Scope(Scopeable):
                 methods = [
                     # TODO: should these be copied?
                     ('push', [], [ttype.base_type]),
+                    # Before solidity 0.6, this returns the new array length, >= 0.6 returns nothing
                     ('push', [ttype.base_type], []),
                     ('pop', [], [])
                 ] if not ttype.is_string() else []
@@ -320,6 +329,8 @@ def meta_type_key(ttype) -> str:
 class RootScope(Scope):
     def __init__(self):
         Scope.__init__(self, '<root>')
+
+        self.compiler_version = None
 
         msg_object = BuiltinObject('msg')
         msg_object.add(BuiltinValue('value', solnodes.IntType(False, 256)))
@@ -589,6 +600,9 @@ class ImportSymbol(ScopeAndSymbol):
     def find_single(self, name: str, find_base_symbol: bool = False, default=None, predicate=None) -> Optional[Symbol]:
         return self.resolve_base_symbol().find_single(name, find_base_symbol, default, predicate)
 
+    def find_from_parent(self, name: str, predicate=None):
+        return self.resolve_base_symbol().find_from_parent(name, predicate)
+
 
 class AliasImportSymbol(ImportSymbol):
     def __init__(self, ast_node: solnodes.SymbolImportDirective, alias_index):
@@ -620,6 +634,9 @@ class ProxyScope(ScopeAndSymbol):
         if base_scope:
             self.import_symbols_from_scope(base_scope)
         self.base_scope = base_scope
+
+    def find_from_parent(self, name: str, predicate=None):
+        return self.base_scope.find(name)
 
     def resolve_base_symbol(self) -> 'Symbol':
         if self.base_scope:
@@ -741,8 +758,6 @@ class Builder2:
             # update the context for the children if a new top level scope was made
             if isinstance(current_scope, (ContractOrInterfaceScope, LibraryScope, StructScope, EnumScope)):
                 context = Builder2.Context(context.file_scope, current_scope)
-
-
 
         # add the created symbols under the parent scope. The process_node call above either makes a new
         # scope or new symbols, so don't think of this as adding new symbols to a newly created scope, that is
@@ -938,6 +953,15 @@ class Builder2:
 
         # Skeleton building node processing
         if isinstance(node, solnodes.PragmaDirective):
+            if node.name.text == 'solidity':
+                value = node.value
+                if isinstance(value, str):
+                    print(f"ver: {version_util.parse_version(value)}")
+                else:
+                    value = node.value[0]
+                    # specifying a minimum version for this file
+                    assert value.op in [solnodes.BinaryOpCode.BIT_XOR, solnodes.BinaryOpCode.EQ, solnodes.BinaryOpCode.GTEQ]
+                    print(f"ver: {version_util.parse_version(value.right.value)}")
             return None
         elif isinstance(node, (solnodes.FunctionDefinition, solnodes.EventDefinition,
                                solnodes.ErrorDefinition, solnodes.ModifierDefinition)):

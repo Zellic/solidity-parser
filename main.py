@@ -1,3 +1,5 @@
+import traceback
+
 from antlr4 import InputStream, CommonTokenStream
 
 from solidity_parser.grammar.v060.SolidityLexer import SolidityLexer as SolidityLexer060
@@ -27,9 +29,12 @@ from solidity_parser.ast import symtab
 
 import os
 import json
+import sys
 
 from solidity_parser.filesys import VirtualFileSystem
 from solidity_parser.ast.helper import make_ast
+
+import solidity_parser.errors as errors
 
 def fname(node):
     # id = node.functionDescriptor().identifier()
@@ -171,7 +176,7 @@ if __name__ == '__main__':
 
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
 
-    start_idx = 22
+    start_idx = 182
     idx = 0
 
     for file_name in all_files:
@@ -236,19 +241,18 @@ if __name__ == '__main__':
                         loaded_source = vfs._add_loaded_source(c_name, c_code, creator)
                         file_scope = symtab_builder.process_or_find(loaded_source)
                         file_scopes.append(file_scope)
-                except Exception as e:
+                except errors.AntlrParsingError as e:
                     # i.e. malformed syntax inputs
-                    print(f"ast1 parsing error idx={idx}")
-                    print(e)
-                    # continue
-                    raise e
+                    print(f"ast1 parsing error idx={idx}", file=sys.stderr)
+                    traceback.print_exc()
+                    continue
 
                 ast2_builder = Builder2()
                 ast2_builder.enqueue_files(file_scopes)
                 ast2_builder.process_all()
                 print(f"donezo {file_name} idx={idx}")
         except Exception as e:
-            print(f"failure: idx={idx} {file_name}")
+            print(f"failure: idx={idx} {file_name}", file=sys.stderr)
             raise e
             # print(contract_source)
             # if idx is not None:
