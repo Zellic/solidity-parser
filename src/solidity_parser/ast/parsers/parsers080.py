@@ -68,8 +68,11 @@ def _pragma_directive(parser, pragma_directive: SolidityParser.PragmaDirectiveCo
     total_str = ''
     for token in pragma_directive.PragmaToken():
         total_str += token.getText()
-    # TODO: how to split?
-    return solnodes.PragmaDirective(name='pragma', value=total_str)
+    parts = total_str.split(None, 1)
+    assert len(parts) == 2
+
+    name_ident = parser.wrap_node(pragma_directive, solnodes.Ident(parts[0]))
+    return solnodes.PragmaDirective(name=name_ident, value=parts[1])
 
 
 def _import_directive(parser, directive: SolidityParser.ImportDirectiveContext):

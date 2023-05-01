@@ -18,6 +18,8 @@ from solidity_parser.ast.parsers.parsers080 import Parser080
 
 from solidity_parser.ast import solnodes
 
+from solidity_parser.errors import AntlrParsingError
+
 
 class MyErrorListener(ErrorListener):
 
@@ -76,8 +78,8 @@ def make_ast(input_src, version: int = None) -> List[solnodes.SourceUnit]:
     parse_tree = parser.sourceUnit()
     source_units = parse_tree.children
 
-    # if hasattr(parser, 'errors') and parser.errors:
-    #     raise ValueError("Parsing error")
+    if hasattr(parser, 'errors') and parser.errors:
+        raise AntlrParsingError(version, input_src, parser.errors)
 
     return list(map(ast_parser.make, source_units))
 
