@@ -8,14 +8,14 @@ from solidity_parser.grammar.v070.SolidityParser import SolidityParser
 
 
 class Parser070(ParserBase):
-    def __init__(self):
+    def __init__(self, token_stream):
         super().__init__({
             # v6 subparsers (base)
             **get_all_subparsers(parsers060),
             **custom_parsers060(),
             # v7 specific ones
             **get_all_subparsers(sys.modules[__name__])
-        })
+        }, token_stream)
 
 
 def _pragma_value(parser, pragma_value: SolidityParser.PragmaValueContext):

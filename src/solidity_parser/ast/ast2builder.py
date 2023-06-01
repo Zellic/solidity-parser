@@ -83,10 +83,7 @@ class TypeHelper:
             base_type = self.get_expr_type(expr.obj_base)
             member = expr.name.text
 
-            # check the scope of the base type
-            # then check the current contract/interface/library/scope to see if it's an overriden type with the using
-            # directive
-            scopes = self.scope_for_type(expr, base_type)
+            scopes = self.scopes_for_type(expr, base_type)
 
             if allow_multiple:
                 for s in scopes:
@@ -471,7 +468,7 @@ class TypeHelper:
             return solnodes2.FunctionType(self.param_types(value.parameters), [])
         assert False, f'{type(value)}'
 
-    def scope_for_type(self, node: solnodes1.Node, ttype: solnodes2.Type) -> List[symtab.Scope]:
+    def scopes_for_type(self, node: solnodes1.Node, ttype: solnodes2.Type) -> List[symtab.Scope]:
         if isinstance(ttype, solnodes2.SuperType):
             return c3_linearise(self.builder.get_declaring_contract_scope(node))
         elif isinstance(ttype, solnodes2.ResolvedUserType):
@@ -607,10 +604,20 @@ class Builder:
             return result
         return with_error_context
 
-    def _error(self, msg):
-        node = self.state.current_node
-        file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
-        raise CodeProcessingError(msg, file_scope.source_unit_name, node.linenumber(), node.offset())
+    def _error(self, msg, *predicates):
+        # Used for user level errors, i.e. the input code has an issue
+        failure = not predicates or any(not p for p in predicates)
+        # i.e. one failed. If there were no predicates supplied, it's a guaranteed failure
+        if failure:
+            node = self.state.current_node
+            file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
+            raise CodeProcessingError(msg, file_scope.source_unit_name, node.linenumber(), node.offset())
+
+        return True
+
+    def _assert_error(self, msg, *predicates):
+        # Used for 'internal' errors, i.e. compiler man assumptions that must pass
+        return self._error(f'Internal assertion fault: {msg}', *predicates)
 
     def get_top_level_units(self) -> List[solnodes2.TopLevelUnit]:
         return list(self.synthetic_toplevels.values()) + self.normal_toplevels
@@ -826,10 +833,13 @@ class Builder:
             # special case since new can only be in the form of new X()
             base_type = self.type_helper.map_type(callee.type_name)
             if base_type.is_array():
-                assert len(expr.args) == 1
-                assert self.type_helper.get_expr_type(expr.args[0]).is_int()
+                # e.g. new X[5]
+                self._assert_error('New array creation must take a single integer length as parameter',
+                                   len(expr.args) == 1 and self.type_helper.get_expr_type(expr.args[0]).is_int())
                 return solnodes2.CreateMemoryArray(base_type, self.refine_expr(expr.args[0]))
             elif base_type.is_user_type():
+                # e.g. new X(...)
+                # TODO: check if option args are allowed here
                 return solnodes2.CreateAndDeployContract(base_type, create_option_args(), create_new_args())
 
         # possible_base could be a Type or an expr:
@@ -844,15 +854,20 @@ class Builder:
         option_args = create_option_args()
 
         if any([isinstance(c, Builder.PartialFunctionCallee) for c in callees]):
-            assert len(callees) == 1
+            self._assert_error('Ambiguous partial function callee', len(callees) == 1)
+
+            # Partially built callee, i.e. the full expr may be x(y=5, z=6), a partial callee might only be x(y=5, z=?)
+            # This is because some exprs are built top down(partial) instead of bottom up. The top down ones are
+            # difficult as we have to backtrack and fill in details afterwards
             c = callees[0]
 
+            # these 'keys' are parameters that haven't been filled in yet
             unmatched_keys = [key for key in c.named_args.keys() if c.named_args[key] is None]
 
             if len(unmatched_keys) > 0:
                 # Atm only allow f.gas(x) and f.value(x) i.e. 1 arg, this can be improved by checking against the symtab
                 # entries for gas and value
-                assert len(expr.args) == 1
+                self._assert_error(f'{c} expected one arg, got {expr.args}', len(expr.args) == 1)
                 # parse x in f.gas(x) and add it as a named arg
                 c.named_args[unmatched_keys[0]] = self.refine_expr(expr.args[0])
                 return callees
@@ -874,28 +889,31 @@ class Builder:
         assert TypeHelper.any_or_all(type_calls)
 
         if any(type_calls):
-            assert len(callees) == 1 and len(callees[0].symbols) == 1
+            self._assert_error(f'Only 1 type callee match allowed, got: {callees}',
+                               len(callees) == 1 and len(callees[0].symbols) == 1)
 
             ttype = self.type_helper.symbol_to_ast2_type(callees[0].symbols[0])
             if ttype.is_user_type() and ttype.value.x.is_struct():
                 # struct init
                 new_args = create_new_args()
-                assert len(option_args) == 0
+                self._error(f'Option args not allowed during struct initialiser: {option_args}',
+                                   len(option_args) == 0)
                 return solnodes2.CreateStruct(ttype, new_args)
             else:
-                 # casts must look like T(x), also can't have a base as the base is the resolved callee
-                assert len(expr.args) == 1
-                assert len(option_args) == 0
-                assert not callees[0].base
-                assert not (isinstance(ttype, solnodes2.ResolvedUserType) and isinstance(ttype.value.x, solnodes2.StructDefinition))
+                # casts must look like T(x), also can't have a base as the base is the resolved callee
+                self._error(f'Can only cast single arg: {expr.args}',
+                                   len(expr.args) == 1)
+                self._error(f'Option args not allowed during struct initialiser: {option_args}',
+                                   len(option_args) == 0)
+                self._assert_error('Cast must not have base', not callees[0].base)
 
+                # TODO: put version check on this
                 # special case where address(uint160) maps to address payable:
                 # see https://docs.soliditylang.org/en/develop/050-breaking-changes.html
                 arg_type = self.type_helper.get_expr_type(expr.args[0])
 
                 if ttype.is_address() and arg_type.is_int() and not arg_type.is_signed and arg_type.size == 160:
                     ttype = solnodes2.AddressType(is_payable=True)
-
                 return solnodes2.Cast(ttype, self.refine_expr(expr.args[0]))
 
         # match function call candidates via parameters
@@ -925,11 +943,14 @@ class Builder:
                     flattened_types = t.flatten()
                     # the last element in the flattened list is the final return type and isn't an arg, so don't include
                     # that
-                    assert len(flattened_types) == len(arg_types) + 1
+                    self._error(f'Mapping load must provide all inputs {len(flattened_types)}/{len(arg_types) + 1}',
+                                len(flattened_types) == len(arg_types) + 1)
                     input_types = flattened_types[:-1]
                 else:
-                    assert isinstance(s.value, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration))
-                    assert solnodes1.VisibilityModifierKind.PUBLIC in [m.kind for m in s.value.modifiers]
+                    self._assert_error(f'Unhandled call to {type(s.value)}', isinstance(s.value, (
+                        solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration)))
+                    # self._error(f'Getter call to {s} must public',
+                    #             solnodes1.VisibilityModifierKind.PUBLIC in [m.kind for m in s.value.modifiers])
                     # synthetic getter method for a public field, e.g. a public field 'data', expr is data()
                     input_types = []
                     is_synthetic = True
@@ -940,13 +961,13 @@ class Builder:
                         bucket_candidates.append((s, t, is_synthetic))
 
             if len(bucket_candidates) > 1:
-                raise ValueError('Resolved to too many different bases')
+                return self._assert_error(f'Resolved to too many different bases: {bucket_candidates}, args={arg_types}')
             elif len(bucket_candidates) == 1:
                 candidates.append((c.base, *bucket_candidates[0]))
 
         if len(candidates) == 0:
             # no resolved callees
-            raise ValueError('Can\'t resolve call')
+            return self._error(f"Can't resolve call: {expr}, candidates={candidates}, args={arg_types}")
         elif len(candidates) > 1:
             logging.getLogger('AST2').info(f'Matched multiple buckets for: {expr}, choosing first from {candidates}')
 
@@ -964,7 +985,7 @@ class Builder:
         elif ftype.outputs is None:
             # for FunctionTypes where output IS None, return type is polymorphic. So far it's only abi.decode
             if sym.aliases[0] == 'decode' and sym.parent_scope.aliases[0] == 'abi':
-                assert len(arg_types) == 2
+                self._error(f'Invalid args: abi.decode({arg_types})', len(arg_types) == 2)
                 out_type = arg_types[1]
             else:
                 self._todo(expr)
@@ -1008,7 +1029,6 @@ class Builder:
                 return solnodes2.DynamicBuiltInCall(option_args, new_args, out_type, possible_base, sym.aliases[0])
         elif isinstance(sym.value, solnodes1.FunctionDefinition):
             # TODO: check for None possible_base in refine_expr
-            pb2 = possible_base
 
             current_contract = self.get_declaring_contract_scope(expr)
             func_declaring_contract = self.get_declaring_contract_scope(sym.value)
@@ -1022,6 +1042,15 @@ class Builder:
             if not possible_base:
                 assert is_local_call
                 possible_base = self.get_self_object(expr)
+
+            # e.g. myInt.xyz(abc) where xyz is in a library, IntLibrary and xyz(int, int) is a function in IntLibrary
+            # therefore the inputs are [myInt, abc], target funtion is IntLibrary.xyz
+            # Using directives are only used for libraries atm so this would end up as a DirectCall
+            if isinstance(sym, symtab.UsingFunctionSymbol):
+                # prepend myInt to the arg list
+                new_args = [possible_base] + new_args
+                # set the base to the library that declares the func so that below we emit a DirectCall
+                possible_base = self.type_helper.get_contract_type(func_declaring_contract)
 
             name = solnodes2.Ident(sym.value.name.text)
             if isinstance(possible_base, solnodes2.Expr):
@@ -1047,7 +1076,7 @@ class Builder:
                 # synthetic getter for a public field
                 # TODO: array getter?
                 assert out_type.is_string() or not out_type.is_array()
-                return solnodes2.StateVarLoad(possible_base, sym.aliases[0])
+                return solnodes2.StateVarLoad(possible_base, solnodes2.Ident(sym.aliases[0]))
         elif isinstance(sym.value, solnodes1.ErrorDefinition):
             assert allow_error
             assert len(option_args) == 0
@@ -1226,7 +1255,7 @@ class Builder:
 
             ident_symbol = expr.scope.find_single(expr.text)
             if not ident_symbol:
-                self._error(f'Unresolved reference to {expr.text}')
+                return self._error(f'Unresolved reference to {expr.text}')
 
             ident_symbol = ident_symbol.resolve_base_symbol()
             assert ident_symbol  # must be resolved to something
@@ -1270,7 +1299,7 @@ class Builder:
             base_type: solnodes2.Type = self.type_helper.get_expr_type(expr.obj_base)
 
             if not isinstance(base_type, solnodes2.FunctionType):
-                base_scopes = self.type_helper.scope_for_type(base, base_type)
+                base_scopes = self.type_helper.scopes_for_type(base, base_type)
 
                 member_symbols = [scope_symbols for s in base_scopes if (scope_symbols := s.find(mname))]
 
@@ -1353,7 +1382,7 @@ class Builder:
                     #
                     # assert len(candidates) == 1
 
-                    return solnodes2.ABISelector(solnodes2.Ref(member_symbol.value))
+                    return solnodes2.ABISelector(solnodes2.Ref(member_symbol.value.ast2_node))
                 else:
                     # the named arg value comes as the argument of the parent call function expr
                     return [Builder.PartialFunctionCallee(possible_base, [member_symbol], { mname: None })]
@@ -1534,7 +1563,9 @@ class Builder:
 
         def _make_new_node(n):
             if isinstance(n, solnodes1.FunctionDefinition):
-                return solnodes2.FunctionDefinition(solnodes2.Ident(str(n.name)), [], [], [], None)
+                # name here is flattened because it can be a string or a specialfunctionkind
+                # TODO: constructor marker
+                return solnodes2.FunctionDefinition(solnodes2.Ident(str(n.name)), [], [], [], None, [])
 
             name = solnodes2.Ident(n.name.text)
             if isinstance(n, solnodes1.ContractDefinition):
@@ -1548,7 +1579,7 @@ class Builder:
             elif isinstance(n, solnodes1.EnumDefinition):
                 return solnodes2.EnumDefinition(source_unit_name, name, [])
             elif isinstance(n, solnodes1.ErrorDefinition):
-                return solnodes2.ErrorDefinition(source_unit_name, name, [])
+                return solnodes2.ErrorDefinition(name, [])
             elif isinstance(n, solnodes1.StateVariableDeclaration):
                 return solnodes2.StateVariableDeclaration(name, None, [], None)
             elif isinstance(n, solnodes1.ConstantVariableDeclaration):
@@ -1564,6 +1595,7 @@ class Builder:
 
         ast2_node = _make_new_node(ast1_node)
         ast1_node.ast2_node = ast2_node
+        ast2_node.comments = ast1_node.comments
 
         if hasattr(ast1_node, 'parts'):
             for p in ast1_node.parts:
@@ -1577,6 +1609,30 @@ class Builder:
                 if not self.is_top_level(p) and not isinstance(p,
                                                                (solnodes1.UsingDirective, solnodes1.PragmaDirective)):
                     ast2_node.parts.append(self.define_skeleton(p, None))
+
+                if isinstance(p, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration)):
+                    # generate synthetic, codeless, getter functions for each field. This is to fix virtual function
+                    # call lookups that resolve to a synthetic getter
+                    if solnodes1.has_modifier_kind(p, solnodes1.VisibilityModifierKind.PUBLIC):
+                        # TODO: check override is valid
+                        getter_func = solnodes2.FunctionDefinition(solnodes2.Ident(p.name.text), [], [solnodes2.Parameter(solnodes2.Var(solnodes2.Ident(p.name.text), self.type_helper.map_type(p.var_type), None))], [], None, [solnodes2.FunctionMarker.SYNTHETIC_FIELD_GETTER])
+                        getter_func.refined = True
+                        getter_func._set_child_parents()
+                        ast2_node.parts.append(getter_func)
+                        logging.getLogger('AST2').debug(f"generating getter: {getter_func.name.code_str()} :: {getter_func.outputs[0].var.ttype.code_str()}")
+
+                        # generate mapping access getter
+                        var_type = getter_func.outputs[0].var.ttype
+                        if var_type.is_mapping():
+                            # copy these as they are already linked to parent nodes
+                            mapping_types = [deepcopy(t) for t in var_type.flatten()]
+                            inputs = [solnodes2.Parameter(solnodes2.Var(None, t, None)) for t in mapping_types[:-1]]
+                            outputs = [solnodes2.Parameter(solnodes2.Var(None, mapping_types[-1], None))]
+                            mapping_getter_func = solnodes2.FunctionDefinition(solnodes2.Ident(p.name.text), inputs, outputs, [], None, [solnodes2.FunctionMarker.SYNTHETIC_FIELD_GETTER])
+                            mapping_getter_func.refined = True
+                            mapping_getter_func._set_child_parents()
+                            ast2_node.parts.append(mapping_getter_func)
+                            logging.getLogger('AST2').debug(f"generating mapping getter: {mapping_getter_func.name.code_str()} :: {mapping_getter_func.outputs[0].var.ttype.code_str()}")
 
         # need to define inputs (and maybe outputs) for functions so that function calls can be resolved during
         # DirectCall.type_of() calls
@@ -1654,35 +1710,34 @@ class Builder:
                     solnodes2.StructMember(self.type_helper.map_type(x.member_type), solnodes2.Ident(x.name.text)) for x in
                     ast1_node.members]
 
+        def refine_node(n):
+            n.refined = True
+            n._set_child_parents()
+            return n
+
         if isinstance(ast1_node, solnodes1.FunctionDefinition):
             ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
             ast2_node.code = self.block(ast1_node.code) if ast1_node.code else None
-            ast2_node.refined = True
-            return ast2_node
+            return refine_node(ast2_node)
 
         if isinstance(ast1_node, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration)):
             if hasattr(ast1_node, 'modifiers'):
                 ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
             if ast1_node.initial_value:
                 ast2_node.initial_value = self.refine_expr(ast1_node.initial_value, is_assign_rhs=True)
-            ast2_node.refined = True
-            return ast2_node
+            return refine_node(ast2_node)
 
         if isinstance(ast1_node, solnodes1.EventDefinition):
             ast2_node.is_anonymous = ast1_node.is_anonymous
-            ast2_node.refined = True
-            return ast2_node
+            return refine_node(ast2_node)
 
         if isinstance(ast1_node, solnodes1.ModifierDefinition):
             ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
             ast2_node.code = self.block(ast1_node.code) if ast1_node.code else None
-            ast2_node.refined = True
-            return ast2_node
+            return refine_node(ast2_node)
 
-        ast2_node.refined = True
-
-        ast2_node._set_child_parents()
-
+        # don't return anything here
+        refine_node(ast2_node)
         return None
 
     def is_top_level(self, node: solnodes1.Node):

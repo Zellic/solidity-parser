@@ -7,11 +7,11 @@ from solidity_parser.ast import solnodes
 
 
 class Parser080(ParserBase):
-    def __init__(self):
+    def __init__(self, token_stream):
         super().__init__({
             **custom_parsers(),
             **get_all_subparsers(sys.modules[__name__])
-        })
+        }, token_stream)
 
 
 def custom_parsers():

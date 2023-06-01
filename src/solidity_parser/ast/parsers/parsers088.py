@@ -8,14 +8,14 @@ from solidity_parser.grammar.v088.SolidityParser import SolidityParser
 
 
 class Parser088(ParserBase):
-    def __init__(self):
+    def __init__(self, token_stream):
         super().__init__({
             # v8 subparsers (base)
             **get_all_subparsers(parsers080),
             **custom_parsers080(),
             # v088 specific ones
             **get_all_subparsers(sys.modules[__name__])
-        })
+        }, token_stream)
 
 
 def _user_defined_value_type_definition(parser, user_defined_value_type_definition: SolidityParser.UserDefinedValueTypeDefinitionContext):

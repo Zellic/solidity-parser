@@ -2,11 +2,12 @@ import antlr4
 from antlr4.tree.Tree import TerminalNode
 import inspect
 from solidity_parser.ast.solnodes import Node
-
+import solidity_parser.ast.solnodes as solnodes
 
 class ParserBase:
-    def __init__(self, subparsers):
+    def __init__(self, subparsers, token_stream):
         self.subparsers = subparsers  # the magic beans
+        self.token_stream = token_stream
 
     def make(self, rule: antlr4.ParserRuleContext, default=None):
         # Default case
@@ -57,7 +58,7 @@ class ParserBase:
         else:
             return map_helper(self.make, [r for r in rules if is_grammar_rule(r)])
 
-    def wrap_node(self, rule, node):
+    def wrap_node(self, rule, node, add_comments=False):
         if isinstance(node, Node):
             if isinstance(rule.start, int):
                 # for terminal node symbols
@@ -71,6 +72,11 @@ class ParserBase:
                 # this is not the ideal way to solve it, but is good enough
                 # for now (doesn't break other codebases)
                 node.location = f'{rule.start.start.line}:{rule.start.start.start}'
+
+            # For now just tag comments to contract definitions, function definitions, etc but not stmts, exprs, etc
+            if isinstance(node, (solnodes.SourceUnit, solnodes.ContractPart)):
+                node.comments = [c.text for c in self.token_stream.getHiddenTokensToLeft(rule.start.tokenIndex) or []]
+
         return node
 
 
