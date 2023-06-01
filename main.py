@@ -176,7 +176,8 @@ if __name__ == '__main__':
 
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
 
-    start_idx = 182
+    # start_idx = 182
+    start_idx = 0
     idx = 0
 
     for file_name in all_files:

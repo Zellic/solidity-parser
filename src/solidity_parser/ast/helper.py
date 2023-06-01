@@ -50,11 +50,11 @@ def get_processors(version: int):
 
     def get():
         if version < 7:
-            return SolidityParser060, SolidityLexer060, Parser060()
+            return SolidityParser060, SolidityLexer060, Parser060
         elif 8 > version >= 7:
-            return SolidityParser070, SolidityLexer070, Parser070()
+            return SolidityParser070, SolidityLexer070, Parser070
         elif version >= 8:
-            return SolidityParser080, SolidityLexer080, Parser080()
+            return SolidityParser080, SolidityLexer080, Parser080
         else:
             raise KeyError(f"Unsupported version: v{version}")
 
@@ -67,11 +67,13 @@ def make_ast(input_src, version: int = None) -> List[solnodes.SourceUnit]:
     if version is None:
         version = collector.get_minor_ver(input_src)
 
-    grammar_parser_type, grammar_lexer_type, ast_parser = get_processors(version)
+    # input_src = open('C:/Users/bibl/Desktop/testsrc.sol', 'r', encoding='utf-8').read()
+    grammar_parser_type, grammar_lexer_type, ast_parser_type = get_processors(version)
 
     contract_input = InputStream(input_src)
     lexer = grammar_lexer_type(contract_input)
     stream = CommonTokenStream(lexer)
+    ast_parser = ast_parser_type(stream)
     parser = grammar_parser_type(stream)
     parser.addErrorListener(MyErrorListener())
 

@@ -7,11 +7,11 @@ from solidity_parser.grammar.v060.SolidityParser import SolidityParser
 
 
 class Parser060(ParserBase):
-    def __init__(self):
+    def __init__(self, token_stream):
         super().__init__({
             **get_all_subparsers(sys.modules[__name__]),
             **custom_parsers()
-        })
+        }, token_stream)
 
 
 def custom_parsers():

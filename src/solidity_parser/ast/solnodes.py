@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 class Node:
     location: str
     "LineNumber:LinePosition, this is set dynamically in common.make"
+    comments: List[str]
 
     def __post_init__(self):
         for child in self.get_children():
@@ -751,3 +752,12 @@ class FunctionType(Type):
 
     def is_function(self) -> bool:
         return True
+
+
+def has_modifier_kind(node, *kinds: Union[VisibilityModifierKind, MutabilityModifierKind]):
+    if hasattr(node, 'modifiers'):
+        own_kinds = [m.kind for m in node.modifiers if hasattr(m, 'kind')]
+        for k in kinds:
+            if k in own_kinds:
+                return True
+    return False

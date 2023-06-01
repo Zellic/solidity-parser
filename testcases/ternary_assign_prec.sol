@@ -9,8 +9,7 @@ contract ternary_assign_prec {
         // Weird antlr grammar issue means we had to add brackets around expr ? (expr : expr) to change precedence
         // behaviour for ternarys that contain assignments
         _payInZRO ? zroFee = protocolFee : nativeFee = protocolFee;
-        // This should get parsed as
-// TernaryOp(condition=LocalVarLoad(var=Var(name=Ident(text='_payInZRO'), ttype=BoolType(), location=None)),
+// TernaryOp(condition=LocalVarLo        // This should get parsed asad(var=Var(name=Ident(text='_payInZRO'), ttype=BoolType(), location=None)),
 //    left=LocalVarStore(var=Var(name=Ident(text='zroFee'), ttype=IntType(is_signed=False, size=256), location=None),
 //    value=LocalVarLoad(var=Var(name=Ident(text='protocolFee'), ttype=IntType(is_signed=False, size=256), location=None))),
 //    right=LocalVarStore(var=Var(name=Ident(text='nativeFee'), ttype=IntType(is_signed=False, size=256), location=None),

@@ -8,6 +8,7 @@ from collections import deque
 from solidity_parser.ast import solnodes as solnodes1
 
 from solidity_parser.ast.mro_helper import c3_linearise
+import inspect
 
 T = TypeVar('T')
 
@@ -35,6 +36,7 @@ class Ref(Generic[T]):
 @NodeDataclass
 class Node:
     parent: Optional['Node'] = field(init=False, repr=False, hash=False, compare=False)
+    comments: Optional[List[str]] = field(init=False, repr=False, hash=False, compare=False, default_factory=list)
 
     def get_children(self):
         for val in vars(self).values():
@@ -52,9 +54,18 @@ class Node:
             yield direct_child
             yield from direct_child.get_all_children()
 
+    def get_top_level_unit(self) -> 'TopLevelUnit':
+        parent = self
+        while parent:
+            if isinstance(parent, TopLevelUnit):
+                return parent
+            parent = parent.parent
+        raise ValueError('Node has no top level unit')
+
     def __post_init__(self):
         self.parent = None
         self._set_child_parents()
+        # self.created_in = inspect.stack()
 
     def _set_child_parents(self):
         for child in self.get_children():
@@ -199,6 +210,9 @@ class Ident(Node):
     def code_str(self):
         return self.text
 
+    def __str__(self):
+        return self.text
+
 
 @NodeDataclass
 class NamedArgument(Node):
@@ -213,6 +227,9 @@ class NamedArgument(Node):
 class TopLevelUnit(Node, ABC):
     source_unit_name: str
     name: Ident
+
+    def descriptor(self) -> str:
+        return f'{self.source_unit_name}.{self.name.text}'
 
     def is_subttype_of(self, other_contract: 'TopLevelUnit') -> bool:
         to_check = deque()
@@ -369,7 +386,7 @@ class AddressType(Type):
         return True
 
     def code_str(self):
-        return 'address' + 'payable' if self.is_payable else ''
+        return 'address' + ('payable' if self.is_payable else '')
 
 
 @NodeDataclass
@@ -622,12 +639,7 @@ class TupleType(Type):
 @NodeDataclass
 class ContractPart(Node, ABC):
     def has_modifier_kind(self, *kinds: Union[solnodes1.VisibilityModifierKind, solnodes1.MutabilityModifierKind]):
-        if hasattr(self, 'modifiers'):
-            own_kinds = [m.kind for m in self.modifiers if hasattr(m, 'kind')]
-            for k in kinds:
-                if k in own_kinds:
-                    return True
-        return False
+        return solnodes1.has_modifier_kind(self, *kinds)
 
 
 @NodeDataclass
@@ -703,7 +715,8 @@ class ErrorParameter(Node):
 
 
 @NodeDataclass
-class ErrorDefinition(TopLevelUnit, ContractPart):
+class ErrorDefinition(ContractPart):
+    name: Ident
     inputs: List[ErrorParameter]
 
 
@@ -802,6 +815,12 @@ class For(Stmt):
     body: Stmt
 
 
+class FunctionMarker(Enum):
+    """ Special function type markers """
+    CONSTRUCTOR = 1  # TODO: implement this
+    SYNTHETIC_FIELD_GETTER = 2
+
+
 @NodeDataclass
 class FunctionDefinition(ContractPart):
     name: Ident
@@ -809,6 +828,15 @@ class FunctionDefinition(ContractPart):
     outputs: List[Parameter]
     modifiers: List[Modifier]
     code: Block
+    markers: List[FunctionMarker]
+
+    @staticmethod
+    def param_str(ps) -> str:
+        return ', '.join([p.var.ttype.code_str() for p in ps])
+
+    def descriptor(self) -> str:
+        parent_descriptor = self.parent.descriptor()
+        return f'{parent_descriptor}::{self.name.text}({self.param_str(self.inputs)}) returns ({self.param_str(self.outputs)})'
 
 
 @NodeDataclass
@@ -915,7 +943,7 @@ class BinaryOp(Expr):
             raise ValueError(f'{self.op}')
 
     def code_str(self):
-        return f'{self.left.code_str()}{str(self.op.value)}{self.right.code_str()}'
+        return f'{self.left.code_str()} {str(self.op.value)} {self.right.code_str()}'
 
 
 @NodeDataclass
@@ -923,6 +951,24 @@ class TernaryOp(Expr):
     condition: Expr
     left: Expr
     right: Expr
+
+    def type_of(self) -> Type:
+        t1 = self.left.type_of()
+        t2 = self.right.type_of()
+
+        assert t1.is_int() == t2.is_int()
+
+        if t1.is_int():
+            # if they're both ints, then take the bigger type
+            return t1 if t1.size > t2.size else t2
+        else:
+            try:
+                assert t1 == t2
+                return t1
+            except AssertionError:
+                # t1 = addr payable, t2 = addr
+                assert t2.can_implicitly_cast_from(t1)
+                return t2
 
     def code_str(self):
         return f'{self.condition.code_str()} ? {self.left.code_str()} : {self.right.code_str()}'
@@ -1005,6 +1051,13 @@ class ConstVarLoad(Expr):
 class StaticVarLoad(Expr):
     ttype: ResolvedUserType
     name: Ident
+
+    def type_of(self) -> Type:
+        unit = self.ttype.value.x
+        for p in unit.parts:
+            if p.name.text == self.name.text and isinstance(p, (StateVariableDeclaration, ConstantVariableDeclaration)):
+                return p.ttype
+        raise ValueError(f'No field: {self.code_str()}')
 
     def code_str(self):
         return f'{self.ttype.code_str()}.{self.name.code_str()}'
@@ -1172,7 +1225,7 @@ class GlobalValue(Expr):
 
 @NodeDataclass
 class ABISelector(Expr):
-    function: Ref[FunctionDefinition]
+    function: Ref[Union[FunctionDefinition, ErrorDefinition]]
 
     def type_of(self) -> Type:
         return Bytes(4)
@@ -1257,6 +1310,9 @@ class DirectCall(Call):
     ttype: ResolvedUserType
     name: Ident
 
+    def base_type(self):
+        return self.ttype
+
     def resolve_call(self) -> FunctionDefinition:
         unit = self.ttype.value.x
         matching_name_funcs = [p for p in unit.parts if isinstance(p, FunctionDefinition) and p.name.text == self.name.text]
@@ -1282,6 +1338,9 @@ class DirectCall(Call):
 class FunctionCall(Call):
     base: Expr
     name: Ident
+
+    def base_type(self):
+        return self.base.type_of()
 
     def resolve_call(self) -> FunctionDefinition:
         if isinstance(self.base, SuperObject):
