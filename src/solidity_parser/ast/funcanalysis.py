@@ -77,113 +77,6 @@ def mark_sources(units: List[TopLevelUnit]):
 def is_fca_important(f):
     return any('fca-important' in c for c in f.comments)
 
-def find_sinks(units: List[TopLevelUnit]):
-    def visit_code(code_node: Node):
-        if not code_node:
-            return []
-
-        results = []
-
-        if isinstance(code_node, (FunctionCall, DirectCall)):
-            not_self_call = (isinstance(code_node, FunctionCall) and not isinstance(code_node.base, (SelfObject, SuperObject))) or isinstance(code_node, DirectCall)
-
-            targets = find_possible_fc_calls(code_node)
-
-            for t in targets:
-                if is_fca_important(t) or not_self_call:
-                    results.append(t)
-
-        for child in code_node.get_children():
-            results.extend(visit_code(child))
-
-        return results
-
-    sinks = []
-    for u in units:
-        for p in u.parts if hasattr(u, 'parts') else []:
-            if hasattr(p, 'code'):
-                sinks.extend(visit_code(p.code))
-    return sinks
-
-def node_key(f: FunctionDefinition):
-    def param_str(ps):
-        return ', '.join([p.var.ttype.code_str() for p in ps])
-
-    unit: TopLevelUnit = f.parent
-    location = f'{unit.source_unit_name}.{unit.name.code_str()}.{f.name.code_str()}'
-    descriptor = f'({param_str(f.inputs)}){param_str(f.outputs)}'
-    return f'{location}{descriptor}'
-
-def create_cg(source: FunctionDefinition, graph=None):
-    # generates a context insensitive callgraph
-
-    if not graph:
-        graph = {}
-
-    # initialise this to keys: if a graph was provided then we assume all the nodes already added have been visited
-    visited = set(graph.keys())
-
-    def add_edge(key, dst: FunctionDefinition, *info):
-        # key = node_key(src)
-        if key not in graph:
-            graph[key] = []
-        graph[key].append((dst, *info))
-        
-
-    def visit_function(cur_func: FunctionDefinition):
-        key = node_key(cur_func)
-        if key in visited:
-            return
-        visited.add(key)
-
-        next_funcs = []
-
-        if not cur_func.code:
-            return
-
-        for code_node in cur_func.code.get_all_children():
-            if isinstance(code_node, (FunctionCall, DirectCall)):
-                targets = find_possible_fc_calls(code_node)
-
-                for t in targets:
-                    add_edge(key, t, code_node)
-                    next_funcs.append(t)
-
-
-        for f in next_funcs:
-            visit_function(f)
-
-    visit_function(source)
-
-    return graph
-
-def find_important_paths(cg, source, sink_keys):
-    def dfs(f):
-        important_paths = []
-
-        key = node_key(f)
-
-        if key in sink_keys:
-            important_paths.append([f])
-
-        if key in cg:
-            edges = cg[key]
-
-
-            for e in edges:
-                dst = e[0]
-                code_node = e[1]
-
-                self_call = not ((isinstance(code_node, FunctionCall) and not isinstance(code_node.base, (SelfObject, SuperObject))) or isinstance(code_node, DirectCall))
-
-                if self_call:
-                    dfs_valid_paths = dfs(dst)
-                    for p in dfs_valid_paths:
-                        important_paths.append([f, *p])
-
-        return important_paths
-
-    return dfs(source)
 
 def find_important_paths2(source: FunctionDefinition):
     def dfs(f):
@@ -203,15 +96,14 @@ def find_important_paths2(source: FunctionDefinition):
 
                     # we only get back paths if we hit a sink and only propagate them forward if we get those paths
                     dfs_valid_paths = dfs(targets[0])
-
                     for p in dfs_valid_paths:
                         important_paths.append([(code_node, False), *p])
+
+                    if not dfs_valid_paths and is_fca_important(targets[0]):
+                        # sink (marked with // fca-important)
+                        important_paths.append([(code_node, True)])
                 else:
-                    # TODO: fca-important case
-                    # targets = find_possible_fc_calls(code_node, use_subtypes=False)
-                    # sink_call = any([not self_call or is_fca_important(t) for t in targets])
-                    # 
-                    # if sink_call:
+                    # sink (intercontract call)
                     important_paths.append([(code_node, True)])
 
         return important_paths
