@@ -858,10 +858,16 @@ class VarDecl(Stmt):
     var: Var
     value: Expr
 
+    def code_str(self):
+        return f'{self.var.ttype.code_str()} {(self.var.location.value + " ") if self.var.location else ""}{self.var.name.text} = {self.value.code_str()};'
+
 
 @NodeDataclass
 class ExprStmt(Stmt):
     expr: Expr
+
+    def code_str(self):
+        return f'{self.expr.code_str()};'
 
 
 @NodeDataclass
@@ -1106,7 +1112,7 @@ class LocalVarStore(Expr):
         return self.var.ttype
 
     def code_str(self):
-        return f'{self.var.code_str()} = {self.value.code_str()}'
+        return f'{self.var.name.text} = {self.value.code_str()}'
 
 
 @NodeDataclass
@@ -1301,7 +1307,7 @@ class Call(Expr, ABC):
         return Type.are_matching_types(f_types, c_types)
 
     def param_str(self):
-        return ('{' + ', '.join(e.code_str() for e in self.named_args) + '}') if len(
+        return ('{' + ', '.join(e.code_str() for e in self.named_args) + '}') if hasattr(self, 'named_args') and len(
             self.named_args) > 0 else '' + f'({", ".join(e.code_str() for e in self.args)})'
 
 
@@ -1402,7 +1408,7 @@ class DynamicBuiltInCall(Call):
         return self.ttype
 
     def code_str(self):
-        return f'{self.ttype.code_str()}.{self.name}{self.param_str()}'
+        return f'{self.base.code_str()}.{self.name}{self.param_str()}'
 
 
 @NodeDataclass
@@ -1467,6 +1473,9 @@ class EmitEvent(Stmt):
     event: Ref[EventDefinition]
     args: List[Expr]
 
+    def code_str(self):
+        return f'emit {self.event.x.name.text}({Call.param_str(self)})'
+
 
 @NodeDataclass
 class Revert(Stmt):
@@ -1489,10 +1498,16 @@ class Require(Stmt):
     condition: Expr
     reason: Expr
 
+    def code_str(self):
+        return f'require({self.condition.code_str()}{(", " + self.reason.code_str()) if self.reason else ""})'
+
 
 @NodeDataclass
 class Return(Stmt):
     values: List[Expr]
+
+    def code_str(self):
+        return f'return {", ".join([v.code_str() for v in self.values])}'
 
 
 class Continue(Stmt):

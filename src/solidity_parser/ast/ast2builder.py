@@ -491,7 +491,6 @@ class TypeHelper:
         elif isinstance(ttype, solnodes2.BuiltinType):
             scope = node.scope.find_single(ttype.name)
         elif isinstance(ttype, solnodes2.MetaTypeType):
-            # HEY! CHECK NOTE at start of function
             is_interface = isinstance(ttype.ttype, solnodes2.ResolvedUserType)\
                            and isinstance(ttype.ttype.value.x, solnodes2.InterfaceDefinition)
             scope = node.scope.find_metatype(ttype.ttype, is_interface)
@@ -700,7 +699,7 @@ class Builder:
                                          self.refine_expr(node.value, is_assign_rhs=True) if node.value else None)
             else:
                 return solnodes2.TupleVarDecl([self.var(x) for x in node.variables],
-                                              self.refine_expr(node.value, is_assign_rhs=True))
+                                              self.refine_expr(node.value, is_assign_rhs=True, allow_tuple_exprs=True))
         elif isinstance(node, solnodes1.ExprStmt):
             def map_node(x):
                 if isinstance(x, solnodes2.Expr):
@@ -1430,7 +1429,7 @@ class Builder:
         elif isinstance(expr, solnodes1.CreateMetaType):
             return solnodes2.GetType(self.type_helper.map_type(expr.base_type))
         elif isinstance(expr, solnodes1.TernaryOp):
-            return solnodes2.TernaryOp(self.refine_expr(expr.condition), self.refine_expr(expr.left), self.refine_expr(expr.right))
+            return solnodes2.TernaryOp(self.refine_expr(expr.condition), self.refine_expr(expr.left, allow_tuple_exprs=allow_tuple_exprs), self.refine_expr(expr.right, allow_tuple_exprs=allow_tuple_exprs))
         elif isinstance(expr, solnodes1.NamedArg):
             return solnodes2.NamedArgument(solnodes2.Ident(expr.name.text), self.refine_expr(expr.value))
         elif isinstance(expr, solnodes1.NewInlineArray):
@@ -1565,7 +1564,15 @@ class Builder:
             if isinstance(n, solnodes1.FunctionDefinition):
                 # name here is flattened because it can be a string or a specialfunctionkind
                 # TODO: constructor marker
-                return solnodes2.FunctionDefinition(solnodes2.Ident(str(n.name)), [], [], [], None, [])
+                name = str(n.name)
+
+                markers = []
+
+                if name == 'constructor':
+                    markers.append(solnodes2.FunctionMarker.CONSTRUCTOR)
+                # FIXME: in pre 0.5 solidity, the constructor keyword didn't exist so constructors were named the same
+                #        as the contract, need to do a version check and add this case
+                return solnodes2.FunctionDefinition(solnodes2.Ident(str(n.name)), [], [], [], None, markers)
 
             name = solnodes2.Ident(n.name.text)
             if isinstance(n, solnodes1.ContractDefinition):
