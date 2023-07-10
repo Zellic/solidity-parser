@@ -423,7 +423,7 @@ class TypeHelper:
                 return solnodes2.BuiltinType(symbol.name)
         elif isinstance(symbol, symtab.BuiltinFunction):
             # These input type checks need to be 'is not None' instead of just if symbol.input_types as some of these
-            # might be empty lists (meaning to inputs or outputs in the function) whereas 'None' indicates that the
+            # might be empty lists (meaning no inputs or outputs in the function) whereas 'None' indicates that the
             # function accepts any parameter types there (fully polymorphic).
             #  At the moment 'None' output_types is only used for abi.decode
             input_types = [self.map_type(ttype) for ttype in symbol.input_types] if symbol.input_types is not None else None

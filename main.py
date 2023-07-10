@@ -34,6 +34,9 @@ import sys
 from solidity_parser.filesys import VirtualFileSystem
 from solidity_parser.ast.helper import make_ast
 
+import solidity_parser.ast.solnodes2 as solnodes2
+from solidity_parser.ir.irbuilder import IRBuilder
+
 import solidity_parser.errors as errors
 
 def fname(node):
@@ -164,14 +167,100 @@ from glob import glob
 import re
 import solidity_parser.ast.helper as asthelper
 from solidity_parser.collectors import collector
+import shutil
 
 version_pattern = pattern = re.compile(r"v(\d)\.(\d)\.[0-9]+", re.IGNORECASE)
+
+
+if __name__ == '__main__1':
+    pp.install_extras()
+    logging.basicConfig( level=logging.CRITICAL)
+
+    base_dir = 'F:/downloads/Contracts/00'
+    all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
+
+    out_dir = 'F:/downloads/Contracts/'
+    # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
+
+    # start_idx = 182
+    start_idx = 0
+    idx = 0
+
+    for file_path in all_files:
+        if idx < start_idx:
+            idx += 1
+            continue
+
+        try:
+            with open(file_path, encoding='utf-8') as file:
+                descriptors = json.load(file)
+                assert isinstance(descriptors, list)
+                assert len(descriptors) == 1
+                desc = descriptors[0]
+
+                v = int(pattern.match(desc['CompilerVersion']).group(2))
+
+                if 1 <= v <= 9:
+                    name = os.path.basename(os.path.normpath(file_path))
+                    dst_dir = os.path.join(out_dir, str(v))
+                    dst = os.path.join(out_dir, str(v), name)
+
+                    if not os.path.exists(dst_dir):
+                        os.makedirs(dst_dir)
+
+                    shutil.copyfile(file_path, dst)
+                else:
+                    raise ValueError('invalid ver')
+        except Exception as e:
+            print("error: " + desc['CompilerVersion'])
+            # raise e
+        finally:
+            idx += 1
+
+
 
 if __name__ == '__main__':
     pp.install_extras()
     logging.basicConfig( level=logging.CRITICAL)
+    vfs = VirtualFileSystem(
+                            base_path='irtests/CFG1.sol',
+                            # base_path='example/import_remapping',
+                            # cwd=cwd,
+                            include_paths=[])
 
-    base_dir = 'F:/downloads/Contracts/00/00'
+    symtab_builder = symtab.Builder2(vfs)
+    ast2_builder = Builder2()
+
+    # vfs.parse_import_remappings('example/import_remapping/remappings.txt')
+    # print(vfs.import_remaps)
+    # vfs.add_import_remapping('', '@openzeppelin/', 'lib/openzeppelin-contracts/contracts/')
+    with open('irtests/CFG1.sol', encoding='utf-8') as f:
+        c_code = f.read()
+
+    # with open('example/import_remapping/TestContract.sol', encoding='utf-8') as f:
+    #     c_code = f.read()
+
+
+    loaded_source = vfs._add_loaded_source('CFG1', c_code)
+    file_scope = symtab_builder.process_or_find(loaded_source)
+
+    ast2_builder.enqueue_files([file_scope])
+    ast2_builder.process_all()
+
+    ir_builder = IRBuilder()
+
+    for u in ast2_builder.get_top_level_units():
+        if hasattr(u, 'parts'):
+            for p in u.parts:
+                if isinstance(p, solnodes2.FunctionDefinition) and p.code:
+                    ir_builder.translate_function(p)
+
+
+if __name__ == '__main__1':
+    pp.install_extras()
+    logging.basicConfig( level=logging.CRITICAL)
+
+    base_dir = 'F:/downloads/Contracts/8'
     all_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(base_dir) for f in filenames]
 
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
@@ -180,13 +269,13 @@ if __name__ == '__main__':
     start_idx = 0
     idx = 0
 
-    for file_name in all_files:
+    for file_path in all_files:
         if idx < start_idx:
             idx += 1
             continue
 
         try:
-            with open(file_name, encoding='utf-8') as file:
+            with open(file_path, encoding='utf-8') as file:
                 descriptors = json.load(file)
                 assert isinstance(descriptors, list)
                 assert len(descriptors) == 1
@@ -251,9 +340,19 @@ if __name__ == '__main__':
                 ast2_builder = Builder2()
                 ast2_builder.enqueue_files(file_scopes)
                 ast2_builder.process_all()
-                print(f"donezo {file_name} idx={idx}")
+
+                ir_builder = IRBuilder()
+
+                for u in ast2_builder.get_top_level_units():
+                    if hasattr(u, 'parts'):
+                        for p in u.parts:
+                            if isinstance(p, solnodes2.FunctionDefinition) and p.code:
+                                ir_builder.translate_function(p)
+
+                print(f"donezo {file_path} idx={idx}")
+
         except Exception as e:
-            print(f"failure: idx={idx} {file_name}", file=sys.stderr)
+            print(f"failure: idx={idx} {file_path}", file=sys.stderr)
             raise e
             # print(contract_source)
             # if idx is not None:

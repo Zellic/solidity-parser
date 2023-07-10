@@ -8,6 +8,8 @@ from collections import deque
 from solidity_parser.ast import solnodes as solnodes1
 
 from solidity_parser.ast.mro_helper import c3_linearise
+
+from textwrap import indent
 import inspect
 
 T = TypeVar('T')
@@ -143,6 +145,18 @@ class Type(Node, ABC):
 
     def is_literal_type(self) -> bool:
         return False
+
+    def is_void(self) -> bool:
+        return False
+
+
+@NodeDataclass
+class VoidType(Type):
+    def is_void(self) -> bool:
+        return True
+
+    def code_str(self):
+        return raiseNotPrintable()
 
 
 @NodeDataclass
@@ -777,12 +791,43 @@ class Block(Stmt):
     stmts: List[Stmt]
     is_unchecked: bool
 
+    def code_str(self, brackets=True):
+        INDENT = '  '
+
+        lines = [s.code_str() for s in self.stmts]
+        if brackets:
+            return ('unchecked ' if self.is_unchecked else '') + '{\n' + indent('\n'.join(lines), INDENT) + '\n}'
+        else:
+            return indent('\n'.join(lines), INDENT)
+
 
 @NodeDataclass
 class If(Stmt):
     condition: Expr
     true_branch: Stmt
     false_branch: Stmt
+
+    def code_str(self):
+        def block_str(b):
+            if isinstance(b, Block):
+                return b.code_str(brackets=False)
+            else:
+                return b.code_str()
+
+        lines = [
+            f'if({self.condition.code_str()}) {{',
+            indent(block_str(self.true_branch), '  '),
+        ]
+
+        if self.false_branch:
+            lines.extend([
+                '} else {',
+                indent(block_str(self.false_branch), '  '),
+            ])
+
+        lines.append('}')
+
+        return '\n'.join(lines)
 
 
 @NodeDataclass
@@ -806,6 +851,30 @@ class While(Stmt):
     body: Stmt
     is_do_while: bool
 
+    def code_str(self):
+        def c_str(b):
+            if not b:
+                return ''
+            if isinstance(b, Block):
+                return b.code_str(brackets=False)
+            else:
+                return b.code_str()
+
+        if self.is_do_while:
+            lines = [
+                f'do {{',
+                indent(c_str(self.body), '  '),
+                f'}} while({c_str(self.condition)});'
+            ]
+        else:
+            lines = [
+                f'while({c_str(self.condition)}) {{',
+                indent(c_str(self.body), '  '),
+                '}'
+            ]
+
+        return '\n'.join(lines)
+
 
 @NodeDataclass
 class For(Stmt):
@@ -813,6 +882,23 @@ class For(Stmt):
     condition: Expr
     advancement: Expr
     body: Stmt
+
+    def code_str(self):
+        def c_str(b):
+            if not b:
+                return ''
+            if isinstance(b, Block):
+                return b.code_str(brackets=False)
+            else:
+                return b.code_str()
+        
+        lines = [
+            f'for({c_str(self.initialiser)}; {c_str(self.condition)}; {c_str(self.advancement)};) {{',
+            indent(c_str(self.body), '  '),
+            '}'
+        ]
+
+        return '\n'.join(lines)
 
 
 class FunctionMarker(Enum):
@@ -1088,6 +1174,9 @@ class StateVarStore(Expr):
     name: Ident
     value: Expr
 
+    def type_of(self) -> Type:
+        return self.value.type_of()
+
     def code_str(self):
         return f'{self.base.code_str()}.{self.name.code_str()} = {self.value.code_str()}'
 
@@ -1172,6 +1261,9 @@ class ArrayStore(Expr):
     base: Expr
     index: Expr
     value: Expr
+
+    def type_of(self) -> Type:
+        return ArrayLoad.type_of(self)
 
     def code_str(self):
         return f'{self.base.code_str()}[{self.index.code_str()}] = {self.value.code_str()}'
@@ -1369,7 +1461,9 @@ class FunctionCall(Call):
 
     def type_of(self) -> Type:
         target_callee = self.resolve_call()
-        if len(target_callee.outputs) > 1:
+        if not target_callee.outputs:
+            ttype = VoidType()
+        elif len(target_callee.outputs) > 1:
             # For functions that return multiple values return (t(r1), ... t(rk))
             ttype = TupleType([out_param.var.ttype for out_param in target_callee.outputs])
         else:
@@ -1387,9 +1481,10 @@ class FunctionPointerCall(Call):
     def type_of(self) -> Type:
         callee_ttype: FunctionType = self.callee.type_of()
         output_ttypes = callee_ttype.outputs
-        assert len(output_ttypes) > 0
 
-        if len(output_ttypes) == 1:
+        if not output_ttypes:
+            return VoidType()
+        elif len(output_ttypes) == 1:
             return output_ttypes[0]
         else:
             return TupleType(output_ttypes)
@@ -1474,7 +1569,7 @@ class EmitEvent(Stmt):
     args: List[Expr]
 
     def code_str(self):
-        return f'emit {self.event.x.name.text}({Call.param_str(self)})'
+        return f'emit {self.event.x.name.text}{Call.param_str(self)}'
 
 
 @NodeDataclass

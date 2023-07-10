@@ -955,13 +955,13 @@ class Builder2:
         if isinstance(node, solnodes.PragmaDirective):
             if node.name.text == 'solidity':
                 value = node.value
-                # if isinstance(value, str):
-                #     print(f"ver: {version_util.parse_version(value)}")
-                # else:
-                #     value = node.value[0]
-                #     # specifying a minimum version for this file
-                #     assert value.op in [solnodes.BinaryOpCode.BIT_XOR, solnodes.BinaryOpCode.EQ, solnodes.BinaryOpCode.GTEQ]
-                #     print(f"ver: {version_util.parse_version(value.right.value)}")
+                if isinstance(value, str):
+                    print(f"ver1: {version_util.parse_version(value)}")
+                else:
+                    value = node.value[0]
+                    # specifying a minimum version for this file
+                    assert value.op in [solnodes.BinaryOpCode.EQ, solnodes.BinaryOpCode.GTEQ]
+                    print(f"ver2: {version_util.parse_version(value.right.value)}")
             return None
         elif isinstance(node, (solnodes.FunctionDefinition, solnodes.EventDefinition,
                                solnodes.ErrorDefinition, solnodes.ModifierDefinition)):
