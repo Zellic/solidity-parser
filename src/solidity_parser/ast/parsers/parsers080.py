@@ -672,7 +672,8 @@ def _hex_string_literal(parser, literal: SolidityParser.HexStringLiteralContext)
         hex_string_str = part.getText()
         hex_string_str = hex_string_str[4:-1].replace('_', '')
         total_hex_str += hex_string_str
-    return solnodes.Literal(int(total_hex_str, 16))
+
+    return solnodes.Literal(int(total_hex_str, 16) if total_hex_str != '' else 0)
 
 
 def _unicode_string_literal(parser, literal: SolidityParser.UnicodeStringLiteralContext):
