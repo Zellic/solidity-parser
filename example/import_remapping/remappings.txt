@@ -1,0 +1,4 @@
+@openzeppelin/=oz/
+@earlybird-interfaces/=lib/earlybird-evm-interfaces/src/
+@magicLane-interfaces/=lib/magiclane-evm-interfaces/src/
+ctx:@magicLane-interfaces2/=lib/magiclane-evm-interfaces2/src/
