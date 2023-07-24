@@ -85,6 +85,30 @@ class VirtualFileSystem:
         for (source_unit_name, source) in standard_input.sources.items():
             self._add_loaded_source(source_unit_name, source.content)
 
+    def parse_import_remappings(self, remappings_file_path):
+        with open(remappings_file_path, encoding='utf-8') as f:
+            lines = f.read().splitlines()
+
+        def raise_invalid_format(txt):
+            raise ValueError(f'Invalid remapping syntax, expected: <context>?:<prefix>=<target>, got: {txt}')
+
+        for line in lines:
+            split1 = line.split(':')
+
+            if len(split1) == 2:
+                context = split1[0]
+            elif len(split1) != 1:
+                return raise_invalid_format()
+            else:
+                context = ''
+
+            split2 = split1[-1].split('=')
+
+            if len(split2) != 2:
+                return raise_invalid_format()
+
+            self.add_import_remapping(context, split2[0], split2[1])
+
     def add_import_remapping(self, context, prefix, target):
         self.import_remaps.append(ImportMapping(context, prefix, target))
 
@@ -186,7 +210,7 @@ class VirtualFileSystem:
             # prefix must match the beginning of the source unit name resulting from the import
             if source_unit_name.startswith(mapping.prefix):
                 # target is the value the prefix is replaced with
-                return self._clean_path([mapping.target, source_unit_name[len(mapping.prefix):]])
+                return self._clean_path(mapping.target, source_unit_name[len(mapping.prefix):])
 
         return source_unit_name
 
