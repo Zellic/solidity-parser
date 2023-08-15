@@ -89,25 +89,28 @@ class VirtualFileSystem:
         with open(remappings_file_path, encoding='utf-8') as f:
             lines = f.read().splitlines()
 
+        for line in lines:
+            self.parse_import_remapping_line(line)
+
+    def parse_import_remapping_line(self, line):
         def raise_invalid_format(txt):
             raise ValueError(f'Invalid remapping syntax, expected: <context>?:<prefix>=<target>, got: {txt}')
 
-        for line in lines:
-            split1 = line.split(':')
+        split1 = line.split(':')
 
-            if len(split1) == 2:
-                context = split1[0]
-            elif len(split1) != 1:
-                return raise_invalid_format()
-            else:
-                context = ''
+        if len(split1) == 2:
+            context = split1[0]
+        elif len(split1) != 1:
+            return raise_invalid_format()
+        else:
+            context = ''
 
-            split2 = split1[-1].split('=')
+        split2 = split1[-1].split('=')
 
-            if len(split2) != 2:
-                return raise_invalid_format()
+        if len(split2) != 2:
+            return raise_invalid_format()
 
-            self.add_import_remapping(context, split2[0], split2[1])
+        self.add_import_remapping(context, split2[0], split2[1])
 
     def add_import_remapping(self, context, prefix, target):
         self.import_remaps.append(ImportMapping(context, prefix, target))

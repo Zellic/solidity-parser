@@ -863,7 +863,8 @@ class Builder2:
                 target_type_scope = self.lookup_name_in_scope(unit_scope, raw_name)
                 # Use the name as defined by the target type symbol itself so that we can do definite checks against
                 # this type and the first parameter type later, i.e. for A.B.MyT, use MyT as the type key
-                target_scope_name = target_type_scope.value.name.text
+                target_contract = target_type_scope.resolve_base_symbol().value
+                target_scope_name = target_contract.name.text
             else:
                 # Solidity type, e.g. <type:int>, <type:byte[]}, etc
                 # needs to be a list because
