@@ -177,7 +177,7 @@ if __name__ == '__main__':
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
 
     # start_idx = 182
-    start_idx = 0
+    start_idx = 188
     idx = 0
 
     for file_name in all_files:
@@ -228,7 +228,16 @@ if __name__ == '__main__':
                         vfs._read_file_callback = _read_file_callback
                         vfs._add_loaded_source = _add_loaded_source
 
-                        srcs = json.loads(desc['SourceCode'][1:-1])['sources']
+                        sc = json.loads(desc['SourceCode'][1:-1])
+
+                        assert sc['language'] == 'Solidity'
+
+                        if 'settings' in sc and 'remappings' in sc['settings']:
+                            for line in sc['settings']['remappings']:
+                                vfs.parse_import_remapping_line(line)
+
+                        srcs = sc['sources']
+
                         for c_name, vv in srcs.items():
                             c_code = vv['content']
                             source_contents[c_name] = c_code
