@@ -115,6 +115,12 @@ class Scope(Scopeable):
         for name in symbol.aliases:
             self.symbols[name].append(symbol)
 
+    def remove(self, symbol: Symbol):
+        symbol.set_parent_scope(None)
+
+        for name in symbol.aliases:
+            self.symbols[name].remove(symbol)
+
     def find_current_level(self, name: str, predicate=None) -> Optional[List[Symbol]]:
         found_symbols = test_predicate(self.find_local(name), predicate)
         if not found_symbols:

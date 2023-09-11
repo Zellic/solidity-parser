@@ -128,6 +128,9 @@ class Type(Node, ABC):
     def is_int(self) -> bool:
         return False
 
+    def is_bool(self) -> bool:
+        return False
+
     def is_user_type(self) -> bool:
         return False
 
@@ -493,6 +496,9 @@ class BoolType(Type):
     def is_builtin(self) -> bool:
         return True
 
+    def is_bool(self) -> bool:
+        return True
+
     def code_str(self):
         return 'bool'
 
@@ -523,6 +529,12 @@ class PreciseStringType(StringType):
     real_size: int
 
     def is_literal_type(self) -> bool:
+        return True
+
+    def has_size(self) -> bool:
+        # ArrayType.has_size() checks if we have a 'size' attribute, but we don't: it's called
+        # real_size(), so this shim fixes that.
+        # This allows e.g. PreciseStringType of length 1 to be implicitly castable to the base StringType
         return True
 
     def __str__(self): return f"string({self.real_size})"
@@ -937,6 +949,11 @@ class ModifierDefinition(ContractPart):
 class TupleVarDecl(Stmt):
     vars: List[Var]
     value: Expr
+    
+    def code_str(self):
+        rhs = f' = {self.value.code_str()}' if self.value else ''
+        vs = [f'{v.ttype.code_str()} {(v.location.value + " ") if v.location else ""}{v.name.text}' for v in self.vars]
+        return f'({", ".join(vs)}){rhs}'
 
 
 @NodeDataclass
@@ -945,7 +962,8 @@ class VarDecl(Stmt):
     value: Expr
 
     def code_str(self):
-        return f'{self.var.ttype.code_str()} {(self.var.location.value + " ") if self.var.location else ""}{self.var.name.text} = {self.value.code_str()};'
+        rhs = f' = {self.value.code_str()}' if self.value else ''
+        return f'{self.var.ttype.code_str()} {(self.var.location.value + " ") if self.var.location else ""}{self.var.name.text}{rhs};'
 
 
 @NodeDataclass
@@ -992,8 +1010,10 @@ class UnaryOp(Expr):
 
     def type_of(self) -> Type:
         expr_ttype = self.expr.type_of()
-        # FIXME: could be 'delete', never seen it though
-        assert expr_ttype.is_int()
+        if self.op == solnodes1.UnaryOpCode.BOOL_NEG:
+            assert expr_ttype.is_bool()
+        elif self.op != solnodes1.UnaryOpCode.DELETE:
+            assert expr_ttype.is_int()
         return expr_ttype
 
     def code_str(self):
@@ -1029,8 +1049,9 @@ class BinaryOp(Expr):
                          ]:
             t1 = self.left.type_of()
             t2 = self.right.type_of()
-            assert t1.can_implicitly_cast_from(t2)
-            return t1
+            # assert t1.can_implicitly_cast_from(t2)
+            # return t1
+            return t1 if t1.size > t2.size else t2
         else:
             raise ValueError(f'{self.op}')
 
@@ -1059,8 +1080,13 @@ class TernaryOp(Expr):
                 return t1
             except AssertionError:
                 # t1 = addr payable, t2 = addr
-                assert t2.can_implicitly_cast_from(t1)
-                return t2
+                # TODO: actually we need to check if there is a base type here
+                if t2.can_implicitly_cast_from(t1):
+                    return t1
+                elif t1.can_implicitly_cast_from(t2):
+                    return t2
+                else:
+                    assert False, 'No base type?'
 
     def code_str(self):
         return f'{self.condition.code_str()} ? {self.left.code_str()} : {self.right.code_str()}'
@@ -1126,17 +1152,6 @@ class StateVarLoad(Expr):
 
     def code_str(self):
         return f'{self.base.code_str()}.{self.name.code_str()}'
-
-
-@NodeDataclass
-class ConstVarLoad(Expr):
-    var: Ref[ConstantVariableDeclaration]
-
-    def type_of(self) -> Type:
-        return self.var.x.ttype
-
-    def code_str(self):
-        raise NotImplementedError('Not sure if needed')
 
 
 @NodeDataclass
@@ -1232,8 +1247,8 @@ class TupleLoad(Expr):
         return tuple_type.ttypes[self.index]
 
     def code_str(self):
-        return raiseNotPrintable()
-
+        # return raiseNotPrintable()
+        return f'{self.base.code_str()}[{self.index}]'
 
 @NodeDataclass
 class ArrayLoad(Expr):
@@ -1244,10 +1259,10 @@ class ArrayLoad(Expr):
         base_type = self.base.type_of()
 
         if isinstance(base_type, MappingType):
-            assert base_type.src == self.index.type_of()
+            assert base_type.src.can_implicitly_cast_from(self.index.type_of())
             return base_type.dst
         elif isinstance(base_type, ArrayType):
-            assert isinstance(self.index.type_of(), IntType)
+            assert self.index.type_of().is_int()
             return base_type.base_type
         else:
             raise ValueError(f'unknown base type: f{base_type}')
@@ -1279,12 +1294,30 @@ class CreateInlineArray(Expr):
     elements: List[Expr]
 
     def type_of(self) -> Type:
-        element_types = [e.type_of() for e in self.elements]
-        # need at least 1 element for this call to work, TODO: maybe store the type and decide whether to use it if
-        # there are elements
-        assert len(element_types) > 0
-        assert all([t == element_types[0] for t in element_types])
-        return FixedLengthArrayType(element_types[0], len(element_types))
+        arg_types = [arg.type_of() for arg in self.elements]
+        are_ints = any([t.is_int() for t in arg_types])
+
+        if are_ints:
+            # if any of the elements is signed, the resultant type can't bn unsigned
+            # e.g. [-1, 0, 0] can't be uint8[]
+            is_signed = any([t.is_signed for t in arg_types])
+
+            max_real_bit_length = 0
+            max_total_length = 0
+
+            for t in arg_types:
+                max_total_length = max(max_total_length, t.size)
+                if t.is_literal_type():
+                    max_real_bit_length = max(max_real_bit_length, t.real_bit_length)
+
+            if any([not t.is_literal_type() for t in arg_types]):
+                # if there are any non precise ones, the whole thing can't be precise, e.g. [0, 1, this.myInt] can't
+                # have a base_type of uint8(1), instead it must be uint(T(this.myInt))
+                base_type = IntType(is_signed, max_total_length)
+            else:
+                base_type = PreciseIntType(is_signed, max_total_length, max_real_bit_length)
+
+            return FixedLengthArrayType(base_type, len(self.elements))
 
     def code_str(self):
         return f'[{", ".join(e.code_str() for e in self.elements)}]'
@@ -1420,7 +1453,9 @@ class DirectCall(Call):
 
     def type_of(self) -> Type:
         target_callee = self.resolve_call()
-        if len(target_callee.outputs) > 1:
+        if not target_callee.outputs:
+            ttype = VoidType()
+        elif len(target_callee.outputs) > 1:
             # For functions that return multiple values return (t(r1), ... t(rk))
             ttype = TupleType([out_param.var.ttype for out_param in target_callee.outputs])
         else:
@@ -1444,7 +1479,7 @@ class FunctionCall(Call):
         if isinstance(self.base, SuperObject):
             # E.g. super.xyz()
             # First element will be the base type which we don't want to include in the MRO as its super call lookup
-            ref_lookup_order = c3_linearise(self.base.declarer.x)[1:]
+            ref_lookup_order = c3_linearise(self.base.type_of().declarer.x)[1:]
         else:
             # e.g. this.xyz() or abc.xyz()
             ref_lookup_order = c3_linearise(self.base.type_of().value.x)
@@ -1559,8 +1594,14 @@ class GetType(Expr):
 class GetFunctionPointer(Expr):
     func: Ref[FunctionDefinition]
 
+    def type_of(self) -> Type:
+        def ts(params):
+            return [p.var.ttype for p in params]
+        f = self.func.x
+        return FunctionType(ts(f.inputs), ts(f.outputs))
+
     def code_str(self):
-        raise NotImplementedError()
+        return f'fptr({self.func.x.parent.descriptor()}::{self.func.x.name.text})'
 
 
 @NodeDataclass
@@ -1582,10 +1623,16 @@ class RevertWithError(Revert):
     error: Ref[ErrorDefinition]
     args: List[Expr]
 
+    def code_str(self):
+        return f'revert {self.error.x.name.text}({", ".join(e.code_str() for e in self.args)});'
+
 
 @NodeDataclass
 class RevertWithReason(Revert):
     reason: Expr
+
+    def code_str(self):
+        return f'revert({self.reason.code_str()});'
 
 
 @NodeDataclass
@@ -1605,18 +1652,25 @@ class Return(Stmt):
         return f'return {", ".join([v.code_str() for v in self.values])}'
 
 
+@NodeDataclass
 class Continue(Stmt):
-    pass
+    def code_str(self):
+        return 'continue;'
 
 
+@NodeDataclass
 class Break(Stmt):
-    pass
+    def code_str(self):
+        return 'break;'
 
 
 @NodeDataclass
 class Assembly(Stmt):
     # TODO: full assembly code representation
     code: str
+
+    def code_str(self):
+        return f'assembly {{{self.code}}}'
 
 
 @NodeDataclass

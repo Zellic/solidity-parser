@@ -234,8 +234,13 @@ class TypeHelper:
                     return t1
                 except AssertionError:
                     # t1 = addr payable, t2 = addr
-                    assert t2.can_implicitly_cast_from(t1)
-                    return t2
+                    # TODO: actually we need to check if there is a base type here
+                    if t2.can_implicitly_cast_from(t1):
+                        return t1
+                    elif t1.can_implicitly_cast_from(t2):
+                        return t2
+                    else:
+                        assert False, 'No base type?'
         elif isinstance(expr, solnodes1.UnaryOp):
             if expr.op in [solnodes1.UnaryOpCode.INC, solnodes1.UnaryOpCode.DEC, solnodes1.UnaryOpCode.SIGN_NEG,
                            solnodes1.UnaryOpCode.SIGN_POS, solnodes1.UnaryOpCode.BIT_NEG]:
@@ -587,6 +592,7 @@ class Builder:
         self.to_refine: Deque[solnodes1.SourceUnit] = deque()
 
         self.state = None
+        self.temp_var_counter = 0
 
     def error_context(func):
         @functools.wraps(func)
@@ -996,7 +1002,7 @@ class Builder:
             out_type = ftype.outputs[0]
         else:
             # void return
-            out_type = None
+            out_type = solnodes2.VoidType()
 
         new_args = create_new_args()
 
@@ -1167,10 +1173,18 @@ class Builder:
                 # x and y can be state var setters, i.e. (a.x, b.y) = V is a valid assignment
                 ttypes = [e.type_of() for e in left]
 
-                def z():
-                    return solnodes2.Var('z', solnodes2.TupleType(ttypes), None)
+                # create fresh temp var name
+                var_name = f'__ttemp{self.temp_var_counter}__'
+                self.temp_var_counter += 1
 
+                def z():
+                    return solnodes2.Var(solnodes2.Ident(var_name), solnodes2.TupleType(ttypes), None)
+
+                # Note this does break up the scoping as defined in the symtab but it's very difficult to correct it
+                # and not worth it imo as after this AST2 pass the symtab is embedded naturally in the AST so doesn't
+                # have to be used again
                 stmts = [solnodes2.LocalVarStore(z(), right)]
+
                 for idx, e in enumerate(left):
                     rhs = solnodes2.TupleLoad(solnodes2.LocalVarLoad(z()), idx)
                     stmts.append(make_assign(e, rhs))
@@ -1268,9 +1282,11 @@ class Builder:
 
             if isinstance(ident_target, solnodes1.FunctionDefinition):
                 # TODO: can this be ambiguous or does the reference always select a single function
-                return solnodes2.GetFunctionPointer(solnodes2.Ref(ident_target))
+                return solnodes2.GetFunctionPointer(solnodes2.Ref(ident_target.ast2_node))
             elif isinstance(ident_target, solnodes1.ConstantVariableDeclaration):
-                return solnodes2.ConstVarLoad(solnodes2.Ref(ident_target))
+                base_scope = self.get_declaring_contract_scope(ident_target)
+                base_type = self.type_helper.get_contract_type(base_scope)
+                return solnodes2.StaticVarLoad(base_type, solnodes2.Ident(ident_target.name.text))
             elif isinstance(ident_target, solnodes1.StateVariableDeclaration):
                 # i.e. Say we are in contract C and ident is 'x', check that 'x' is declared in C
                 # this is so that we know the 'base' of this load will be 'self'
@@ -1349,7 +1365,7 @@ class Builder:
                         member_matches = [member for member in new_base.value.x.values
                                           if member.name.text == referenced_member.text]
                         assert len(member_matches) == 1
-                        return solnodes2.EnumLoad(member_matches[0])
+                        return solnodes2.EnumLoad(solnodes2.Ref(member_matches[0]))
                     elif self.is_top_level(referenced_member):
                         assert isinstance(new_base, solnodes2.ResolvedUserType)
                         # Qualified top level reference, e.g. MyLib.MyEnum...

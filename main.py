@@ -219,11 +219,11 @@ if __name__ == '__main__1':
 
 
 
-if __name__ == '__main__':
+if __name__ == '__main__1':
     pp.install_extras()
     logging.basicConfig( level=logging.CRITICAL)
     vfs = VirtualFileSystem(
-                            base_path='irtests/CFG1.sol',
+                            base_path='irtests/Stmts.sol',
                             # base_path='example/import_remapping',
                             # cwd=cwd,
                             include_paths=[])
@@ -234,7 +234,7 @@ if __name__ == '__main__':
     # vfs.parse_import_remappings('example/import_remapping/remappings.txt')
     # print(vfs.import_remaps)
     # vfs.add_import_remapping('', '@openzeppelin/', 'lib/openzeppelin-contracts/contracts/')
-    with open('irtests/CFG1.sol', encoding='utf-8') as f:
+    with open('irtests/Stmts.sol', encoding='utf-8') as f:
         c_code = f.read()
 
     # with open('example/import_remapping/TestContract.sol', encoding='utf-8') as f:
@@ -256,7 +256,7 @@ if __name__ == '__main__':
                     ir_builder.translate_function(p)
 
 
-if __name__ == '__main__1':
+if __name__ == '__main__':
     pp.install_extras()
     logging.basicConfig( level=logging.CRITICAL)
 
@@ -266,7 +266,7 @@ if __name__ == '__main__1':
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
 
     # start_idx = 182
-    start_idx = 0
+    start_idx = 4
     idx = 0
 
     for file_path in all_files:
