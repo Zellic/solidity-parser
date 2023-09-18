@@ -842,11 +842,40 @@ class If(Stmt):
         return '\n'.join(lines)
 
 
+def param_def_str(ps):
+    def param_out(p):
+        v = p.var
+        location = (' ' + v.location.value.lower()) if v.location else ''
+        name = (' ' + str(v.name)) if v.name else ''
+        return f'{v.ttype.code_str()}' + location + name
+    return '(' + ', '.join([param_out(p) for p in ps]) + ')'
+
+
 @NodeDataclass
 class Catch(Stmt):
     ident: Ident
     parameters: List[Parameter]
     body: Block
+
+    def code_str(self):
+        params = ''
+
+        if self.ident:
+            # with an error name X, we output X(...ps...)
+            params = f' {self.ident.text}'
+        elif self.parameters:
+            # without error name, just output (...ps...)
+            params = ' '
+
+        if self.parameters:
+            params += param_def_str(self.parameters)
+
+        lines = [
+            f'catch{params} {{',
+            indent(self.body.code_str(brackets=False), '  '),
+            '}'
+        ]
+        return '\n'.join(lines)
 
 
 @NodeDataclass
@@ -855,6 +884,32 @@ class Try(Stmt):
     return_parameters: List[Parameter]
     body: Block
     catch_clauses: List[Catch]
+
+
+    def code_str(self):
+        lines = [
+            f'try {self.expr.code_str()} returns {param_def_str(self.return_parameters)} {{',
+            indent(self.body.code_str(brackets=False), '  '),
+            '}'
+        ]
+
+        for catch in self.catch_clauses:
+            catch_str = catch.code_str()
+            catch_str_lines = catch_str.split('\n')
+            # take the first line of the catch_str and append it to the current line
+            # this looks like:
+            # try ... {
+            # ...
+            # } catch {
+            # ...
+            lines[-1] += ' ' + catch_str_lines[0]
+            # indent the lines between the brackets
+            for c_l in catch_str_lines[1:-1]:
+                lines.append(f'  {c_l}')
+            # but don't indent the last line with the bracket
+            lines.append(catch_str_lines[-1])  # this should just be a '}'
+
+        return '\n'.join(lines)
 
 
 @NodeDataclass

@@ -266,7 +266,7 @@ if __name__ == '__main__':
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
 
     # start_idx = 182
-    start_idx = 4
+    start_idx = 7
     idx = 0
 
     for file_path in all_files:
@@ -347,7 +347,11 @@ if __name__ == '__main__':
                     if hasattr(u, 'parts'):
                         for p in u.parts:
                             if isinstance(p, solnodes2.FunctionDefinition) and p.code:
-                                ir_builder.translate_function(p)
+                                try:
+                                    ir_builder.translate_function(p)
+                                except ValueError as e:
+                                    if 'SSA translation not possible' not in e.args[0]:
+                                        raise e
 
                 print(f"donezo {file_path} idx={idx}")
 

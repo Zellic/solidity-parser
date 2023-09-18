@@ -6,6 +6,8 @@ import solidity_parser.ast.solnodes as solnodes1
 import solidity_parser.ast.solnodes2 as solnodes2
 import solidity_parser.ir.nodes as irnodes
 
+from solidity_parser.ir.liveness import liveness
+
 
 @dataclass
 class UnversionedLocal(irnodes.Node):
@@ -39,6 +41,11 @@ class IRBuilder:
     def __init__(self):
         pass
 
+    def check_assembly(self, func):
+        for n in func.get_all_children():
+            if isinstance(n, solnodes2.Assembly):
+                raise ValueError(f'{func.descriptor()} contains unsupported assembly code; SSA translation not possible')
+
     def _init_state(self):
         self.current_block = None
         self.cfg = irnodes.ControlFlowGraph()
@@ -46,7 +53,10 @@ class IRBuilder:
         self.var_count = 0
         self.pre_ssa_locals = {}
 
-    def translate_function(self, func):
+    def translate_function(self, func: solnodes2.FunctionDefinition, ssa=True, force=False):
+        if ssa and not force:
+            self.check_assembly(func)
+
         self._init_state()
 
         start_block = self.create_new_block()
@@ -54,19 +64,18 @@ class IRBuilder:
         self.add_params(func, start_block)
         self.process_block(func.code, start_block)
 
-        # if func.name.text == 'estimate24H':
-        #     print("CODE " + func.descriptor())
+        print("CODE " + func.descriptor())
+        print(func.code.code_str())
         dom_frontiers = self.cfg.get_iterated_dominance_frontier(start_block)
         self.insert_phis2(dom_frontiers)
         self.ssa_rename(start_block)
-            # print(func.code.code_str())
-            # print("GRAPH")
-            # print(self.cfg)
-            # print("GRAPH END")
-            # print(self.cfg.graphviz_str())
-            # print("GRAPH END2")
+        # print("GRAPH")
+        # print(self.cfg)
+        # print("GRAPH END")
+        print(self.cfg.graphviz_str())
+        # print("GRAPH END2")
 
-            # self.copy_prop()
+        self.copy_prop()
 
         # print(self.pre_ssa_locals)
 
@@ -122,6 +131,8 @@ class IRBuilder:
 
         defined_in = self.collect_vars()
 
+        live_in, _ = liveness(self.cfg)
+
         for var_index, var in enumerate(self.pre_ssa_locals.values()):
 
             worklist = deque()
@@ -135,23 +146,27 @@ class IRBuilder:
                 worklist.append(b)
 
             while worklist:
-                self.do_insert_phis2(dom_frontiers, worklist.popleft(), var, var_index, worklist)
+                self.do_insert_phis2(dom_frontiers, live_in, worklist.popleft(), var, var_index, worklist)
 
-    def do_insert_phis2(self, dom_frontiers, block, var, var_index, worklist):
+    def do_insert_phis2(self, dom_frontiers, live_in, block, var, var_index, worklist):
         for df_block in dom_frontiers[block]:
             if df_block.insertion < var_index: # for pruned add live_in(df_block, var) here
-
-                preds = self.cfg.get_preds(df_block)
-                if len(preds) > 1:
-                    phi = irnodes.Phi(var, {p: var for p, _ in preds})
-                    df_block.phis.append(phi)
+                if var in live_in[block]:
+                    preds = self.cfg.get_preds(df_block)
+                    if len(preds) > 1:
+                        phi = irnodes.Phi(var, {p: var for p, _ in preds})
+                        df_block.phis.append(phi)
 
                 df_block.insertion = var_index
                 if df_block.process < var_index:
                     df_block.process = var_index
                     worklist.append(df_block)
 
-    def ssa_translate(self, node: irnodes.Node):
+    def ssa_translate(self, node: irnodes.Node, allow_none=False):
+        if not node:
+            assert allow_none, 'Require node for translation'
+            return None
+
         def t_ssa_use(var: UnversionedLocal):
             version = var.stack[-1]  # top of the stack
             return self.make_ssa_local_from_unversioned(var, version)
@@ -172,6 +187,8 @@ class IRBuilder:
             return irnodes.LocalStore(new_var, expr)
         elif isinstance(node, irnodes.StateVarStore):
             return irnodes.StateVarStore(self.ssa_translate(node.base), node.name, self.ssa_translate(node.value))
+        elif isinstance(node, irnodes.StaticVarLoad):
+            return node
         elif isinstance(node, irnodes.ArrayStore):
             return irnodes.ArrayStore(self.ssa_translate(node.base), self.ssa_translate(node.index), self.ssa_translate(node.value))
         elif isinstance(node, irnodes.TupleLoad):
@@ -191,7 +208,7 @@ class IRBuilder:
         elif isinstance(node, irnodes.Assembly):
             return node
         elif isinstance(node, irnodes.Require):
-            return irnodes.Require(self.ssa_translate(node.condition), self.ssa_translate(node.reason))
+            return irnodes.Require(self.ssa_translate(node.condition), self.ssa_translate(node.reason, allow_none=True))
         elif isinstance(node, irnodes.RevertWithReason):
             return irnodes.RevertWithReason(t_ssa_use(node.reason))
         elif isinstance(node, irnodes.RevertWithError):
@@ -207,18 +224,28 @@ class IRBuilder:
         elif isinstance(node, irnodes.InputParam):
             # explicit function input parameter, i.e. the RHS of myArg = @param1
             return node
+        elif isinstance(node, irnodes.Default):
+            return node
         elif isinstance(node, irnodes.SelfObject):
             return node
         elif isinstance(node, irnodes.SuperObject):
             return node
         elif isinstance(node, irnodes.Literal):
             return node
+        elif isinstance(node, irnodes.TypeLiteral):
+            return node
         elif isinstance(node, irnodes.Undefined):
+            return node
+        elif isinstance(node, irnodes.ErrorDefined):
             return node
         elif isinstance(node, irnodes.GlobalValue):
             return node
+        elif isinstance(node, irnodes.ABISelector):
+            return node
         elif isinstance(node, irnodes.DynamicBuiltInValue):
             return irnodes.DynamicBuiltInValue(node.name, node.ttype, t_ssa_use(node.base))
+        elif isinstance(node, irnodes.EnumLoad):
+            return node
         elif isinstance(node, irnodes.StateVarLoad):
             return irnodes.StateVarLoad(t_ssa_use(node.base), node.name)
         elif isinstance(node, irnodes.ArrayLoad):
@@ -241,6 +268,10 @@ class IRBuilder:
             return irnodes.DynamicBuiltInCall(*map_call_base(node), node.ttype, t_ssa_use(node.base), node.name)
         elif isinstance(node, irnodes.BuiltInCall):
             return irnodes.BuiltInCall(*map_call_base(node), node.name, node.ttype)
+        elif isinstance(node, irnodes.CreateStruct):
+            return irnodes.CreateStruct(node.ttype, [t_ssa_use(v) for v in node.args])
+        elif isinstance(node, irnodes.CreateInlineArray):
+            return irnodes.CreateInlineArray([t_ssa_use(v) for v in node.elements])
         elif isinstance(node, irnodes.EmitEvent):
             return irnodes.EmitEvent(node.event, [t_ssa_use(n) for n in node.args])
         self._todo(node)
@@ -518,25 +549,25 @@ class IRBuilder:
             cur_block, t0 = self.translate_expr(cur_block, expr.condition)
             t1 = self.new_temp_var(expr.type_of(), None)
 
-            xblock = self.create_new_block()
-            yblock = self.create_new_block()
+            xblock_start = self.create_new_block()
+            yblock_start = self.create_new_block()
             continuation_block = self.create_new_block()
 
-            conditional_stmt = irnodes.Conditional(t0, xblock, yblock)
+            conditional_stmt = irnodes.Conditional(t0, xblock_start, yblock_start)
+            self.cfg.add_edge(cur_block, xblock_start, irnodes.ControlEdge.TRUE_BRANCH)
+            self.cfg.add_edge(cur_block, yblock_start, irnodes.ControlEdge.FALSE_BRANCH)
             cur_block.stmts.append(conditional_stmt)
 
             # do xblock code, update xblock like we usually do with cur_block
-            xblock, x_val = self.translate_expr(xblock, expr.left)
-            xblock.stmts.append(irnodes.LocalStore(t1, x_val))
-            xblock.stmts.append(irnodes.Goto(continuation_block))
-            self.cfg.add_edge(cur_block, xblock, irnodes.ControlEdge.TRUE_BRANCH)
-            self.cfg.add_edge(xblock, continuation_block, irnodes.ControlEdge.GOTO)
+            xblock_end, x_val = self.translate_expr(xblock_start, expr.left)
+            xblock_end.stmts.append(irnodes.LocalStore(t1, x_val))
+            xblock_end.stmts.append(irnodes.Goto(continuation_block))
+            self.cfg.add_edge(xblock_end, continuation_block, irnodes.ControlEdge.GOTO)
 
-            yblock, y_val = self.translate_expr(yblock, expr.right)
-            yblock.stmts.append(irnodes.LocalStore(t1, y_val))
-            yblock.stmts.append(irnodes.Goto(continuation_block))
-            self.cfg.add_edge(cur_block, yblock, irnodes.ControlEdge.FALSE_BRANCH)
-            self.cfg.add_edge(yblock, continuation_block, irnodes.ControlEdge.GOTO)
+            yblock_end, y_val = self.translate_expr(yblock_start, expr.right)
+            yblock_end.stmts.append(irnodes.LocalStore(t1, y_val))
+            yblock_end.stmts.append(irnodes.Goto(continuation_block))
+            self.cfg.add_edge(yblock_end, continuation_block, irnodes.ControlEdge.GOTO)
 
             cur_block = continuation_block
             return result(t1)
@@ -880,9 +911,9 @@ class IRBuilder:
                     rhs = irnodes.TupleLoad(t_var, idx)
                     cur_block.stmts.append(irnodes.LocalStore(v_new, rhs))
             else:
-                param = stmt.return_parameters[0]
-                cur_block, v_new = self.translate_expr(cur_block, stmt.expr)
-                cur_block.stmts.append(irnodes.LocalStore(v_new, param.var))
+                param_var = self.make_unversioned_local_from_var(stmt.return_parameters[0].var)
+                cur_block, value = self.translate_expr(cur_block, stmt.expr)
+                cur_block.stmts.append(irnodes.LocalStore(param_var, value))
 
             try_code_block = cur_block
             success_block_start, success_block_end = self.process_block(stmt.body)
@@ -892,8 +923,12 @@ class IRBuilder:
             # next block we create
             next_blocks = [success_block_end]
 
-            for catch in stmt.catch_clauses:
-                c_start, c_end = self.process_block(catch.body)
+            for idx, catch in enumerate(stmt.catch_clauses):
+                c_start = self.create_new_block()
+                for param in catch.parameters:
+                    v = self.make_unversioned_local_from_var(param.var)
+                    c_start.stmts.append(irnodes.LocalStore(v, irnodes.ErrorDefined(idx)))
+                c_start, c_end = self.process_block(catch.body, ir_block=c_start)
                 self.cfg.add_edge(try_code_block, c_start, irnodes.ControlEdge.ERROR)
                 next_blocks.append(c_end)
 
@@ -906,8 +941,16 @@ class IRBuilder:
     def add_params(self, func, block: irnodes.BasicBlock):
         for index, input_param in enumerate(func.inputs):
             old_var = input_param.var
-            new_var = self.make_unversioned_local(old_var.name.text, old_var.ttype, old_var.location)
+            new_var = self.make_unversioned_local_from_var(old_var)
             block.stmts.append(irnodes.LocalStore(new_var, irnodes.InputParam(index, new_var)))
+
+        # Define return parameters with their defaults
+        for output_param in func.outputs:
+            old_var = output_param.var
+            if old_var.name and old_var.name.text:
+                # named parameter
+                new_var = self.make_unversioned_local_from_var(old_var)
+                block.stmts.append(irnodes.LocalStore(new_var, irnodes.Default(new_var.ttype)))
 
     def process_block(self, ast2_block: solnodes2.Block, ir_block: irnodes.BasicBlock = None):
         start_block = cur_block = ir_block if ir_block else self.create_new_block()

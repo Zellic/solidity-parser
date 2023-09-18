@@ -14,7 +14,7 @@ import solidity_parser.ast.solnodes as solnodes1
 class BasicBlock:
     def __init__(self, id):
         self.id = id
-        self.stmts = []
+        self.stmts: List[Stmt] = []
 
         # SSA temp state
         self.insertion = 0
@@ -115,13 +115,21 @@ class ControlFlowGraph:
         elif self.node_cache[key] != node:
             raise ValueError(f'Node already cached {key}')
 
-    def get_succs(self, node):
+    def get_succs(self, node):  # Collection[Tuple[Block, Data]]
         key = self.get_node_key(node)
         return [(self.node_cache.get(s_key), data) for s_key, data in self.succ_edges.get(key, [])]
+
+    def get_succs_only(self, node):  # Collection[Block]
+        key = self.get_node_key(node)
+        return [self.node_cache.get(s_key) for s_key, _ in self.succ_edges.get(key, [])]
 
     def get_preds(self, node):  # Collection[Tuple[Block, Data]]
         key = self.get_node_key(node)
         return [(self.node_cache.get(p_key), data) for p_key, data in self.pred_edges.get(key, [])]
+
+    def get_preds_only(self, node):  # Collection[Block]
+        key = self.get_node_key(node)
+        return [self.node_cache.get(p_key) for p_key, _ in self.pred_edges.get(key, [])]
 
     def _map_node_key_dict(self, ddict, collection_type=set):
         result = {}
@@ -308,6 +316,10 @@ class LocalStore(Stmt):
     var: LocalVar
     value: Expr
 
+    def __post_init__(self):
+        if isinstance(self.value, solnodes2.Var):
+            raise ValueError('')
+
     def code_str(self):
         return f'{self.var.code_str()} = {self.value.code_str()};'
 
@@ -400,6 +412,9 @@ class TupleLoad(Expr):
     def code_str(self):
         return f'__TUPLELOAD__({self.base.code_str()}, {self.index})'
 
+    def get_uses(self) -> List['LocalVar']:
+        return [self.base]
+
 
 @dataclass
 class TempStmt:
@@ -427,6 +442,14 @@ class GlobalValue(Expr):
 
     def code_str(self):
         return f'{self.name}'
+
+
+@dataclass
+class ErrorDefined(Expr):
+    index: int
+
+    def code_str(self):
+        return f'@caught{self.index}'
 
 
 @dataclass
@@ -473,6 +496,9 @@ class CreateStruct(Expr):
     def code_str(self):
         return f'{self.ttype.code_str()}({", ".join(e.code_str() for e in self.args)})'
 
+    def get_uses(self) -> List['LocalVar']:
+        return self.args[:]
+
 
 @dataclass
 class CreateInlineArray(Expr):
@@ -480,6 +506,9 @@ class CreateInlineArray(Expr):
 
     def code_str(self):
         return f'[{", ".join(e.code_str() for e in self.elements)}]'
+
+    def get_uses(self) -> List['LocalVar']:
+        return self.elements[:]
 
 
 @dataclass
@@ -535,6 +564,14 @@ class Undefined(Expr):
     # declared without a value in AST2, undefined is set as the RHS so that the variable has a definition point for SSA
     def code_str(self):
         return '__undefined__'
+
+
+@dataclass
+class Default(Expr):
+    ttype: solnodes2.Type
+
+    def code_str(self):
+        return f'__default__({self.ttype.code_str()})'
 
 
 @dataclass
@@ -662,6 +699,9 @@ class FunctionPointerCall(Call):
     def code_str(self):
         return f'{self.callee.code_str()}{solnodes2.Call.param_str(self)}'
 
+    def get_uses(self) -> List['LocalVar']:
+        return [self.callee] + super().get_uses()
+
 
 @dataclass
 class CreateAndDeployContract(Call):
@@ -680,7 +720,7 @@ class EmitEvent(Stmt):
         return f'emit {self.event.name.text}{solnodes2.Call.param_str(self)}'
 
     def get_uses(self) -> List['LocalVar']:
-        return self.args
+        return self.args[:]
 
 
 @dataclass
