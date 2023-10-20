@@ -65,6 +65,14 @@ class VirtualFileSystem:
         self.sources: Dict[str, LoadedSource] = {}
 
     @property
+    def base_path(self):
+        return self._base_path
+
+    @base_path.setter
+    def base_path(self, value):
+        self._base_path = self._norm_vfs_path(value)
+
+    @property
     def include_paths(self):
         return self._include_paths
 
@@ -120,7 +128,7 @@ class VirtualFileSystem:
 
         # When the source is not available in the virtual filesystem, the compiler passes the source unit name to the
         # import callback. The Host Filesystem Loader will attempt to use it as a path and look up the file on disk.
-        contents = self._read_file_callback(import_source_name, self.base_path, self.include_paths)
+        contents = self._read_file_callback(import_source_name, self._base_path, self.include_paths)
 
         if contents:
             loaded_source = self._add_loaded_source(import_source_name, contents)
@@ -151,7 +159,7 @@ class VirtualFileSystem:
     def _cli_path_to_source_name(self, input_file_path) -> str:
         """Computes the source name for a source file supplied via command line invocation of solc"""
         norm_path: Union[str, Path] = self._norm_vfs_path(input_file_path)
-        prefixes = [self.base_path] + self.include_paths
+        prefixes = [self._base_path] + self.include_paths
 
         for prefix in prefixes:
             # make the path relative to the prefix

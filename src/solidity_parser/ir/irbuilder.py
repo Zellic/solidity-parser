@@ -57,6 +57,10 @@ class IRBuilder:
         if ssa and not force:
             self.check_assembly(func)
 
+
+        if func.name.text != 'bulkTransfer':
+            pass
+
         self._init_state()
 
         start_block = self.create_new_block()
@@ -66,13 +70,15 @@ class IRBuilder:
 
         print("CODE " + func.descriptor())
         print(func.code.code_str())
+        # if func.name.text == 'bulkTransfer':
+        #     print(self.cfg.graphviz_str())
         dom_frontiers = self.cfg.get_iterated_dominance_frontier(start_block)
         self.insert_phis2(dom_frontiers)
         self.ssa_rename(start_block)
         # print("GRAPH")
         # print(self.cfg)
         # print("GRAPH END")
-        print(self.cfg.graphviz_str())
+        # print(self.cfg.graphviz_str())
         # print("GRAPH END2")
 
         self.copy_prop()
@@ -131,7 +137,7 @@ class IRBuilder:
 
         defined_in = self.collect_vars()
 
-        live_in, _ = liveness(self.cfg)
+        live_in, live_out = liveness(self.cfg)
 
         for var_index, var in enumerate(self.pre_ssa_locals.values()):
 
@@ -146,13 +152,18 @@ class IRBuilder:
                 worklist.append(b)
 
             while worklist:
-                self.do_insert_phis2(dom_frontiers, live_in, worklist.popleft(), var, var_index, worklist)
+                self.do_insert_phis2(dom_frontiers, live_in, live_out, worklist.popleft(), var, var_index, worklist)
 
-    def do_insert_phis2(self, dom_frontiers, live_in, block, var, var_index, worklist):
+    def do_insert_phis2(self, dom_frontiers, live_in, live_out, block, var, var_index, worklist):
         for df_block in dom_frontiers[block]:
             if df_block.insertion < var_index: # for pruned add live_in(df_block, var) here
-                if var in live_in[block]:
+                if var in live_in[df_block]:
                     preds = self.cfg.get_preds(df_block)
+                    live_out_preds = sum([1 if var in live_out[p] else 0 for p in preds])
+
+                    if live_out_preds != len(preds):
+                        print("yo")
+
                     if len(preds) > 1:
                         phi = irnodes.Phi(var, {p: var for p, _ in preds})
                         df_block.phis.append(phi)
@@ -621,15 +632,12 @@ class IRBuilder:
         if len(block.stmts) == 0:
             return False
         last_stmt = block.stmts[-1]
-        return isinstance(last_stmt, irnodes.Return)
+        return isinstance(last_stmt, (irnodes.Return, irnodes.Revert))
 
     def add_continuation(self, src, dst, data, add_goto=False):
         # check whether src ends with a terminating statement, if not, add an edge src -> dst
 
-        is_terminated = False
-        if src.stmts:
-            last_stmt = src.stmts[-1]
-            is_terminated = isinstance(last_stmt, irnodes.Return)
+        is_terminated = self.is_return_block(src)
 
         if not is_terminated:
             if add_goto:
@@ -890,7 +898,7 @@ class IRBuilder:
             cur_block.stmts.append(irnodes.RevertWithReason(reason))
         elif isinstance(stmt, solnodes2.RevertWithError):
             cur_block, args = self.translate_exprs(cur_block, stmt.args)
-            cur_block.stmts.append(irnodes.RevertWithError(stmt.error, args))
+            cur_block.stmts.append(irnodes.RevertWithError(stmt.error.x, args))
         elif isinstance(stmt, solnodes2.Try):
             # E.g. Solidity:
             #   try Target(target).doSomething() returns (string memory) {}

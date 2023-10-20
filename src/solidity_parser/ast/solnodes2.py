@@ -457,7 +457,6 @@ class IntType(Type):
 @NodeDataclass
 class PreciseIntType(IntType):
     real_bit_length: int
-    value: int
 
     def is_literal_type(self) -> bool:
         return True

@@ -62,23 +62,27 @@ class TypeHelper:
             else:
                 raise ValueError(f'Invalid implicit type cast: {value_ttype} to {expected_ttype}')
 
+    def get_current_contract_type(self, node) -> solnodes2.ResolvedUserType:
+        return self.get_contract_type(self.builder.get_declaring_contract_scope(node))
+
     def get_expr_type(self, expr: solnodes1.Expr, allow_multiple=False, force_tuple=False, bound_integers=True) -> solnodes2.Type:
         if isinstance(expr, solnodes1.Type):
             return self.map_type(expr)
         elif isinstance(expr, solnodes1.Ident):
-            def get_current_contract():
-                return self.symbol_to_ast2_type(self.builder.get_declaring_contract_scope(expr))
-
             text = expr.text
             if text == 'this':
-                return get_current_contract()
+                return self.get_current_contract_type(expr)
             elif text == 'super':
-                return solnodes2.SuperType(get_current_contract())
+                # RTU.value is a Ref[Contract/InterfaceDef] which is what SuperType takes
+                contract_type = self.get_current_contract_type(expr)
+                return solnodes2.SuperType(contract_type.value)
             else:
                 if allow_multiple:
                     return [self.symbol_to_ast2_type(s) for s in expr.scope.find(text)]
                 else:
-                    return self.symbol_to_ast2_type(expr.scope.find_single(text))
+                    symbol = expr.scope.find_single(text, predicate=symtab.ACCEPT_INHERITABLE)
+                    # TODO: error if none
+                    return self.symbol_to_ast2_type(symbol)
         elif isinstance(expr, solnodes1.GetMember):
             base_type = self.get_expr_type(expr.obj_base)
             member = expr.name.text
@@ -118,7 +122,7 @@ class TypeHelper:
                 value = full_value
 
                 if value == 0:
-                    return solnodes2.PreciseIntType(is_signed=False, size=8, real_bit_length=1, value=full_value)
+                    return solnodes2.PreciseIntType(is_signed=False, size=8, real_bit_length=1)
 
                 if value > 0:
                     # uint
@@ -136,8 +140,7 @@ class TypeHelper:
                     bytes += 1
                 bits = bytes * 8
 
-                return solnodes2.PreciseIntType(is_signed=signed, size=bits, real_bit_length=full_value.bit_length(),
-                                                value=full_value)
+                return solnodes2.PreciseIntType(is_signed=signed, size=bits, real_bit_length=full_value.bit_length())
             elif isinstance(value, str):
                 # TODO: maybe need to revise to a different len calculation based on the docs
                 return solnodes2.PreciseStringType(real_size=len(value))
@@ -397,10 +400,13 @@ class TypeHelper:
                 return self.symbol_to_ast2_type(symbols[0])
         if isinstance(arg, solnodes1.GetArrayValue):
             if isinstance(arg.array_base, solnodes1.Type):
-                assert arg.index is None
                 # make a copy of the base type and put it in an array
                 type_copy = copy_dataclass(arg.array_base)
-                return solnodes1.ArrayType(type_copy)
+                if arg.index:
+                    # e.g. bytes32[100]
+                    return solnodes1.FixedLengthArrayType(type_copy, int(arg.index.value))
+                else:
+                    return solnodes1.ArrayType(type_copy)
             elif arg.index is None:
                 # could possibly be but haven't seen an array_base for this case yet...
                 assert False
@@ -814,7 +820,7 @@ class Builder:
     def get_super_object(self, node: Union[solnodes1.Stmt, solnodes1.Expr]):
         ast1_current_contract = self.get_declaring_contract_scope(node)
         contract_type: solnodes2.ResolvedUserType = self.type_helper.get_contract_type(ast1_current_contract)
-        return solnodes2.SuperObject(solnodes2.SuperType(contract_type.value))
+        return solnodes2.SuperObject(solnodes2.SuperType(contract_type.value))  # assign the Ref[TLU] as the Ref in the SuperType
 
     @dataclass
     class FunctionCallee:
@@ -966,7 +972,18 @@ class Builder:
                         bucket_candidates.append((s, t, is_synthetic))
 
             if len(bucket_candidates) > 1:
-                return self._assert_error(f'Resolved to too many different bases: {bucket_candidates}, args={arg_types}')
+                # If we have multiple matches, check that they are part of an override chain and pick the first one
+                # i.e. we might have
+                # B is A { f() } A { f() }
+                # So we resolve to B.f
+                symbol_sources = [self.get_declaring_contract_scope_in_scope(candidate[0]) for candidate in bucket_candidates]
+                are_sub_contracts = all([self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                if are_sub_contracts:
+                    aliases = ', '.join([s.aliases[0] for s in symbol_sources])
+                    logging.getLogger('AST2').debug(f'Base chain: {aliases} @ {expr.location}')
+                    candidates.append((c.base, *bucket_candidates[0]))
+                else:
+                    return self._assert_error(f'Resolved to too many different bases: {bucket_candidates}, args={arg_types}')
             elif len(bucket_candidates) == 1:
                 candidates.append((c.base, *bucket_candidates[0]))
 
@@ -1125,7 +1142,7 @@ class Builder:
 
         # TODO: quicker algorithm
 
-        # checks if A is a subcontract of B/ if B is a supercontract of A
+        # checks if A is a subcontract of B/ if B is a supercontract of A (B extends A)
         to_check = deque()
         to_check.append(a)
 
@@ -1232,8 +1249,12 @@ class Builder:
                 # gets reduced to just ExecModifiedCode in place of ExprStmt
                 return solnodes2.ExecModifiedCode()
 
+            # when this Ident is refined as part of a function call, we return a list of possible
+            # function callees. we don't know the actual callee that is required here because that depends on
+            # context (arguments, types, etc) that is part of the function call and not encoded in this identifier.
             if is_function_callee:
                 def symbol_base(s):
+                    # the symbol base is any context that is required to differentiate this symbol from others
                     s = s.resolve_base_symbol()
                     if self.is_top_level(s.value):
                         # direct type reference, e.g. MyContract -> no base
@@ -1244,29 +1265,46 @@ class Builder:
                     if isinstance(s.value, solnodes1.Var):
                         # local var has no base
                         return None
+                    # otherwise we choose the base as the type of the declarer, e.g. if the symbol is x in C
+                    # then C is the base of x
                     s_contract = self.get_declaring_contract_scope_in_scope(s)
                     return self.type_helper.get_contract_type(s_contract)
+
                 def symbol_bases(bucket):
-                    bases = [symbol_base(s) for s in bucket]
-                    if len(bases) > 0:
-                        # all the same
-                        assert all([x == bases[0] for x in bases])
-                        return bases[0]
-                    else:
-                        return None
+                    # get the base for a whole of list of symbols
+                    # bases = [symbol_base(s) for s in bucket]
+                    # if len(bases) > 0:
+                    #     # all the same
+                    #     assert all([x == bases[0] for x in bases])
+                    #     return bases[0]
+                    # else:
+                    #     return None
+                    new_buckets = {}
+                    for symbol in bucket:
+                        base = symbol_base(symbol)
+                        if base not in new_buckets:
+                            new_buckets[base] = []
+                        new_buckets[base].append(symbol)
+
+                    return [Builder.FunctionCallee(base, symbols) for base, symbols in new_buckets.items()]
+
                 if expr.text == 'address':
                     # weird grammar edge case where it's parsed as an ident instead of a type
                     ttype = solnodes1.AddressType(is_payable=False)
 
+                    # FIXME: surely this is always true?
                     if is_function_callee:
                         return [Builder.FunctionCallee(None, [expr.scope.find_type(ttype)])]
                     elif is_argument:
                         return solnodes2.TypeLiteral(self.type_helper.map_type(ttype))
                 else:
+                    # normal case, find the symbol in the scope of this ident
+                    # FIXME: for contract lookups need to find the symbol in the whole inheritance tree
                     bucket = expr.scope.find(expr.text)
-                    return [Builder.FunctionCallee(symbol_bases(bucket), bucket)]
+                    return symbol_bases(bucket)
+                    # return [Builder.FunctionCallee(symbol_bases(bucket), bucket)]
 
-            ident_symbol = expr.scope.find_single(expr.text)
+            ident_symbol = expr.scope.find_single(expr.text, predicate=symtab.ACCEPT_INHERITABLE)
             if not ident_symbol:
                 return self._error(f'Unresolved reference to {expr.text}')
 

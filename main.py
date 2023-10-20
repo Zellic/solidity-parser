@@ -256,7 +256,7 @@ if __name__ == '__main__1':
                     ir_builder.translate_function(p)
 
 
-if __name__ == '__main__':
+if __name__ == '__main__1':
     pp.install_extras()
     logging.basicConfig( level=logging.CRITICAL)
 
@@ -266,7 +266,7 @@ if __name__ == '__main__':
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
 
     # start_idx = 182
-    start_idx = 7
+    start_idx = 9
     idx = 0
 
     for file_path in all_files:
@@ -367,7 +367,7 @@ if __name__ == '__main__':
 
 
 
-if __name__ == '__main__1':
+if __name__ == '__main__':
     pp.install_extras()
     logging.basicConfig( level=logging.DEBUG)
     # p = Path('../example/TestInput.json').resolve()
