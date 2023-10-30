@@ -1,2 +1,3 @@
-antlr4-python3-runtime
+--index-url https://pypi.python.org/simple/
 
+-e .
