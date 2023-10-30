@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Optional, Union, Callable
+from typing import List, Dict, Optional, Union, Callable, Tuple
 from collections import namedtuple
 from solidity_parser.ast import solnodes
 from solidity_parser.ast import helper as ast_helper
@@ -63,6 +63,7 @@ class VirtualFileSystem:
         self.import_remaps: List[ImportMapping] = []
 
         self.sources: Dict[str, LoadedSource] = {}
+        self.origin_sources: Dict[str, LoadedSource] = {}
 
     @property
     def base_path(self):
@@ -84,14 +85,14 @@ class VirtualFileSystem:
         # CLI load method
         source_unit_name = self._cli_path_to_source_name(file_path)
         src_code = self._read_file(file_path)
-        self._add_loaded_source(source_unit_name, src_code)
+        self._add_loaded_source(source_unit_name, src_code, origin='[CLI]:'+file_path)
 
     def process_standard_json(self, path: str):
         json_content = self._read_file(path)
         standard_input = jsons.loads(json_content, StandardJsonInput)
 
         for (source_unit_name, source) in standard_input.sources.items():
-            self._add_loaded_source(source_unit_name, source.content)
+            self._add_loaded_source(source_unit_name, source.content, origin='[STD]:'+source_unit_name)
 
     def parse_import_remappings(self, remappings_file_path):
         with open(remappings_file_path, encoding='utf-8') as f:
@@ -128,18 +129,20 @@ class VirtualFileSystem:
 
         # When the source is not available in the virtual filesystem, the compiler passes the source unit name to the
         # import callback. The Host Filesystem Loader will attempt to use it as a path and look up the file on disk.
-        contents = self._read_file_callback(import_source_name, self._base_path, self.include_paths)
+        origin, contents = self._read_file_callback(import_source_name, self._base_path, self.include_paths)
 
         if contents:
-            loaded_source = self._add_loaded_source(import_source_name, contents)
+            loaded_source = self._add_loaded_source(import_source_name, contents, origin=origin)
             if loaded_source:
                 return loaded_source
 
         raise f"Can't import {import_path} from {importer_source_unit_name}"
 
-    def _add_loaded_source(self, source_unit_name: str, source_code: str, creator=None) -> LoadedSource:
+
+    def _add_loaded_source(self, source_unit_name: str, source_code: str, creator=None, origin=None) -> LoadedSource:
         loaded_source = LoadedSource(source_unit_name, source_code, creator if creator else ast_helper.make_ast)
         self.sources[source_unit_name] = loaded_source
+        self.origin_sources[origin] = loaded_source
         return loaded_source
 
     def _read_file(self, path: str, is_cli_path=True) -> str:
@@ -181,7 +184,7 @@ class VirtualFileSystem:
 
         return normp2
 
-    def _read_file_callback(self, su_name: str, base_dir: str, include_paths: List[str]) -> str:
+    def _read_file_callback(self, su_name: str, base_dir: str, include_paths: List[str]) -> Tuple[str, str]:
         # import callback
         su_norm = su_name
         if su_norm.startswith('file://'):
@@ -204,7 +207,7 @@ class VirtualFileSystem:
         # TODO: allowed directory check
 
         contents = self._read_file(candidates[0], is_cli_path=False)
-        return contents
+        return candidates[0], contents
 
     def _remap_import(self, source_unit_name: str, importer_source_unit_name: str) -> str:
         """Takes a source unit name and checks if it should be remapped

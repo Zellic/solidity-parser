@@ -16,13 +16,32 @@ import solidity_parser.util.version_util as version_util
 Aliases = Union[str, List[str]]
 
 
+def bytes():
+    return solnodes.BytesType()
+
+
+def bytes32():
+    return solnodes.FixedLengthArrayType(solnodes.ByteType(), 32)
+
+
+def uint(size=256):
+    return solnodes.IntType(False, size)
+
+
 def ACCEPT(x):
     return True
 
 
-def ACCEPT_INHERITABLE(x: 'Symbol'):
-    is_private = solnodes.has_modifier_kind(x.value, solnodes.VisibilityModifierKind.PRIVATE)
-    return not is_private
+def ACCEPT_INHERITABLE(base_scope):
+    # creates a predicate. the given scope is the current scope where any lookup is allowed
+    # e.g. if we are in a function in contract C we can access other members of C fine, but not
+    contract_scope = base_scope.find_first_ancestor_of((ContractOrInterfaceScope, EnumScope, LibraryScope))
+    def do_test(x: 'Symbol'):
+        if x.parent_scope == contract_scope:
+            return True
+        is_private = solnodes.has_modifier_kind(x.value, solnodes.VisibilityModifierKind.PRIVATE)
+        return not is_private
+    return do_test
 
 
 def test_predicate(xs, predicate=None):
@@ -235,8 +254,8 @@ class Scope(Scopeable):
             # Create a meta type entry in the symbol table
             # Fields from https://docs.soliditylang.org/en/latest/units-and-global-variables.html#type-information
             members = [
-                ('name', solnodes.StringType()), ('creationCode', solnodes.ArrayType(solnodes.ByteType())),
-                ('runtimeCode', solnodes.ArrayType(solnodes.ByteType()))
+                ('name', solnodes.StringType()), ('creationCode', bytes()),
+                ('runtimeCode', bytes())
             ]
 
             # X in type(X)
@@ -350,15 +369,6 @@ class RootScope(Scope):
         msg_object.add(BuiltinValue('sig', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
 
         self.add(msg_object)
-
-        def bytes():
-            return solnodes.ArrayType(solnodes.ByteType())
-
-        def bytes32():
-            return solnodes.FixedLengthArrayType(solnodes.ByteType(), 32)
-
-        def uint(size=256):
-            return solnodes.IntType(False, size)
 
         abi_object = BuiltinObject('abi')
         # input_types == None means the function can take any parameters

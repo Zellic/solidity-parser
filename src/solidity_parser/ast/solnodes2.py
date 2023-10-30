@@ -29,6 +29,26 @@ def param_def_str(ps):
     return '(' + ', '.join([param_out(p) for p in ps]) + ')'
 
 
+def UIntType(size=256):
+    return IntType(False, size)
+
+
+def Bytes(size=None):
+    if size is not None:
+        if isinstance(size, int):
+            return FixedLengthArrayType(ByteType(), size)
+        elif isinstance(size, Expr):
+            return VariableLengthArrayType(ByteType(), size)
+        else:
+            raise NotImplementedError(f'{type(size)}')
+    else:
+        return BytesType()
+
+
+def is_byte_array(ttype: 'Type') -> bool:
+    return (isinstance(ttype, ArrayType) and isinstance(ttype.base_type, ByteType)) or isinstance(ttype, BytesType)
+
+
 def NodeDataclass(cls, *args, **kwargs):
     # Add a hash based on the elements that make up this node. This is required because dataclass doesn't generate a
     # hash for us unless we pass in unsafe_hash=True on the decorator for every node subclass and even if we do that
@@ -317,7 +337,10 @@ class ArrayType(Type):
             # e.g. byte[4] casts to byte[] but not the other way around
             return self.base_type.can_implicitly_cast_from(actual_type.base_type)
         if self.base_type.is_byte() and not self.has_size() and actual_type.is_literal_type():
-            return True
+            if self.is_string() == actual_type.is_string():
+                return True
+            if self.is_int() == actual_type.is_int():
+                return True
 
         return False
 
@@ -347,10 +370,10 @@ class FixedLengthArrayType(ArrayType):
     def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
         if super().can_implicitly_cast_from(actual_type):
             return True
-        # Decimal number literals cannot be implicitly converted to fixed-size byte arrays. Hexadecimal number literals
-        # can be, but only if the number of hex digits exactly fits the size of the bytes type. As an exception both
-        # decimal and hexadecimal literals which have a value of zero can be converted to any fixed-size bytes type:
-        if self.base_type.is_byte() and actual_type.is_int() and actual_type.is_literal_type():
+        if not self.is_string() and self.base_type.is_byte() and actual_type.is_int() and actual_type.is_literal_type():
+            # Decimal number literals cannot be implicitly converted to fixed-size byte arrays. Hexadecimal number literals
+            # can be, but only if the number of hex digits exactly fits the size of the bytes type. As an exception both
+            # decimal and hexadecimal literals which have a value of zero can be converted to any fixed-size bytes type:
             return self.size >= (actual_type.size / 8)
         if self.base_type.is_byte() and actual_type.is_string() and actual_type.is_literal_type():
             # e.g. bytes32 samevar = "stringliteral"
@@ -436,6 +459,18 @@ class ByteType(Type):
 
 
 @NodeDataclass
+class BytesType(ArrayType):
+    """ bytes type only (similar but not equal to byte[]/bytes1[]) """
+    base_type: Type = field(default=Bytes(1), init=False)
+
+    def __str__(self):
+        return self.code_str()
+
+    def code_str(self):
+        return 'bytes'
+
+
+@NodeDataclass
 class IntType(Type):
     """ Solidity native integer type of various bit length and signedness"""
 
@@ -480,26 +515,6 @@ class PreciseIntType(IntType):
         return raiseNotPrintable()
 
 
-def UIntType(size=256):
-    return IntType(False, size)
-
-
-def Bytes(size=None):
-    if size is not None:
-        if isinstance(size, int):
-            return FixedLengthArrayType(ByteType(), size)
-        elif isinstance(size, Expr):
-            return VariableLengthArrayType(ByteType(), size)
-        else:
-            raise NotImplementedError(f'{type(size)}')
-    else:
-        return ArrayType(ByteType())
-
-
-def is_byte_array(ttype: Type) -> bool:
-    return isinstance(ttype, ArrayType) and isinstance(ttype.base_type, ByteType)
-
-
 class BoolType(Type):
     """ Solidity native boolean type"""
 
@@ -520,7 +535,7 @@ class StringType(ArrayType):
     """ Solidity native string type"""
 
     # makes this an Array[Byte] (as Solidity uses UTF8 for strings?)
-    base_type: Type = field(default=ByteType(), init=False)
+    base_type: Type = field(default=Bytes(1), init=False)
 
     def __str__(self): return "string"
 

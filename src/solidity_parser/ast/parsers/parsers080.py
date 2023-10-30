@@ -695,7 +695,7 @@ def _elementary_type_name(parser, name: SolidityParser.ElementaryTypeNameContext
     elif name.String():
         return solnodes.StringType()
     elif name.Bytes():
-        return solnodes.ArrayType(solnodes.ByteType())
+        return solnodes.BytesType()
     elif name.SignedIntegerType():
         size_str = name.SignedIntegerType().getText()[3:]
         size = int(size_str) if size_str else 256
