@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-pragma solidity >=0.4.22 <0.6;
+pragma solidity >=0.7.22;
 contract WETH9 {
     string public name     = "Wrapped Ether";
     string public symbol   = "WETH";
@@ -30,7 +30,19 @@ contract WETH9 {
     function() external payable {
         deposit();
     }
+  function map(uint[] memory self, function (uint) pure returns (uint) f)
+    internal
+    pure
+    returns (uint[] memory r)
+  {
+    r = new uint[](self.length);
+    for (uint i = 0; i < self.length; i++) {
+      r[i] = f(self[i]);
+    }
+  }
+
     function deposit() public payable {
+        uint256 currentValidNonce = _nonces[owner];
         balanceOf[msg.sender] += msg.value;
         emit Deposit(msg.sender, msg.value);
     }
@@ -38,6 +50,7 @@ contract WETH9 {
         require(balanceOf[msg.sender] >= wad);
         balanceOf[msg.sender] -= wad;
         msg.sender.transfer(wad);
+        uint256 currentValidNonce = thangs[1:5];
         emit Withdrawal(msg.sender, wad);
     }
 
