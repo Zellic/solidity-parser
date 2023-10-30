@@ -80,7 +80,7 @@ class TypeHelper:
                 if allow_multiple:
                     return [self.symbol_to_ast2_type(s) for s in expr.scope.find(text)]
                 else:
-                    symbol = expr.scope.find_single(text, predicate=symtab.ACCEPT_INHERITABLE)
+                    symbol = expr.scope.find_single(text, predicate=symtab.ACCEPT_INHERITABLE(expr.scope))
                     # TODO: error if none
                     return self.symbol_to_ast2_type(symbol)
         elif isinstance(expr, solnodes1.GetMember):
@@ -231,6 +231,9 @@ class TypeHelper:
             if t1.is_int():
                 # if they're both ints, then take the bigger type
                 return t1 if t1.size > t2.size else t2
+            elif t1.is_literal_type() and t2.is_literal_type() and t1.is_string() and t2.is_string():
+                # both precise string types but different sizes, take the biggest one
+                return t1 if t1.real_size > t2.real_size else t2
             else:
                 try:
                     assert t1 == t2
@@ -518,6 +521,8 @@ class TypeHelper:
 
         if isinstance(ttype, solnodes1.UserType):
             return self.get_user_type(ttype)
+        elif isinstance(ttype, solnodes1.BytesType):
+            return solnodes2.BytesType()
         elif isinstance(ttype, solnodes1.VariableLengthArrayType):
             base_type = self.map_type(ttype.base_type)
             size_type = self.get_expr_type(ttype.size)
@@ -747,20 +752,9 @@ class Builder:
                 ) for x in node.catch_clauses]
             )
         elif isinstance(node, solnodes1.Emit):
-            assert isinstance(node.call.callee, solnodes1.Ident)
-            callee_symbol = node.scope.find_single(node.call.callee.text)
-            assert isinstance(callee_symbol.value, solnodes1.EventDefinition)
-            assert len(node.call.modifiers) == 0
-
-            # Get the AST2 EventDefinition. This requires the parent contract to be loaded so we have to do that first
-            parent_type = self.type_helper.get_contract_type(callee_symbol.parent_scope)
-
-            assert parent_type
-
-            event_name = callee_symbol.value.name.text
-            event = self.type_helper.find_event(parent_type, event_name)
-
-            return solnodes2.EmitEvent(solnodes2.Ref(event), [self.refine_expr(x) for x in node.call.args])
+            event_call = self.refine_call_function(node.call, allow_event=True)
+            assert isinstance(event_call, solnodes2.EmitEvent)
+            return event_call
         elif isinstance(node, solnodes1.Return):
             # see case of Literal in refine_expr where value is of type tuple
             rval = node.value
@@ -1107,7 +1101,7 @@ class Builder:
         elif isinstance(sym.value, solnodes1.EventDefinition):
             # old style event Emit that looks like a function call: we convert this to an Emit Stmt in AST2
             assert allow_event
-            assert not out_type
+            assert out_type.is_void()
 
             current_contract = self.get_declaring_contract_scope(expr)
             func_declaring_contract = self.get_declaring_contract_scope(sym.value)
@@ -1296,7 +1290,7 @@ class Builder:
                     bucket = expr.scope.find(expr.text)
                     return symbol_bases(bucket)
 
-            ident_symbol = expr.scope.find_single(expr.text, predicate=symtab.ACCEPT_INHERITABLE)
+            ident_symbol = expr.scope.find_single(expr.text, predicate=symtab.ACCEPT_INHERITABLE(expr.scope))
             if not ident_symbol:
                 return self._error(f'Unresolved reference to {expr.text}')
 
@@ -1331,8 +1325,12 @@ class Builder:
             elif isinstance(ident_target, (solnodes1.Parameter, solnodes1.Var)):
                 return solnodes2.LocalVarLoad(self.var(ident_target))
             elif self.is_top_level(ident_target):
-                assert allow_type
-                return self.type_helper.symbol_to_ast2_type(ident_symbol)
+                ttype = self.type_helper.symbol_to_ast2_type(ident_symbol)
+                if is_argument:
+                    return solnodes2.TypeLiteral(ttype)
+                else:
+                    assert allow_type
+                    return ttype
             else:
                 self._todo(ident_target)
         elif isinstance(expr, solnodes1.CallFunction):
