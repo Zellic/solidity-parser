@@ -15,8 +15,33 @@ import solidity_parser.util.version_util as version_util
 
 Aliases = Union[str, List[str]]
 
+
+def bytes():
+    return solnodes.BytesType()
+
+
+def bytes32():
+    return solnodes.FixedLengthArrayType(solnodes.ByteType(), 32)
+
+
+def uint(size=256):
+    return solnodes.IntType(False, size)
+
+
 def ACCEPT(x):
     return True
+
+
+def ACCEPT_INHERITABLE(base_scope):
+    # creates a predicate. the given scope is the current scope where any lookup is allowed
+    # e.g. if we are in a function in contract C we can access other members of C fine, but not
+    contract_scope = base_scope.find_first_ancestor_of((ContractOrInterfaceScope, EnumScope, LibraryScope))
+    def do_test(x: 'Symbol'):
+        if x.parent_scope == contract_scope:
+            return True
+        is_private = solnodes.has_modifier_kind(x.value, solnodes.VisibilityModifierKind.PRIVATE)
+        return not is_private
+    return do_test
 
 
 def test_predicate(xs, predicate=None):
@@ -121,12 +146,6 @@ class Scope(Scopeable):
             found_symbols = self.find_imported(name, predicate)
         return found_symbols
 
-    def find_local(self, name: str) -> Optional[List[Symbol]]:
-        """Finds a mapped symbol in this scope only"""
-        if name in self.symbols:
-            return self.symbols[name]
-        return []
-
     def find_imported(self, name: str, predicate=None) -> Optional[List[Symbol]]:
         for scope in self.imported_scopes:
             # TODO: unsure whether this should be find_local or find. This is just the old import_symbols_from_scope
@@ -134,6 +153,12 @@ class Scope(Scopeable):
             syms = test_predicate(scope.find_current_level(name), predicate)
             if syms:
                 return syms
+        return []
+
+    def find_local(self, name: str) -> Optional[List[Symbol]]:
+        """Finds a mapped symbol in this scope only"""
+        if name in self.symbols:
+            return list(self.symbols[name])
         return []
 
     def find_from_parent(self, name: str, predicate=None):
@@ -229,8 +254,8 @@ class Scope(Scopeable):
             # Create a meta type entry in the symbol table
             # Fields from https://docs.soliditylang.org/en/latest/units-and-global-variables.html#type-information
             members = [
-                ('name', solnodes.StringType()), ('creationCode', solnodes.ArrayType(solnodes.ByteType())),
-                ('runtimeCode', solnodes.ArrayType(solnodes.ByteType()))
+                ('name', solnodes.StringType()), ('creationCode', bytes()),
+                ('runtimeCode', bytes())
             ]
 
             # X in type(X)
@@ -345,15 +370,6 @@ class RootScope(Scope):
 
         self.add(msg_object)
 
-        def bytes():
-            return solnodes.ArrayType(solnodes.ByteType())
-
-        def bytes32():
-            return solnodes.FixedLengthArrayType(solnodes.ByteType(), 32)
-
-        def uint(size=256):
-            return solnodes.IntType(False, size)
-
         abi_object = BuiltinObject('abi')
         # input_types == None means the function can take any parameters
 
@@ -445,8 +461,8 @@ class FileScope(ScopeAndSymbol):
     def alias(source_unit_name: str):
         return f'<source_unit:{source_unit_name}>'
 
-    def __init__(self, builder: 'Builder2', vfs: VirtualFileSystem, source_unit_name: str):
-        ScopeAndSymbol.__init__(self, self.alias(source_unit_name), None)
+    def __init__(self, builder: 'Builder2', vfs: VirtualFileSystem, source_unit_name: str, ast1_units: List[solnodes.SourceUnit]):
+        ScopeAndSymbol.__init__(self, self.alias(source_unit_name), ast1_units)
         self.builder = builder
         self.vfs = vfs
         self.source_unit_name = source_unit_name
@@ -490,28 +506,34 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
         # if self._proxy_address_called:
         #     return
         # self._proxy_address_called = True
-        # 
+        #
         # address_scope = self.find_type(solnodes.AddressType(False))
         # self.import_symbols_from_scope(address_scope)
 
-    def find_imported(self, name: str, predicate=None) -> Optional[List[Symbol]]:
-        # self._proxy_address_scope()
-        found_symbols = Scope.find_imported(self, name, predicate)
-        if found_symbols:
-            return found_symbols
-        else:
-            return test_predicate(self.find_in_contract_hierarchy(name), predicate)
-        
-    def find_in_contract_hierarchy(self, name: str):
+    def find_current_level(self, name: str, predicate=None) -> Optional[List[Symbol]]:
+        found_already = set()
+        results = []
+
+        def add_to_results(ss):
+            for s in ss:
+                base_s = s.resolve_base_symbol()
+                if base_s not in found_already:
+                    found_already.add(base_s)
+                    results.append(s)
+
+        add_to_results(super().find_current_level(name, predicate))
+        add_to_results(self.find_in_contract_hierarchy(name, predicate))
+
+        return results
+
+    def find_in_contract_hierarchy(self, name: str, predicate):
         # dont look in self
         lookup_order = c3_linearise(self)[1:]
-        lookups = [syms for c in lookup_order if (syms := c.find_local(name))]
-        # if len(lookups) > 1:
-        #     raise ValueError()
-        if lookups:
-            return lookups[0]
-        else:
-            return []
+        ss = []
+        for c in lookup_order:
+            if syms := c.find_current_level(name, predicate):
+                ss.extend(syms)
+        return ss
 
     def get_supers(self) -> List['ContractOrInterfaceScope']:
         klass_file_scope: FileScope = self.parent_scope
@@ -695,7 +717,7 @@ class Builder2:
             if not source_units:
                 raise ValueError(f'Could not load {source_unit_name} from root')
 
-        fs = FileScope(self, self.vfs, source_unit_name)
+        fs = FileScope(self, self.vfs, source_unit_name, source_units)
 
         self.add_to_scope(self.root_scope, fs)
 
@@ -863,7 +885,7 @@ class Builder2:
                 target_type_scope = self.lookup_name_in_scope(unit_scope, raw_name)
                 # Use the name as defined by the target type symbol itself so that we can do definite checks against
                 # this type and the first parameter type later, i.e. for A.B.MyT, use MyT as the type key
-                target_scope_name = target_type_scope.value.name.text
+                target_scope_name = target_type_scope.resolve_base_symbol().value.name.text
             else:
                 # Solidity type, e.g. <type:int>, <type:byte[]}, etc
                 # needs to be a list because

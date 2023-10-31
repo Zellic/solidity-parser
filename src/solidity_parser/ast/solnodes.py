@@ -117,6 +117,13 @@ class ByteType(Type):
 
 
 @dataclass
+class BytesType(ArrayType):
+    base_type: Type = field(default_factory=ByteType, init=False)
+
+    def __str__(self): return 'bytes'
+
+
+@dataclass
 class IntType(Type):
     """ Solidity native integer type of various bit length and signedness"""
 
