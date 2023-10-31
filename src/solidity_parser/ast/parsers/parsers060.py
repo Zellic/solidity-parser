@@ -407,10 +407,11 @@ def _elementary_type_name(parser, name: SolidityParser.ElementaryTypeNameContext
         size = int(size_str) if size_str else 256
         return solnodes.IntType(False, size)
     elif name.AByte():
-        return solnodes.ByteType()
+        # 'byte' is a type alias for 'bytes1' (according to docs)
+        return solnodes.FixedLengthArrayType(solnodes.ByteType(), 1)
     elif name.Byte():
         if name.Byte().getText() == 'bytes':
-            return solnodes.ArrayType(solnodes.ByteType())
+            return solnodes.BytesType()
         else:
             size_str = name.Byte().getText()[5:]
             size = int(size_str)
