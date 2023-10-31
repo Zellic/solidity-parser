@@ -64,8 +64,8 @@ def _using_directive(parser, rule: SolidityParser.UsingDirectiveContext):
     return solnodes.UsingDirective(library_name, override_type, attachments_or_bindings, is_global)
 
 
-def _number_literal(parser, rule: SolidityParser.LiteralContext):
-    ### overrides the base LiteralContext rule ###
+def _number_literal(parser, rule: SolidityParser.NumberLiteralContext):
+    ### overrides the base NumberLiteralContext rule ###
     # no units/subdenominations in this rule anymore
     if rule.DecimalNumber():
         str_val = rule.DecimalNumber().getText()
