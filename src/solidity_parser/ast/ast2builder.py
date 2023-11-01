@@ -655,7 +655,7 @@ class Builder:
             n = self.to_refine.popleft()
 
             sun = n.scope.find_first_ancestor_of(symtab.FileScope).source_unit_name
-            print(f'Processing {type(n).__name__}({n.name}) in {sun}')
+            logging.getLogger('AST2').info(f'Processing {type(n).__name__}({n.name}) in {sun}')
 
             self.refine_unit_or_part(n)
 
@@ -675,7 +675,12 @@ class Builder:
                 if isinstance(parent_scope, symtab.FileScope):
                     source_unit_name = parent_scope.source_unit_name
                     logging.getLogger('AST2').info(f'Defining top level unit {source_unit_name}::{ast1_node.name.text}')
-                    ast2_node = self.define_skeleton(ast1_node, source_unit_name)
+                    # force skeleton of the whole file, filescope.value is the ast1 parts
+                    for part in parent_scope.value:
+                        if part is not None and self.should_create_skeleton(part):
+                            # None = EOF
+                            self.define_skeleton(part, source_unit_name)
+                    ast2_node = ast1_node.ast2_node
                 else:
                     # load the parent which will in turn define skeletons for its children, including the current
                     # ast1_node
@@ -1572,7 +1577,7 @@ class Builder:
     def get_synthetic_owner(self, source_unit_name, ast1_node):
         if source_unit_name in self.synthetic_toplevels:
             return self.synthetic_toplevels[source_unit_name]
-        toplevel = solnodes2.FileDefinition(source_unit_name, solnodes2.Ident('$synthetic$'), [])
+        toplevel = solnodes2.FileDefinition(source_unit_name, solnodes2.Ident(source_unit_name), [])
         # Set the 'scope' of this ast2 node. This is only done for this node type as it acts as an ast1 node during
         # refinement
         toplevel.scope = ast1_node.scope.find_first_ancestor_of(symtab.FileScope)
@@ -1583,7 +1588,7 @@ class Builder:
         return toplevel
 
     def define_skeleton(self, ast1_node: solnodes1.SourceUnit, source_unit_name: str) -> solnodes2.TopLevelUnit:
-        assert self.should_create_skeleton(ast1_node)
+        assert self.should_create_skeleton(ast1_node), f'{type(ast1_node)}'
         """
         Makes a skeleton of the given AST1 node without processing the details. This is required as user types are
         loaded on demand(when they're used in code/parameter lists/declarations, etc). This skeleton is used as a
@@ -1748,12 +1753,15 @@ class Builder:
             if hasattr(ast1_node, 'parts'):
                 for part in ast1_node.parts:
                     if isinstance(part, solnodes1.UsingDirective):
-                        # Not sure if things other than contracts can have usings, if this should error, we can investigate
-                        library_scope = part.scope.find_single(part.library_name.text, find_base_symbol=True)
-                        assert isinstance(library_scope.value, solnodes1.LibraryDefinition)
-                        library = self.type_helper.get_contract_type(part.scope.find_single(part.library_name.text))
-                        ast2_node.type_overrides.append(
-                            solnodes2.LibraryOverride(self.type_helper.map_type(part.override_type), library))
+                        if part.library_name:
+                            library_scope = part.scope.find_single(part.library_name.text, find_base_symbol=True)
+                            assert isinstance(library_scope.value, solnodes1.LibraryDefinition)
+                            library = self.type_helper.get_contract_type(part.scope.find_single(part.library_name.text))
+                            ast2_node.type_overrides.append(
+                                solnodes2.LibraryOverride(self.type_helper.map_type(part.override_type), library))
+                        else:
+                            # TODO: free function version of this
+                            pass
 
                     part_ast1node = None
                     if hasattr(part, 'ast2_node'):
