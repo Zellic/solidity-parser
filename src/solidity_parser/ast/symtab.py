@@ -681,6 +681,18 @@ class UsingFunctionSymbol(Symbol):
         return self.target
 
 
+class UsingOperatorSymbol(Symbol):
+    def __init__(self, target: ModFunErrEvtScope, override_type: solnodes.Type, operator: Union[solnodes.UnaryOpCode, solnodes.BinaryOpCode]):
+        assert isinstance(target.value, solnodes.FunctionDefinition)
+        Symbol.__init__(self, target.aliases, target.value)
+        self.target = target
+        self.override_type = override_type
+        self.operator = operator
+
+    def resolve_base_symbol(self) -> 'Symbol':
+        return self.target
+
+
 class Builder2:
 
     class Context:
@@ -985,7 +997,13 @@ class Builder2:
 
         return proxy_scope
 
-    def get_using_function_symbol_for_func(self, target_type, target_type_scope, symbol):
+    def get_using_function_symbol_for_func(self, target_type, target_type_scope, symbol, operator=None):
+        def make_using_symbol(s, t):
+            if operator:
+                return UsingOperatorSymbol(s, t, operator)
+            else:
+                return UsingFunctionSymbol(s, t)
+
         # TODO: filter private functions
         func_def = symbol.value
         if not isinstance(func_def, solnodes.FunctionDefinition):
@@ -997,9 +1015,9 @@ class Builder2:
             if isinstance(first_parameter_type, solnodes.UserType):
                 param_type_symbol = self.lookup_name_in_scope(symbol.parent_scope, first_parameter_type.name.text)
                 if param_type_symbol.resolve_base_symbol() == target_type_scope.resolve_base_symbol():
-                    return UsingFunctionSymbol(symbol, target_type)
+                    return make_using_symbol(symbol, target_type)
             elif first_parameter_type == target_type:
-                return UsingFunctionSymbol(symbol, target_type)
+                return make_using_symbol(symbol, target_type)
         return None
 
     def process_using_library_type(self, context: Context, node: solnodes.UsingDirective):
@@ -1050,15 +1068,18 @@ class Builder2:
         using_symbols = []
 
         for attachment in node.attachments_or_bindings:
-            if hasattr(attachment, 'operator'):
-                raise NotImplementedError('TODO: operator binding')
             # attachment, e.g. using { myF, ... } for MyType ;
+            # operator binding, e.g. using { myF as - } for MyType ;
             symbol = self.lookup_name_in_scope(cur_scope, attachment.member_name.text)
-
             if not symbol:
                 raise ValueError(f'No symbol found in using directive: {str(attachment.member_name)}')
 
-            using_symbols.append(self.get_using_function_symbol_for_func(target_type, target_type_scope, symbol))
+            if hasattr(attachment, 'operator'):
+                operator = attachment.operator
+            else:
+                operator = None
+
+            using_symbols.append(self.get_using_function_symbol_for_func(target_type, target_type_scope, symbol, operator))
 
         for s in using_symbols:
             self.add_to_scope(scope_to_add_to, s)
@@ -1108,6 +1129,25 @@ class Builder2:
                 imported_file = current_file_scope.get_imported_source_unit(node.path)
                 current_file_scope.import_symbols_from_scope(imported_file)
                 return None  # no new node is made from this
+            elif isinstance(node, solnodes.UserValueType):
+                # Import the target type symbols into this user defined value type
+                target_scope, _ = self.find_using_target_scope_and_name(node.scope, node.value)
+                node.owning_scope.import_symbols_from_scope(target_scope)
+                # also add the builtin helper methods
+
+                udvt_type = solnodes.UserType(solnodes.Ident(node.name.text))
+                # set the scope of this node: when it's looked up later, it needs a scope
+                udvt_type.scope = node.scope
+
+                methods = [
+                    ('wrap', [node.value], [udvt_type]),
+                    ('unwrap', [udvt_type], [node.value]),
+                ]
+
+                for m in methods:
+                    self.add_to_scope(node.owning_scope, BuiltinFunction(*m))
+
+                return None
             else:
                 # all other nodes are handled during skeleton building mode (below)
                 return []
@@ -1139,6 +1179,8 @@ class Builder2:
             return LibraryScope(node)
         elif isinstance(node, (solnodes.ContractDefinition, solnodes.InterfaceDefinition)):
             return ContractOrInterfaceScope(node)
+        elif isinstance(node, solnodes.UserValueType):
+            return self.make_scope(node, node.name.text)
         elif isinstance(node, solnodes.StructDefinition):
             return StructScope(node)
         elif isinstance(node, solnodes.EnumDefinition):
