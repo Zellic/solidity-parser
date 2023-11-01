@@ -655,7 +655,7 @@ class Builder:
             n = self.to_refine.popleft()
 
             sun = n.scope.find_first_ancestor_of(symtab.FileScope).source_unit_name
-            logging.getLogger('AST2').info(f'Processing {type(n).__name__}({n.name}) in {sun}')
+            print(f'Processing {type(n).__name__}({n.name}) in {sun}')
 
             self.refine_unit_or_part(n)
 
@@ -1600,6 +1600,9 @@ class Builder:
             # For normal definitions that have an owner, source_unit_name passed in is None. This skips this block and
             # creates the ast2 skeleton and returns it us here
             ast2_node = self.define_skeleton(ast1_node, None)
+            # this is needed as a shim as solnodes2.FileDefinition gets refined as there is no AST1 for it
+            ast2_node.ast1_node = ast1_node
+            ast2_node.is_free = True
             synthetic_toplevel.parts.append(ast2_node)
             # MUST return here, we have already processed this ast1_node above
             return ast2_node
@@ -1640,7 +1643,7 @@ class Builder:
             elif isinstance(n, solnodes1.ModifierDefinition):
                 return solnodes2.ModifierDefinition(name, [], [], None)
             else:
-                self._todo(ast1_node)
+                self._todo(n)
 
         logging.getLogger('AST2').info(f' making skeleton for {ast1_node.name} :: {source_unit_name}')
 
@@ -1752,8 +1755,14 @@ class Builder:
                         ast2_node.type_overrides.append(
                             solnodes2.LibraryOverride(self.type_helper.map_type(part.override_type), library))
 
+                    part_ast1node = None
                     if hasattr(part, 'ast2_node'):
-                        self.refine_unit_or_part(part)
+                        part_ast1node = part
+                    elif hasattr(part, 'is_free') and part.is_free:
+                        part_ast1node = part.ast1_node
+
+                    if part_ast1node:
+                        self.refine_unit_or_part(part_ast1node)
 
             # structs
             if hasattr(ast1_node, 'members'):
