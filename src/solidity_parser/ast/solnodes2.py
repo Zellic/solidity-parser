@@ -315,6 +315,9 @@ class TopLevelUnit(Node, ABC):
     def is_interface(self) -> bool:
         return isinstance(self, InterfaceDefinition)
 
+    def is_udvt(self) -> bool:
+        return isinstance(self, UserDefinedValueTypeDefinition)
+
 
 @NodeDataclass
 class ArrayType(Type):
@@ -738,6 +741,11 @@ class InterfaceDefinition(TopLevelUnit):
 class LibraryDefinition(TopLevelUnit):
     parts: List[ContractPart]
     type_overrides: List[LibraryOverride]
+
+
+@NodeDataclass
+class UserDefinedValueTypeDefinition(TopLevelUnit):
+    ttype: Type
 
 
 @NodeDataclass

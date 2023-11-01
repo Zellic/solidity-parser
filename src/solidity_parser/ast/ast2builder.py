@@ -665,7 +665,8 @@ class Builder:
         ast1_node: solnodes1.SourceUnit = user_type_symbol.value
 
         if isinstance(ast1_node, (solnodes1.ContractDefinition, solnodes1.InterfaceDefinition,
-                                  solnodes1.StructDefinition, solnodes1.LibraryDefinition, solnodes1.EnumDefinition)):
+                                  solnodes1.StructDefinition, solnodes1.LibraryDefinition, solnodes1.EnumDefinition,
+                                  solnodes1.UserValueType)):
 
             if hasattr(ast1_node, 'ast2_node'):
                 ast2_node = ast1_node.ast2_node
@@ -705,7 +706,7 @@ class Builder:
                         ast2_node = ast1_node.ast2_node
             return ast2_node
         else:
-            raise ValueError(f"Invalid user type resolve: {type(ast1_node)}")
+            raise ValueError(f"Invalid type resolve: {type(ast1_node)}")
 
     def _todo(self, node):
         self._error(f'{type(node)} not supported/implemented')
@@ -1049,6 +1050,9 @@ class Builder:
             elif isinstance(possible_base, solnodes2.Expr):
                 # e.g. myaddress.call(...)
                 return solnodes2.DynamicBuiltInCall(option_args, new_args, out_type, possible_base, sym.aliases[0])
+            elif isinstance(possible_base, solnodes2.Type):
+                self._assert_error(f'Builtin call with {possible_base} base must be a UDVT call', possible_base.is_user_type(), possible_base.value.x.is_udvt())
+                return solnodes2.DirectCall(option_args, new_args, possible_base, solnodes2.Ident(sym.aliases[0]))
         elif isinstance(sym.value, solnodes1.FunctionDefinition):
             # TODO: check for None possible_base in refine_expr
 
@@ -1637,6 +1641,8 @@ class Builder:
                 return solnodes2.LibraryDefinition(source_unit_name, name, [], [])
             elif isinstance(n, solnodes1.EnumDefinition):
                 return solnodes2.EnumDefinition(source_unit_name, name, [])
+            elif isinstance(n, solnodes1.UserValueType):
+                return solnodes2.UserDefinedValueTypeDefinition(source_unit_name, name, None)
             elif isinstance(n, solnodes1.ErrorDefinition):
                 return solnodes2.ErrorDefinition(name, [])
             elif isinstance(n, solnodes1.StateVariableDeclaration):
@@ -1715,6 +1721,9 @@ class Builder:
         if isinstance(ast1_node, solnodes1.ModifierDefinition):
             ast2_node.inputs = [self.parameter(x) for x in ast1_node.parameters]
 
+        if isinstance(ast1_node, solnodes1.UserValueType):
+            ast2_node.ttype = self.type_helper.map_type(ast1_node.value)
+
         if self.is_top_level(ast1_node):
             self.normal_toplevels.append(ast2_node)
             self.to_refine.append(ast1_node)
@@ -1728,7 +1737,7 @@ class Builder:
                                       solnodes1.EnumDefinition, solnodes1.ErrorDefinition,
                                       solnodes1.FunctionDefinition, solnodes1.EventDefinition,
                                       solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration,
-                                      solnodes1.ModifierDefinition,
+                                      solnodes1.ModifierDefinition, solnodes1.UserValueType,
                                       # Special case
                                       solnodes2.FileDefinition)) and not is_file_def:
             raise ValueError('x')
