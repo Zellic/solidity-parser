@@ -481,34 +481,10 @@ class LibraryScope(ScopeAndSymbol):
     def __init__(self, ast_node: solnodes.LibraryDefinition):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
 
-    def set_parent_scope(self, parent_scope: Scope):
-        assert isinstance(parent_scope, FileScope)
-        return ScopeAndSymbol.set_parent_scope(self, parent_scope)
-
 
 class ContractOrInterfaceScope(ScopeAndSymbol):
     def __init__(self, ast_node: Union[solnodes.ContractDefinition, solnodes.InterfaceDefinition]):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
-        self._proxy_address_called = False
-
-    def set_parent_scope(self, parent_scope: Scope):
-        assert isinstance(parent_scope, FileScope)
-        return ScopeAndSymbol.set_parent_scope(self, parent_scope)
-
-    # def _proxy_address_scope(self):
-        # "Prior to version 0.5.0, Solidity allowed address members to be accessed by a contract instance, for example
-        # this.balance. This is now forbidden and an explicit conversion to address must be done: address(this).balance"
-        #
-        #  We import the address symbols here as we need to do this after this Contract scope has been fully loaded,
-        # i.e. if we did this during symbol table creation, we would need to add a DFS postorder hook. Instead I've
-        # just deferred it to the first time it's required
-
-        # if self._proxy_address_called:
-        #     return
-        # self._proxy_address_called = True
-        #
-        # address_scope = self.find_type(solnodes.AddressType(False))
-        # self.import_symbols_from_scope(address_scope)
 
     def find_current_level(self, name: str, predicate=None) -> Optional[List[Symbol]]:
         found_already = set()
@@ -551,27 +527,15 @@ class StructScope(ScopeAndSymbol):
     def __init__(self, ast_node: solnodes.StructDefinition):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
 
-    def set_parent_scope(self, parent_scope: Scope):
-        assert isinstance(parent_scope, (FileScope, ContractOrInterfaceScope, LibraryScope))
-        return ScopeAndSymbol.set_parent_scope(self, parent_scope)
-
 
 class LibraryScope(ScopeAndSymbol):
     def __init__(self, ast_node: solnodes.LibraryDefinition):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
 
-    def set_parent_scope(self, parent_scope: Scope):
-        assert isinstance(parent_scope, FileScope)
-        return ScopeAndSymbol.set_parent_scope(self, parent_scope)
-
 
 class EnumScope(ScopeAndSymbol):
     def __init__(self, ast_node: solnodes.EnumDefinition):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
-
-    def set_parent_scope(self, parent_scope: Scope):
-        assert isinstance(parent_scope, (FileScope, ContractOrInterfaceScope, LibraryScope, EnumScope))
-        return ScopeAndSymbol.set_parent_scope(self, parent_scope)
 
 
 class ModFunErrEvtScope(ScopeAndSymbol):
@@ -1046,7 +1010,8 @@ class Builder2:
 
         # get the functions in the target library and import them under the scope of the 1st param type
         for s in using_symbols:
-            self.add_to_scope(scope_to_add_to, s)
+            if s:
+                self.add_to_scope(scope_to_add_to, s)
 
     def find_using_current_scope(self, context):
         # required since now usings can be put in the file scope
@@ -1082,7 +1047,8 @@ class Builder2:
             using_symbols.append(self.get_using_function_symbol_for_func(target_type, target_type_scope, symbol, operator))
 
         for s in using_symbols:
-            self.add_to_scope(scope_to_add_to, s)
+            if s:
+                self.add_to_scope(scope_to_add_to, s)
 
     def process_using_directive(self, node: solnodes.UsingDirective, context: Context):
         if isinstance(node.override_type, solnodes.AnyType):
