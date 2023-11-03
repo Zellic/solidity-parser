@@ -1610,7 +1610,7 @@ class FunctionPointerCall(Call):
 @NodeDataclass
 class DynamicBuiltInCall(Call):
     ttype: Type
-    base: Expr
+    base: Union[Expr, ResolvedUserType]
     name: str
 
     def type_of(self) -> Type:

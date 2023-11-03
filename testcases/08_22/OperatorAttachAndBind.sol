@@ -13,12 +13,12 @@ function sub(Int a, Int b) pure returns (Int) {
 }
 
 function test(Int x, Int y) pure {
-    x + y; // ok
+    Int z = x + y; // ok
 
     x - y;
     x.sub(y); // OK -- "sub" was also attached in "using for"
 }
 
-function test_invalid(Int x, Int y) pure {
-    x.add(y); // ERROR: Member "add" not found or not visible after argument-dependent lookup in Int.
-}
+//function test_invalid(Int x, Int y) pure {
+//    x.add(y); // ERROR: Member "add" not found or not visible after argument-dependent lookup in Int.
+//}

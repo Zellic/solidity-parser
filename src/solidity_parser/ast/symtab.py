@@ -684,7 +684,7 @@ class UsingFunctionSymbol(Symbol):
 class UsingOperatorSymbol(Symbol):
     def __init__(self, target: ModFunErrEvtScope, override_type: solnodes.Type, operator: Union[solnodes.UnaryOpCode, solnodes.BinaryOpCode]):
         assert isinstance(target.value, solnodes.FunctionDefinition)
-        Symbol.__init__(self, target.aliases, target.value)
+        Symbol.__init__(self, f'{str(operator.value)}', target.value)
         self.target = target
         self.override_type = override_type
         self.operator = operator
