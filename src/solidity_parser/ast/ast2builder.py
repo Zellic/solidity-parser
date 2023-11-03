@@ -1052,7 +1052,7 @@ class Builder:
                 return solnodes2.DynamicBuiltInCall(option_args, new_args, out_type, possible_base, sym.aliases[0])
             elif isinstance(possible_base, solnodes2.Type):
                 self._assert_error(f'Builtin call with {possible_base} base must be a UDVT call', possible_base.is_user_type(), possible_base.value.x.is_udvt())
-                return solnodes2.DirectCall(option_args, new_args, possible_base, solnodes2.Ident(sym.aliases[0]))
+                return solnodes2.DynamicBuiltInCall(option_args, new_args, out_type, possible_base, sym.aliases[0])
         elif isinstance(sym.value, solnodes1.FunctionDefinition):
             # TODO: check for None possible_base in refine_expr
 
@@ -1158,6 +1158,29 @@ class Builder:
 
         return False
 
+    def refine_bound_operator(self, expr, inputs: List[solnodes2.Expr]):
+        input_types = [a.type_of() for a in inputs]
+        # atm these operators are left associative for binary operators and both input types must match, just use the
+        # first type arbitrarily
+        udvt_scopes = self.type_helper.scopes_for_type(expr, input_types[0])
+        # lookup the symbol via the operator symbol itself, e.g. '-', '+' , etc . This is so 2ary sub and 1arg neg can
+        # be found with both UnaryOpCode.NEG and BinaryOpCode.SUB as they are both represented with '-'.
+        sym_name = str(expr.op.value)
+        member_symbols = [scope_symbols for s in udvt_scopes if (scope_symbols := s.find_single(sym_name))]
+
+        self._assert_error(f'Too many bound functions for {sym_name} operator: {member_symbols}',
+                           len(member_symbols) <= 1)
+
+        if len(member_symbols) == 1:
+            binding_f: solnodes2.FunctionDefinition = member_symbols[0].value.ast2_node
+            arg_types = [p.var.ttype for p in binding_f.inputs]
+            # currently only matching types are allowed (no implicit casts)
+            self._assert_error(f'Mismatched arg types: {arg_types} vs {input_types}', arg_types == input_types)
+            return solnodes2.DirectCall([], inputs, binding_f.parent.as_type(),
+                                        solnodes2.Ident(binding_f.name.text))
+        else:
+            self._error(f'No bound functions for {sym_name} operator')
+
     @error_context
     def refine_expr(self, expr: solnodes1.Expr, is_function_callee=False, allow_type=False, allow_tuple_exprs=False,
                     allow_multiple_exprs=False, allow_none=True, allow_stmt=False, is_argument=False,
@@ -1167,11 +1190,21 @@ class Builder:
             return None
 
         if isinstance(expr, solnodes1.UnaryOp):
-            return solnodes2.UnaryOp(self.refine_expr(expr.expr), expr.op, expr.is_pre)
+            refined_expr = self.refine_expr(expr.expr)
+            expr_type = refined_expr.type_of()
+
+            if expr_type.is_user_type() and expr_type.value.x.is_udvt():
+                return self.refine_bound_operator(expr, [refined_expr])
+            return solnodes2.UnaryOp(refined_expr, expr.op, expr.is_pre)
         elif isinstance(expr, solnodes1.BinaryOp):
             left = self.refine_expr(expr.left, allow_tuple_exprs=True)
             # (_lhRound, _lhTime) = (guessRound, guessTime); is allowed so RHS can also have a tuple expr
             right = self.refine_expr(expr.right, is_assign_rhs=True, allow_tuple_exprs=True)
+
+            left_type, right_type = left.type_of(), right.type_of()
+
+            if left_type.is_user_type() and left_type.value.x.is_udvt() and right_type.is_user_type() and right_type.value.x.is_udvt():
+                return self.refine_bound_operator(expr, [left, right])
 
             def make_assign(lhs, rhs, is_array_length_minus=False):
                 if isinstance(lhs, solnodes2.StateVarLoad):
@@ -1613,6 +1646,7 @@ class Builder:
             ast2_node.ast1_node = ast1_node
             ast2_node.is_free = True
             synthetic_toplevel.parts.append(ast2_node)
+            synthetic_toplevel._set_child_parents()
             # MUST return here, we have already processed this ast1_node above
             return ast2_node
 
