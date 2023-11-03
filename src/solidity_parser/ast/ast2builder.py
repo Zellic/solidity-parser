@@ -178,6 +178,15 @@ class TypeHelper:
             else:
                 return self.builder._todo(base_type)
         elif isinstance(expr, solnodes1.BinaryOp):
+            t1 = self.get_expr_type(expr.left, force_tuple=expr.op.name.startswith('ASSIGN'))
+            t2 = self.get_expr_type(expr.right)
+
+            if t1.is_user_type() and t1.value.x.is_udvt() and t2.is_user_type() and t2.value.x.is_udvt():
+                member_symbol = self.builder.find_bound_operator_symbol(expr, [t1, t2])
+                output_params = member_symbol.value.returns
+                self.builder._assert_error('Not handled', len(output_params) == 1)
+                return self.map_type(output_params[0].var_type)
+
             if expr.op in [solnodes1.BinaryOpCode.BOOL_AND, solnodes1.BinaryOpCode.BOOL_OR, solnodes1.BinaryOpCode.EQ,
                            solnodes1.BinaryOpCode.NEQ]:
                 return solnodes2.BoolType()
@@ -203,8 +212,6 @@ class TypeHelper:
                 # If this is an assign, i.e. X = Y, then X can be a tuple (synthetically in Solidity) but
                 # otherwise tuples don't exist
                 # i.e. allow (a,b) = f() but not x + f() where f() returns (int, int)
-                t1 = self.get_expr_type(expr.left, force_tuple=expr.op.name.startswith('ASSIGN'))
-                t2 = self.get_expr_type(expr.right)
                 if expr.op != solnodes1.BinaryOpCode.ASSIGN:
                     # can only compare ints, but we can't use t1 == t2 as we can compare different int types, e.g.
                     # this.x (uint256) == 0 (uint8)
@@ -248,9 +255,17 @@ class TypeHelper:
                     else:
                         assert False, 'No base type?'
         elif isinstance(expr, solnodes1.UnaryOp):
+            expr_type = self.get_expr_type(expr.expr)
+            
+            if expr_type.is_user_type() and expr_type.value.x.is_udvt():
+                member_symbol = self.builder.find_bound_operator_symbol(expr, [expr_type])
+                output_params = member_symbol.value.returns
+                self.builder._assert_error('Not handled', len(output_params) == 1)
+                return self.map_type(output_params[0].var_type)
+
             if expr.op in [solnodes1.UnaryOpCode.INC, solnodes1.UnaryOpCode.DEC, solnodes1.UnaryOpCode.SIGN_NEG,
                            solnodes1.UnaryOpCode.SIGN_POS, solnodes1.UnaryOpCode.BIT_NEG]:
-                return self.get_expr_type(expr.expr)
+                return expr_type
             elif expr.op == solnodes1.UnaryOpCode.BOOL_NEG:
                 return solnodes2.BoolType()
             else:
@@ -1158,8 +1173,8 @@ class Builder:
 
         return False
 
-    def refine_bound_operator(self, expr, inputs: List[solnodes2.Expr]):
-        input_types = [a.type_of() for a in inputs]
+    def find_bound_operator_symbol(self, expr: Union[solnodes1.UnaryOp, solnodes1.BinaryOp],
+                                   input_types: List[solnodes2.Type]):
         # atm these operators are left associative for binary operators and both input types must match, just use the
         # first type arbitrarily
         udvt_scopes = self.type_helper.scopes_for_type(expr, input_types[0])
@@ -1170,16 +1185,20 @@ class Builder:
 
         self._assert_error(f'Too many bound functions for {sym_name} operator: {member_symbols}',
                            len(member_symbols) <= 1)
+        self._error(f'No bound functions for {sym_name} operator', len(member_symbols) == 1)
 
-        if len(member_symbols) == 1:
-            binding_f: solnodes2.FunctionDefinition = member_symbols[0].value.ast2_node
-            arg_types = [p.var.ttype for p in binding_f.inputs]
-            # currently only matching types are allowed (no implicit casts)
-            self._assert_error(f'Mismatched arg types: {arg_types} vs {input_types}', arg_types == input_types)
-            return solnodes2.DirectCall([], inputs, binding_f.parent.as_type(),
-                                        solnodes2.Ident(binding_f.name.text))
-        else:
-            self._error(f'No bound functions for {sym_name} operator')
+        return member_symbols[0]
+
+    def refine_bound_operator(self, expr: Union[solnodes1.UnaryOp, solnodes1.BinaryOp],
+                              inputs: List[solnodes2.Expr]):
+        input_types = [a.type_of() for a in inputs]
+        function_symbol = self.find_bound_operator_symbol(expr, input_types)
+        binding_f: solnodes2.FunctionDefinition = function_symbol.value.ast2_node
+        arg_types = [p.var.ttype for p in binding_f.inputs]
+        # currently only matching types are allowed (no implicit casts)
+        self._assert_error(f'Mismatched arg types: {arg_types} vs {input_types}', arg_types == input_types)
+        return solnodes2.DirectCall([], inputs, binding_f.parent.as_type(),
+                                    solnodes2.Ident(binding_f.name.text))
 
     @error_context
     def refine_expr(self, expr: solnodes1.Expr, is_function_callee=False, allow_type=False, allow_tuple_exprs=False,
