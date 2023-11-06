@@ -1,6 +1,6 @@
 from dataclasses import dataclass, replace as copy_dataclass
 from typing import List, Union, Dict, Deque
-from collections import deque
+from collections import deque, defaultdict
 from copy import deepcopy
 
 from solidity_parser.ast import solnodes as solnodes1
@@ -80,14 +80,23 @@ class TypeHelper:
                 if allow_multiple:
                     return [self.symbol_to_ast2_type(s) for s in expr.scope.find(text)]
                 else:
-                    symbol = expr.scope.find_single(text, predicate=symtab.ACCEPT_INHERITABLE(expr.scope))
-                    # TODO: error if none
-                    return self.symbol_to_ast2_type(symbol)
+                    inheritable_predicate = symtab.ACCEPT_INHERITABLE(expr.scope)
+                    pred1 = symtab.ACCEPT_ALL(symtab.ACCEPT_NOT(symtab.ACCEPT_CALLABLES), inheritable_predicate)
+                    ident_symbol = expr.scope.find_single(expr.text, predicate=pred1)
+                    if not ident_symbol:
+                        pred2 = symtab.ACCEPT_ALL(symtab.ACCEPT_CALLABLES, inheritable_predicate)
+                        ident_symbol = expr.scope.find_single(expr.text, predicate=pred2)
+
+                    if not ident_symbol:
+                        return self.builder._error(f'Unresolved reference to {expr.text}')
+
+                    return self.symbol_to_ast2_type(ident_symbol)
         elif isinstance(expr, solnodes1.GetMember):
             base_type = self.get_expr_type(expr.obj_base)
             member = expr.name.text
 
-            scopes = self.scopes_for_type(expr, base_type)
+            find_direct_scope = isinstance(expr.obj_base, (solnodes1.BytesType, solnodes1.StringType))
+            scopes = self.scopes_for_type(expr, base_type, use_encoded_type_key=not find_direct_scope)
 
             if allow_multiple:
                 for s in scopes:
@@ -256,7 +265,7 @@ class TypeHelper:
                         assert False, 'No base type?'
         elif isinstance(expr, solnodes1.UnaryOp):
             expr_type = self.get_expr_type(expr.expr)
-            
+
             if expr_type.is_user_type() and expr_type.value.x.is_udvt():
                 member_symbol = self.builder.find_bound_operator_symbol(expr, [expr_type])
                 output_params = member_symbol.value.returns
@@ -340,6 +349,13 @@ class TypeHelper:
 
         def is_cast_call(t):
             return isinstance(t, solnodes2.Type) and not t.is_function() and not t.is_mapping()
+
+        # de-deplicate the callables. This is because we don't have 'base' information for these types like we do
+        # when we refine function calls in the builder. The get_expr_type call can return functions that are overriden
+        # giving us multiples of the same types, e.g. B extends A, B.f overrides A.f, get_expr_type returns 2x the
+        # return type of f.
+        # not order preserving though
+        callable_ttypes = list(set(callable_ttypes))
 
         type_calls = [is_cast_call(ft) for ft in callable_ttypes]
         assert TypeHelper.any_or_all(type_calls)
@@ -498,7 +514,7 @@ class TypeHelper:
             return solnodes2.FunctionType(self.param_types(value.parameters), [])
         assert False, f'{type(value)}'
 
-    def scopes_for_type(self, node: solnodes1.Node, ttype: solnodes2.Type) -> List[symtab.Scope]:
+    def scopes_for_type(self, node: solnodes1.Node, ttype: solnodes2.Type, use_encoded_type_key=True) -> List[symtab.Scope]:
         if isinstance(ttype, solnodes2.SuperType):
             return c3_linearise(self.builder.get_declaring_contract_scope(node))
         elif isinstance(ttype, solnodes2.ResolvedUserType):
@@ -525,7 +541,12 @@ class TypeHelper:
                            and isinstance(ttype.ttype.value.x, solnodes2.InterfaceDefinition)
             scope = node.scope.find_metatype(ttype.ttype, is_interface)
         else:
-            scope = node.scope.find_type(ttype)
+            if use_encoded_type_key:
+                # encoded as <type:X>
+                scope = node.scope.find_type(ttype)
+            else:
+                # used for 'bytes' and 'string' .concat. They are builtin scopes with builtin calls
+                scope = node.scope.find_single(str(ttype))
 
         assert isinstance(scope, symtab.Scope)
         return [scope]
@@ -686,7 +707,8 @@ class Builder:
             if hasattr(ast1_node, 'ast2_node'):
                 ast2_node = ast1_node.ast2_node
             else:
-                parent_scope = user_type_symbol.parent_scope
+                # this starts at the parent_scope and tries to match then recurses up
+                parent_scope = user_type_symbol.parent_scope.find_first_ancestor(predicate=symtab.ACCEPT_TOP_LEVEL_SCOPE)
 
                 if isinstance(parent_scope, symtab.FileScope):
                     source_unit_name = parent_scope.source_unit_name
@@ -849,7 +871,16 @@ class Builder:
 
     def refine_call_function(self, expr, allow_error=False, allow_stmt=False, allow_event=False):
         def create_new_args():
-            return [self.refine_expr(arg, is_argument=True) for arg in expr.args]
+            results = []
+            for ast1_arg in expr.args:
+                ast2_arg = self.refine_expr(ast1_arg, is_argument=True)
+                if isinstance(ast2_arg, list):
+                    # this currently only happens for tuples of exprs (not tuples of types) in the 2nd arg of
+                    # abi.encodeCall calls
+                    results.extend(ast2_arg)
+                else:
+                    results.append(ast2_arg)
+            return results
 
         def create_option_args():
             return [solnodes2.NamedArgument(solnodes2.Ident(arg.name), self.refine_expr(arg.value)) for arg in expr.modifiers]
@@ -1066,8 +1097,13 @@ class Builder:
                 # e.g. myaddress.call(...)
                 return solnodes2.DynamicBuiltInCall(option_args, new_args, out_type, possible_base, sym.aliases[0])
             elif isinstance(possible_base, solnodes2.Type):
-                self._assert_error(f'Builtin call with {possible_base} base must be a UDVT call', possible_base.is_user_type(), possible_base.value.x.is_udvt())
-                return solnodes2.DynamicBuiltInCall(option_args, new_args, out_type, possible_base, sym.aliases[0])
+                if possible_base.is_user_type() and possible_base.value.x.is_udvt():
+                    self._assert_error(f'Builtin call with {possible_base} base must be a UDVT call', possible_base.value.x.is_udvt())
+                    return solnodes2.DynamicBuiltInCall(option_args, new_args, out_type, possible_base, sym.aliases[0])
+                else:
+                    # bytes.concat, string.concat
+                    name = f'{str(possible_base)}.{sym.aliases[0]}'
+                    return solnodes2.BuiltInCall(option_args, new_args, name, out_type)
         elif isinstance(sym.value, solnodes1.FunctionDefinition):
             # TODO: check for None possible_base in refine_expr
 
@@ -1200,6 +1236,34 @@ class Builder:
         return solnodes2.DirectCall([], inputs, binding_f.parent.as_type(),
                                     solnodes2.Ident(binding_f.name.text))
 
+    def get_function_call_symbol_base(self, s: symtab.Symbol):
+        # the symbol base is any context that is required to differentiate this symbol from others
+        s = s.resolve_base_symbol()
+        if self.is_top_level(s.value):
+            # direct type reference, e.g. MyContract -> no base
+            return None
+        if isinstance(s, (symtab.BuiltinFunction, symtab.BuiltinObject, symtab.BuiltinValue)):
+            # These aren't based on a concrete base
+            return None
+        if isinstance(s.value, solnodes1.Var):
+            # local var has no base
+            return None
+        # otherwise we choose the base as the type of the declarer, e.g. if the symbol is x in C
+        # then C is the base of x
+        s_contract = self.get_declaring_contract_scope_in_scope(s)
+        return self.type_helper.get_contract_type(s_contract)
+
+    def get_function_callee_buckets(self, symbols: List[symtab.Symbol]):
+        # split the bucket by shared bases
+        new_buckets = {}
+        for symbol in symbols:
+            base = self.get_function_call_symbol_base(symbol)
+            if base not in new_buckets:
+                new_buckets[base] = []
+            new_buckets[base].append(symbol)
+
+        return [Builder.FunctionCallee(base, symbols) for base, symbols in new_buckets.items()]
+
     @error_context
     def refine_expr(self, expr: solnodes1.Expr, is_function_callee=False, allow_type=False, allow_tuple_exprs=False,
                     allow_multiple_exprs=False, allow_none=True, allow_stmt=False, is_argument=False,
@@ -1220,10 +1284,10 @@ class Builder:
             # (_lhRound, _lhTime) = (guessRound, guessTime); is allowed so RHS can also have a tuple expr
             right = self.refine_expr(expr.right, is_assign_rhs=True, allow_tuple_exprs=True)
 
-            left_type, right_type = left.type_of(), right.type_of()
-
-            if left_type.is_user_type() and left_type.value.x.is_udvt() and right_type.is_user_type() and right_type.value.x.is_udvt():
-                return self.refine_bound_operator(expr, [left, right])
+            if 'ASSIGN' not in str(expr.op):
+                left_type, right_type = left.type_of(), right.type_of()
+                if left_type.is_user_type() and left_type.value.x.is_udvt() and right_type.is_user_type() and right_type.value.x.is_udvt():
+                    return self.refine_bound_operator(expr, [left, right])
 
             def make_assign(lhs, rhs, is_array_length_minus=False):
                 if isinstance(lhs, solnodes2.StateVarLoad):
@@ -1292,6 +1356,9 @@ class Builder:
             elif is_argument:
                 # for arguments, types can sometimes be passed, e.g. abi.decode(x, bool)
                 return solnodes2.TypeLiteral(self.type_helper.map_type(expr))
+            elif allow_type:
+                # base of bytes/string.concat
+                return self.type_helper.map_type(expr)
         elif isinstance(expr, solnodes1.Ident):
             # We should only reach this if this Ident is a reference to a variable load. This shouldn't be
             # hit when resolving other uses of Idents
@@ -1309,54 +1376,43 @@ class Builder:
             # function callees. we don't know the actual callee that is required here because that depends on
             # context (arguments, types, etc) that is part of the function call and not encoded in this identifier.
             if is_function_callee:
-                def symbol_base(s):
-                    # the symbol base is any context that is required to differentiate this symbol from others
-                    s = s.resolve_base_symbol()
-                    if self.is_top_level(s.value):
-                        # direct type reference, e.g. MyContract -> no base
-                        return None
-                    if isinstance(s, (symtab.BuiltinFunction, symtab.BuiltinObject, symtab.BuiltinValue)):
-                        # These aren't based on a concrete base
-                        return None
-                    if isinstance(s.value, solnodes1.Var):
-                        # local var has no base
-                        return None
-                    # otherwise we choose the base as the type of the declarer, e.g. if the symbol is x in C
-                    # then C is the base of x
-                    s_contract = self.get_declaring_contract_scope_in_scope(s)
-                    return self.type_helper.get_contract_type(s_contract)
-
-                def symbol_bases(bucket):
-                    # split the bucket by shared bases
-                    new_buckets = {}
-                    for symbol in bucket:
-                        base = symbol_base(symbol)
-                        if base not in new_buckets:
-                            new_buckets[base] = []
-                        new_buckets[base].append(symbol)
-
-                    return [Builder.FunctionCallee(base, symbols) for base, symbols in new_buckets.items()]
-
                 if expr.text == 'address':
                     # weird grammar edge case where it's parsed as an ident instead of a type
                     ttype = solnodes1.AddressType(is_payable=False)
 
                     # FIXME: surely this is always true?
                     if is_function_callee:
+                        # types have no 'base' as function callees
                         return [Builder.FunctionCallee(None, [expr.scope.find_type(ttype)])]
                     elif is_argument:
                         return solnodes2.TypeLiteral(self.type_helper.map_type(ttype))
                 else:
                     # normal case, find the symbol in the scope of this ident
                     bucket = expr.scope.find(expr.text)
-                    return symbol_bases(bucket)
+                    return self.get_function_callee_buckets(bucket)
 
-            ident_symbol = expr.scope.find_single(expr.text, predicate=symtab.ACCEPT_INHERITABLE(expr.scope))
+            # Really yucky behaviour here:
+            #  Contract B extends Interface A
+            #  A has a function f() returns (uint) that has no definition
+            #  B has a public state variable f of type uint
+            # An implicit getter is generated for f in B which fulfils the implementation of f() for A
+            # ACCEPT_INHERITABLE filter gives us both A.f and B.f but we only want one here
+            # We can't change the behaviour of symtab find for this because there are cases when looking up functions
+            # that we need to load all of the name matching functions in B and A when doing function call lookup
+            # (we could change that but it's tricky: requires test cases before we do)
+            # But we can't exclude functions here because we might be looking at a function pointer reference.
+            # So instead first look for non callables(i.e. functions) then if that fails find callables
+            inheritable_predicate = symtab.ACCEPT_INHERITABLE(expr.scope)
+            pred1 = symtab.ACCEPT_ALL(symtab.ACCEPT_NOT(symtab.ACCEPT_CALLABLES), inheritable_predicate)
+            ident_symbol = expr.scope.find_single(expr.text, predicate=pred1)
+            if not ident_symbol:
+                pred2 = symtab.ACCEPT_ALL(symtab.ACCEPT_CALLABLES, inheritable_predicate)
+                ident_symbol = expr.scope.find_single(expr.text, predicate=pred2)
+
             if not ident_symbol:
                 return self._error(f'Unresolved reference to {expr.text}')
 
             ident_symbol = ident_symbol.resolve_base_symbol()
-            assert ident_symbol  # must be resolved to something
 
             if isinstance(ident_symbol, symtab.BuiltinValue):
                 base_scope = ident_symbol.parent_scope
@@ -1403,7 +1459,8 @@ class Builder:
             base_type: solnodes2.Type = self.type_helper.get_expr_type(expr.obj_base)
 
             if not isinstance(base_type, solnodes2.FunctionType):
-                base_scopes = self.type_helper.scopes_for_type(base, base_type)
+                find_direct_scope = isinstance(base, (solnodes1.BytesType, solnodes1.StringType))
+                base_scopes = self.type_helper.scopes_for_type(base, base_type, use_encoded_type_key=not find_direct_scope)
 
                 member_symbols = [scope_symbols for s in base_scopes if (scope_symbols := s.find(mname))]
 
@@ -1414,9 +1471,29 @@ class Builder:
                         bucket_base = base_type
                     else:
                         bucket_base = self.refine_expr(base, allow_type=True)
+
+                    callees = []
+                    for bucket in member_symbols:
+                        split_buckets = defaultdict(list)
+                        for real_sym in bucket:
+                            resolved_sym = real_sym.resolve_base_symbol()
+                            # direct type reference, e.g. MyContract -> no base
+                            sym_base = None if self.is_top_level(resolved_sym.value) else bucket_base
+                            split_buckets[sym_base].append(real_sym)
+                        for split_bucket_base, split_bucket in split_buckets.items():
+                            callees.append(Builder.FunctionCallee(split_bucket_base, split_bucket))
+
                     # assert len(member_symbols) == 1 # 1 bucket for now, need to investigate
                     # Create callee objects
-                    return [Builder.FunctionCallee(bucket_base, bucket) for bucket in member_symbols]
+                    # return [Builder.FunctionCallee(bucket_base, bucket) for bucket in member_symbols]
+                    return callees
+                elif is_argument:
+                    # this is the first param in abi.encodeCall(A.f, ...)
+                    # TODO: can this be ambiguous or does the reference always select a single function
+                    if len(member_symbols) == 1 and len(member_symbols[0]) == 1:
+                        func_sym = member_symbols[0][0]
+                        if isinstance(func_sym.value, solnodes1.FunctionDefinition):
+                            return solnodes2.GetFunctionPointer(solnodes2.Ref(func_sym.value.ast2_node))
 
                 # if sum(len(xs) for xs in member_symbols) > 1:
                 #     logging.getLogger('AST2').info(
@@ -1514,8 +1591,13 @@ class Builder:
                     # that the parent is a return and as a special case to function, we return a list of the values
                     # instead of an Expr type. The parent case for Return can handle returning a list as well.
                     # This is also true for the LHS of var stores and in ExprStmts
-                    assert allow_tuple_exprs
-                    return [self.refine_expr(e, is_assign_rhs=is_assign_rhs) for e in expr.value]
+
+                    # update: this is now allowed (at some point in 0.8, but used in 0.8.11 for abi.encodeCall)
+                    # e.g. abi.encodeCall(A.f, (myVar1, myExpr2)) we return a list of exprs that the parent must
+                    # inline/handle
+                    if is_argument or allow_tuple_exprs:
+                        return [self.refine_expr(e, is_assign_rhs=is_assign_rhs) for e in expr.value]
+                    self._todo(expr)
             elif isinstance(expr.value, solnodes1.Type):
                 self._todo(expr)
             else:
@@ -1715,6 +1797,13 @@ class Builder:
         ast1_node.ast2_node = ast2_node
         ast2_node.comments = ast1_node.comments
 
+        # contracts, interfaces
+        if hasattr(ast1_node, 'inherits'):
+            ast2_node.inherits = [
+                solnodes2.InheritSpecifier(self.type_helper.get_user_type(x.name), [])
+                for x in ast1_node.inherits
+            ]
+
         if hasattr(ast1_node, 'parts'):
             for p in ast1_node.parts:
                 if self.is_top_level(p):
@@ -1752,6 +1841,12 @@ class Builder:
                             ast2_node.parts.append(mapping_getter_func)
                             logging.getLogger('AST2').debug(f"generating mapping getter: {mapping_getter_func.name.code_str()} :: {mapping_getter_func.outputs[0].var.ttype.code_str()}")
 
+        # structs
+        if hasattr(ast1_node, 'members'):
+            ast2_node.members = [
+                solnodes2.StructMember(self.type_helper.map_type(x.member_type), solnodes2.Ident(x.name.text)) for x in
+                ast1_node.members]
+
         # need to define inputs (and maybe outputs) for functions so that function calls can be resolved during
         # DirectCall.type_of() calls
         if isinstance(ast1_node, solnodes1.FunctionDefinition):
@@ -1781,6 +1876,8 @@ class Builder:
             self.normal_toplevels.append(ast2_node)
             self.to_refine.append(ast1_node)
 
+        ast2_node._set_child_parents()
+
         return ast2_node
 
     def refine_unit_or_part(self, ast1_node: Union[solnodes1.SourceUnit, solnodes2.FileDefinition]):
@@ -1806,10 +1903,8 @@ class Builder:
 
             # contracts, interfaces
             if hasattr(ast1_node, 'inherits'):
-                ast2_node.inherits = [
-                    solnodes2.InheritSpecifier(self.type_helper.get_user_type(x.name), [self.refine_expr(arg) for arg in x.args])
-                    for x in ast1_node.inherits
-                ]
+                for ast1_inherit, ast2_inherit in zip(ast1_node.inherits, ast2_node.inherits):
+                    ast2_inherit.args = [self.refine_expr(arg) for arg in ast1_inherit.args]
 
             # contracts, interfaces, libraries, filedef
             if hasattr(ast1_node, 'parts'):
@@ -1819,7 +1914,17 @@ class Builder:
                             library_scope = part.scope.find_single(part.library_name.text, find_base_symbol=True)
                             assert isinstance(library_scope.value, solnodes1.LibraryDefinition)
                             library = self.type_helper.get_contract_type(part.scope.find_single(part.library_name.text))
-                            ast2_node.type_overrides.append(
+                            if isinstance(part.override_type, solnodes1.AnyType):
+                                for sym in library_scope.all_symbols():
+                                    if isinstance(sym.value, solnodes1.FunctionDefinition):
+                                        input_params = sym.value.parameters
+                                        if input_params:
+                                            override_type = input_params[0].var_type
+                                            ast2_node.type_overrides.append(solnodes2.LibraryOverride(
+                                                self.type_helper.map_type(override_type), library))
+
+                            else:
+                                ast2_node.type_overrides.append(
                                 solnodes2.LibraryOverride(self.type_helper.map_type(part.override_type), library))
                         else:
                             # TODO: free function version of this
@@ -1833,12 +1938,6 @@ class Builder:
 
                     if part_ast1node:
                         self.refine_unit_or_part(part_ast1node)
-
-            # structs
-            if hasattr(ast1_node, 'members'):
-                ast2_node.members = [
-                    solnodes2.StructMember(self.type_helper.map_type(x.member_type), solnodes2.Ident(x.name.text)) for x in
-                    ast1_node.members]
 
         def refine_node(n):
             n.refined = True
