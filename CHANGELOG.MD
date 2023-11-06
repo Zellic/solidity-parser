@@ -22,3 +22,4 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Fixed issues with loading 'free' source unit types during AST2 building
 - Added `abi.encodeCall` builtin
 - Fixed issue with qualified type casts, e.g. `MyA.MyB(value)`
+- Fixed overriding function modifier lookup issue

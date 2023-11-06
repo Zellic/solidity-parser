@@ -1689,14 +1689,28 @@ class Builder:
         elif isinstance(node, solnodes1.OverrideSpecifier):
             return solnodes2.OverrideSpecifier([self.type_helper.get_user_type(t) for t in node.arguments])
         elif isinstance(node, solnodes1.InvocationModifier):
-            target = self.type_helper.get_expr_type(node.name)
+            target = self.type_helper.get_expr_type(node.name, allow_multiple=True)
+
+            if isinstance(target, list):
+                # deduplicate
+                deduplicated_targets = list(set(target))
+                self._assert_error(f'InvocationModifier resolved to too many targets: {deduplicated_targets}', len(deduplicated_targets) == 1)
+                target = deduplicated_targets[0]
+
             if isinstance(target, solnodes2.ResolvedUserType):
                 node_klass = solnodes2.SuperConstructorInvocationModifier
             elif target.is_function():
                 # actually it's a modifier definition that this resolves to
-                mod_def = node.scope.find_single(node.name.text).value
+                mod_defs = node.scope.find(node.name.text)
+                if len(mod_defs) > 1:
+                    # If we have multiple matches, check that they are part of an override chain and pick the first one
+                    symbol_sources = [self.get_declaring_contract_scope_in_scope(d) for d in mod_defs]
+                    are_sub_contracts = all(
+                        [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                    self._assert_error(f'{node.name.text} has too many target definitions ({len(mod_defs)})', are_sub_contracts)
+
+                target = solnodes2.Ref(mod_defs[0].value)
                 node_klass = solnodes2.FunctionInvocationModifier
-                target = solnodes2.Ref(mod_def)
             else:
                 self._todo(node)
             return node_klass(target, [self.refine_expr(e) for e in node.arguments] if node.arguments else [])
