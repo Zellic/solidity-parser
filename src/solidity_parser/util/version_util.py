@@ -17,6 +17,20 @@ class Version:
         """
         return self.major >= testing_version.major and self.minor >= testing_version.minor and self.patch >= testing_version.patch
 
+    def __str__(self):
+        return f'{self.major}.{self.minor}.{self.patch}'
+
+
+def extract_version_from_src_input(txt: str) -> Version:
+    ind = txt.find('pragma solidity')
+    if ind == -1:
+        raise ValueError('No \'pragma solidity\' found in file')
+    ind2 = txt.find(';', ind)
+    if ind2 == -1:
+        raise ValueError('No ending semicolon for version string')
+    version_txt = txt[ind + len('pragma solidity') + 1:ind2].strip()
+    return parse_version(version_txt)
+
 
 def parse_version(ver_text: str) -> Version:
     results = VERSION_PATTERN.search(ver_text)

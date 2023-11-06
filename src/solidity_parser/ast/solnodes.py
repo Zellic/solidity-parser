@@ -45,6 +45,14 @@ class Expr(Node):
     pass
 
 
+@dataclass
+class Ident(Expr):
+    """ String identifier node """
+    text: str
+
+    def __str__(self): return self.text
+
+
 class Type(Node, ABC):
     """ Base class for all Solidity types """
 
@@ -183,15 +191,22 @@ class AnyType(Type):
 class MappingType(Type):
     """ Type that represents a function mapping definition
 
-    For example in the mapping '(uint => Campaign)', src would be 'unit' and the dst would be 'Campaign'
+    For example in the mapping '(uint x => Campaign c)', src would be 'unit' and the dst would be 'Campaign',
+    src_key would be 'x' and dst_key would be 'c'
     """
     src: Type
     dst: Type
+    src_name: Ident = None
+    dst_name: Ident = None
 
-    def __str__(self): return f"({self.src} => {self.dst})"
+    def __str__(self):
+        def _name(ident):
+            return (' ' + str(ident)) if ident else ''
+        return f"({self.src}{_name(self.src_name)} => {self.dst}{_name(self.dst_name)})"
 
     def is_mapping(self) -> bool:
         return True
+
 
 class Location(Enum):
     """ Solidity reference type storage locations
@@ -212,14 +227,6 @@ class Location(Enum):
     """ A location that contains the function call arguments for external function call parameters """
 
     def __str__(self): return self.value
-
-
-@dataclass
-class Ident(Expr):
-    """ String identifier node """
-    text: str
-
-    def __str__(self): return self.text
 
 
 @dataclass
@@ -710,9 +717,23 @@ class ErrorDefinition(SourceUnit, ContractPart):
 
 
 @dataclass
+class UsingAttachment(Node):
+    member_name: Ident
+
+
+@dataclass
+class UsingOperatorBinding(Node):
+    member_name: Ident
+    operator: Union[UnaryOpCode, BinaryOpCode]
+
+
+@dataclass
 class UsingDirective(ContractPart):
     library_name: Ident
+    # either override_type or bindings is allowed but not both at the same time
     override_type: Type
+    attachments_or_bindings: List[Union[UsingAttachment, UsingOperatorBinding]] = field(default_factory=list)
+    is_global: bool = field(default=False)
 
 
 @dataclass

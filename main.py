@@ -24,7 +24,7 @@ from solidity_parser.ast.parsers.parsers070 import Parser070
 from solidity_parser.ast.parsers.parsers080 import Parser080
 from solidity_parser.ast.parsers.parsers088 import Parser088
 
-from solidity_parser.ast import solnodes
+from solidity_parser.ast import solnodes, solnodes2
 from solidity_parser.ast import symtab
 
 import os
@@ -35,6 +35,8 @@ from solidity_parser.filesys import VirtualFileSystem
 from solidity_parser.ast.helper import make_ast
 
 import solidity_parser.errors as errors
+
+from solidity_parser.util import version_util
 
 def fname(node):
     # id = node.functionDescriptor().identifier()
@@ -167,7 +169,7 @@ from solidity_parser.collectors import collector
 
 version_pattern = pattern = re.compile(r"v(\d)\.(\d)\.[0-9]+", re.IGNORECASE)
 
-if __name__ == '__main__':
+if __name__ == '__main__1':
     pp.install_extras()
     logging.basicConfig( level=logging.CRITICAL)
 
@@ -264,7 +266,7 @@ if __name__ == '__main__':
 
 
 
-if __name__ == '__main__1':
+if __name__ == '__main__':
     pp.install_extras()
     logging.basicConfig( level=logging.DEBUG)
     # p = Path('../example/TestInput.json').resolve()
@@ -276,17 +278,17 @@ if __name__ == '__main__1':
     # print(x.name, x.hometown.name, x.hometown.id)
 
     # base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
-    base_dir = 'C:/Users/bibl/Downloads/solidity-examples-main/contracts'
+    base_dir = 'F:/Zellic/Workspace/solidity-parser/testcases/08_22'
     # base_dir = 'C:/Users/bibl/Downloads/ERC721A/contracts'
     # base_dir = 'C:/Users/bibl/Downloads/debridge-contracts-v1'
     # base_dir = 'F:/Zellic/Workspace/solidity-parser/testcases'
     # lets say we're in the /examples folder and go backwards to StargateComposed.sol in CLI
     # cwd = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/examples'
     # node_modules_dir = 'C:/Users/Bilal/node_modules'
-    node_modules_dir = 'C:/Users/bibl/AppData/Roaming/npm/node_modules'
+    # node_modules_dir = 'C:/Users/bibl/AppData/Roaming/npm/node_modules'
     vfs = VirtualFileSystem(base_path=base_dir,
                             # cwd=cwd,
-                            include_paths=[node_modules_dir])
+                            include_paths=[])
 
     # vfs.process_cli_input_file('C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/StargateComposed.sol')
     # vfs.process_cli_input_file('C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts/examples/ExampleOFT.sol')
@@ -314,15 +316,25 @@ if __name__ == '__main__1':
     all_files = [r[len(base_dir)+len('\\'):] for r in all_files]
     all_files = [f'./{f}' for f in all_files]
 
+    # print(all_files)
+
+    all_files = ['./OperatorAttachAndBind.sol']
+
     for f in all_files:
         fs = symtab_builder.process_or_find_from_base_dir(f)
-        for s in fs.symbols.values():
-            if len(s) != 1 or s[0].parent_scope != fs:
-                continue
-            n = s[0].value
-            if not hasattr(n, 'ast2_node') and ast2_builder.is_top_level(n):
-                ast2_builder.define_skeleton(n, fs.source_unit_name)
+        ast2_builder.enqueue_files([fs])
+        # for s in fs.symbols.values():
+        #     if len(s) != 1 or s[0].parent_scope != fs:
+        #         continue
+        #     n = s[0].value
+        #     if not hasattr(n, 'ast2_node') and ast2_builder.is_top_level(n):
+        #         ast2_node = ast2_builder.define_skeleton(n, fs.source_unit_name)
+        #         print(ast2_node)
+    ast2_builder.process_all()
 
+    us = ast2_builder.get_top_level_units()
+    print(us[0].parts[2].code.code_str())
+    print(us)
     # fs = symtab_builder.process_or_find_from_base_dir('contracts/libraries/Flags.sol')
     # for s in fs.symbols.values():
     #     if len(s) != 1:
@@ -363,18 +375,22 @@ if __name__ == '__main__1':
     #     idx += 1
 
     input_src = open(
-        'C:/Users/bibl/Downloads/x/RLPReader.sol',
+        'F:/Zellic/Workspace/solidity-parser/testcases/08_22/SourceUnits.sol',
+        # 'C:/Users/bibl/Downloads/x/RLPReader.sol',
         'r').read()
+
+
+    print(asthelper.make_ast(input_src))
 
     # try_parse_contract('ft', 8, input_src, None)
 
-    lexer = SolidityLexer088(InputStream(input_src))
-    stream = CommonTokenStream(lexer)
-    parser = SolidityParser088(stream)
-    ast_parser = Parser088()
-
-    tree = parser.sourceUnit()
-    source_units = tree.children
+    # lexer = SolidityLexer088(InputStream(input_src))
+    # stream = CommonTokenStream(lexer)
+    # parser = SolidityParser088(stream)
+    # ast_parser = Parser088()
+    #
+    # tree = parser.sourceUnit()
+    # source_units = tree.children
 
     # symtab_builder = symtab.Builder2(None)
 
