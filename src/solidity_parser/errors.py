@@ -1,12 +1,13 @@
 from typing import List
 from collections import namedtuple
 
+from solidity_parser.util.version_util import Version
 
 class AntlrParsingError(Exception):
     Detail = namedtuple('Detail', 'line_number, line_offset, msg')
 
-    def __init__(self, version, input_src, details):
-        super().__init__(f'Antlr AST v0.{version} parsing error')
+    def __init__(self, version: Version, input_src: str, details):
+        super().__init__(f'Antlr AST v{version} parsing error')
         self.input_src = input_src
         self.details = [AntlrParsingError.Detail(*d) for d in details]
 
