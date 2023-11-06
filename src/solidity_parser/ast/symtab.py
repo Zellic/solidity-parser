@@ -401,6 +401,8 @@ class RootScope(Scope):
         abi_object.add(BuiltinFunction('encodeWithSelector', None, [bytes()]))
         # encodeWithSignature(string memory signature, ...) returns (bytes memory
         abi_object.add(BuiltinFunction('encodeWithSignature', None, [bytes()]))
+        # abi.encodeCall(functionPointer, (arg1, arg2, ...))
+        abi_object.add(BuiltinFunction('encodeCall', None, [bytes()]))
 
         # abi.decode(bytes memory encodedData, (...)) returns (...)
         abi_object.add(BuiltinFunction('decode', None, None))
@@ -424,6 +426,14 @@ class RootScope(Scope):
         tx_object.add(BuiltinValue('origin', solnodes.AddressType(False)))
         self.add(tx_object)
 
+        bytes_object = BuiltinObject('bytes')
+        bytes_object.add(BuiltinFunction('concat', None, [bytes()]))
+        self.add(bytes_object)
+
+        string_object = BuiltinObject('string')
+        string_object.add(BuiltinFunction('concat', None, [solnodes.StringType()]))
+        self.add(string_object)
+
         # https://docs.soliditylang.org/en/latest/units-and-global-variables.html#members-of-address-types
         def address_object(payable):
             # key is <type: address> or <type: address payable>
@@ -432,7 +442,6 @@ class RootScope(Scope):
             scope.add(BuiltinValue('balance', uint()))
             scope.add(BuiltinValue('code', bytes()))
             scope.add(BuiltinValue('codehash', bytes32()))
-
 
             # These functions are only available for address payable but for some old solidity contracts this wasn't
             # enforced in the compiler...
