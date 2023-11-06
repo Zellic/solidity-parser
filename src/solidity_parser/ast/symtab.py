@@ -138,7 +138,6 @@ class Scope(Scopeable):
         # collection of known mappings that can be looked up quickly
         self.symbols: Dict[str, List[Symbol]] = defaultdict(list)
         self.imported_scopes: List[Scope] = []
-        self.is_see_through = False
 
     def is_defined(self, name: str) -> bool:
         # check if the name exists in the table and it contains something
