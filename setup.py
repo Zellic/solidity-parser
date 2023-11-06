@@ -25,6 +25,7 @@ class BuildPyWithGenerateCommand(setuptools.command.build_py.build_py):
 
 setup(
     name='solidity-parser',
+    version='0.1.1',
 
     setuptools_git_versioning={
         "enabled": True,
