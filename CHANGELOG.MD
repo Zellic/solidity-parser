@@ -6,7 +6,11 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
  
 ### [0.0.1] - 2023-11-06
- 
+
+Upgrades to ASI now require version bumping this library 
+
+- Added changelog
+- Added version to setup.py
 - Added parsing support for Solidity 0.8.22
 - Improve pragma version parsing
 - Added `bytes.concat` and `string.concat` builtins
