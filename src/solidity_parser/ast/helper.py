@@ -11,12 +11,19 @@ from solidity_parser.grammar.v070.SolidityLexer import SolidityLexer as Solidity
 from solidity_parser.grammar.v070.SolidityParser import SolidityParser as SolidityParser070
 from solidity_parser.grammar.v080.SolidityLexer import SolidityLexer as SolidityLexer080
 from solidity_parser.grammar.v080.SolidityParser import SolidityParser as SolidityParser080
+from solidity_parser.grammar.v088.SolidityLexer import SolidityLexer as SolidityLexer088
+from solidity_parser.grammar.v088.SolidityParser import SolidityParser as SolidityParser088
+from solidity_parser.grammar.v08_22.SolidityLexer import SolidityLexer as SolidityLexer08_20
+from solidity_parser.grammar.v08_22.SolidityParser import SolidityParser as SolidityParser08_20
 
 from solidity_parser.ast.parsers.parsers060 import Parser060
 from solidity_parser.ast.parsers.parsers070 import Parser070
 from solidity_parser.ast.parsers.parsers080 import Parser080
+from solidity_parser.ast.parsers.parsers088 import Parser088
+from solidity_parser.ast.parsers.parsers08_22 import Parser08_22
 
 from solidity_parser.ast import solnodes
+from solidity_parser.util.version_util import Version, extract_version_from_src_input
 
 from solidity_parser.errors import AntlrParsingError
 
@@ -39,7 +46,7 @@ class MyErrorListener(ErrorListener):
         self.add_error(recognizer, line, column, msg)
 
 
-def get_processors(version: int):
+def get_processors(version: Version):
     def _wrap(clazz):
         def create_lexer(*args, **kwargs):
             obj = clazz(*args, **kwargs)
@@ -49,12 +56,17 @@ def get_processors(version: int):
         return create_lexer
 
     def get():
-        if version < 7:
+        if version.minor < 7:
             return SolidityParser060, SolidityLexer060, Parser060
-        elif 8 > version >= 7:
+        elif 8 > version.minor >= 7:
             return SolidityParser070, SolidityLexer070, Parser070
-        elif version >= 8:
-            return SolidityParser080, SolidityLexer080, Parser080
+        elif version.minor >= 8:
+            if version.patch < 8:
+                return SolidityParser080, SolidityLexer080, Parser080
+            elif version.patch < 22:
+                return SolidityParser088, SolidityLexer088, Parser088
+            else:
+                return SolidityParser08_20, SolidityLexer08_20, Parser08_22
         else:
             raise KeyError(f"Unsupported version: v{version}")
 
@@ -63,11 +75,10 @@ def get_processors(version: int):
     return get()
 
 
-def make_ast(input_src, version: int = None) -> List[solnodes.SourceUnit]:
+def make_ast(input_src, version: Version = None) -> List[solnodes.SourceUnit]:
     if version is None:
-        version = collector.get_minor_ver(input_src)
+        version = extract_version_from_src_input(input_src)
 
-    # input_src = open('C:/Users/bibl/Desktop/testsrc.sol', 'r', encoding='utf-8').read()
     grammar_parser_type, grammar_lexer_type, ast_parser_type = get_processors(version)
 
     contract_input = InputStream(input_src)
