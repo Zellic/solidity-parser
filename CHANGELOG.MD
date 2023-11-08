@@ -4,8 +4,11 @@ All notable changes to this project will be documented in this file.
  
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
- 
-### [0.0.1] - 2023-11-06
+
+### [0.1.2] - 2023-11-08
+- Disable all 0.8.* parsers except for 0.8.22(default parser) in parse autoloading
+
+### [0.1.1] - 2023-11-06
 
 Upgrades to ASI now require version bumping this library 
 
