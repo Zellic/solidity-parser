@@ -105,9 +105,13 @@ class TypeHelper:
                         return [self.symbol_to_ast2_type(s) for s in symbols]
             else:
                 for s in scopes:
-                    symbol = s.find_single(member)
-                    if symbol:
-                        return self.symbol_to_ast2_type(symbol)
+                    symbols = s.find(member)
+                    if symbols:
+                        # find returns supercontract functions too, the only way this is allowable is if the types all match
+                        symbol_types = [self.symbol_to_ast2_type(symbol) for symbol in symbols]
+                        all_same_types = [symbol_types[0] == s_t for s_t in symbol_types]
+                        self.builder._error('Multiple symbols matched with different types', all_same_types)
+                        return symbol_types[0]
             return []
         elif isinstance(expr, solnodes1.Literal):
             value = expr.value
@@ -186,6 +190,9 @@ class TypeHelper:
                 return base_type.base_type
             else:
                 return self.builder._todo(base_type)
+        elif isinstance(expr, solnodes1.GetArraySlice):
+            base_type = self.get_expr_type(expr.array_base)
+            return base_type
         elif isinstance(expr, solnodes1.BinaryOp):
             t1 = self.get_expr_type(expr.left, force_tuple=expr.op.name.startswith('ASSIGN'))
             t2 = self.get_expr_type(expr.right)
@@ -531,15 +538,17 @@ class TypeHelper:
             # address(this).balance"
 
             scopes = [scope]
-            if ttype.value.x.is_contract():
-                scopes.append(scope.find_type(solnodes1.AddressType(False)))
+            # TODO: add versioncheck
+            # if ttype.value.x.is_contract():
+            #     scopes.append(scope.find_type(solnodes1.AddressType(False)))
             return scopes
         elif isinstance(ttype, solnodes2.BuiltinType):
             scope = node.scope.find_single(ttype.name)
         elif isinstance(ttype, solnodes2.MetaTypeType):
-            is_interface = isinstance(ttype.ttype, solnodes2.ResolvedUserType)\
-                           and isinstance(ttype.ttype.value.x, solnodes2.InterfaceDefinition)
-            scope = node.scope.find_metatype(ttype.ttype, is_interface)
+            base_type = ttype.ttype
+            is_interface = base_type.is_user_type() and base_type.value.x.is_interface()
+            is_enum = base_type.is_user_type() and base_type.value.x.is_enum()
+            scope = node.scope.find_metatype(ttype.ttype, is_interface, is_enum)
         else:
             if use_encoded_type_key:
                 # encoded as <type:X>
@@ -723,7 +732,7 @@ class Builder:
                     # load the parent which will in turn define skeletons for its children, including the current
                     # ast1_node
                     parent_was_loaded = hasattr(parent_scope.value, 'ast2_node')
-                    logging.getLogger('AST2').info(f'Loading parent {parent_scope.aliases[0]}::{ast1_node.name.text}')
+                    logging.getLogger('AST2').info(f'Loading parent of {ast1_node.name.text} ({parent_scope.aliases[0]})')
                     parent_type = self.load_if_required(parent_scope)
                     source_unit_name = f'{parent_type.source_unit_name}${parent_type.name.text}'
 
@@ -735,7 +744,7 @@ class Builder:
                         # MyLib defines a function f that takes MyEnum as a parameter. Loading MyEnum requires MyLib to
                         # be loaded but loading MyLib requires MyEnum to be loaded for the parameter type in f.
                         logging.getLogger('AST2').info(
-                            f'Defining circular ref type {source_unit_name}::{ast1_node.name.text}')
+                            f'Defining circular ref type: {ast1_node.name.text} from {source_unit_name}')
                         ast2_node = self.define_skeleton(ast1_node, source_unit_name)
                     else:
                         # Parent wasn't previously defined and so it was loaded, in turn creating skeletons for its
@@ -1038,7 +1047,7 @@ class Builder:
             # no resolved callees
             return self._error(f"Can't resolve call: {expr}, candidates={candidates}, args={arg_types}")
         elif len(candidates) > 1:
-            logging.getLogger('AST2').info(f'Matched multiple buckets for: {expr}, choosing first from {candidates}')
+            logging.getLogger('AST2').debug(f'Matched multiple buckets for: {expr}, choosing first from {candidates}')
 
         # Choose the candidate from the first bucket
         # FunctionCallee, (input: types, output: types)
@@ -1171,7 +1180,7 @@ class Builder:
             assert not possible_base or is_local_call
 
             return solnodes2.EmitEvent(solnodes2.Ref(sym.value.ast2_node), new_args)
-        elif isinstance(sym.value, solnodes1.Var):
+        elif isinstance(sym.value, (solnodes1.Var, solnodes1.Parameter)):
             # refine_expr again but this time not as a function callee to get the callee as an expr
             return solnodes2.FunctionPointerCall(option_args, new_args, self.refine_expr(callee))
         self._todo(expr)
@@ -1490,7 +1499,12 @@ class Builder:
                 elif is_argument:
                     # this is the first param in abi.encodeCall(A.f, ...)
                     # TODO: can this be ambiguous or does the reference always select a single function
-                    if len(member_symbols) == 1 and len(member_symbols[0]) == 1:
+                    if len(member_symbols) == 1:
+                        symbol_sources = [self.get_declaring_contract_scope_in_scope(d) for d in member_symbols[0]]
+                        are_sub_contracts = all(
+                            [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                        self._assert_error(f'{expr} has too many target definitions ({len(member_symbols[0])})',
+                                           are_sub_contracts)
                         func_sym = member_symbols[0][0]
                         if isinstance(func_sym.value, solnodes1.FunctionDefinition):
                             return solnodes2.GetFunctionPointer(solnodes2.Ref(func_sym.value.ast2_node))
@@ -1540,29 +1554,26 @@ class Builder:
                 # need to resolve this as if it was a function call, e.g. we have x.myFunc.selector and we treat it as
                 # if it's x.myFunc()
                 callees: List[Builder.FunctionCallee] = self.refine_expr(base, is_function_callee=True)
-                assert len(callees) == 1 and len(callees[0].symbols) == 1
 
-                member_symbol = callees[0].symbols[0]
-                possible_base = callees[0].base
+                self._assert_error('Invalid number of bases', len(callees) == 1)
+
+                callee = callees[0]
+
+                for callee_symbol in callee.symbols:
+                    callee_value = callee_symbol.resolve_base_symbol().value
+                    is_valid_type = isinstance(callee_value, (solnodes1.FunctionDefinition, solnodes1.EventDefinition))
+                    self._error(f'Must be a function or event, was: {type(callee_value)}', is_valid_type)
+
+                symbol_sources = [self.get_declaring_contract_scope_in_scope(s) for s in callee.symbols]
+                are_sub_contracts = all(
+                    [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                self._assert_error(f'Too many target definitions ({len(callee.symbols)})', are_sub_contracts)
+
+                member_symbol = callee.symbols[0]
+                possible_base = callee.base
 
                 # TODO: make this work without explicit check
                 if mname == 'selector':
-                    candidates = []
-
-                    if isinstance(possible_base, solnodes2.Expr):
-                        contract = possible_base.type_of()
-                    elif possible_base:
-                        contract = possible_base
-                    else:
-                        contract = self.get_self_object(expr).type_of()
-                    # shouldn't need to do arg checks for selector
-                    # for part in contract.value.x.parts:
-                    #     if isinstance(part, (solnodes2.FunctionDefinition, solnodes2.ErrorDefinition)):
-                    #         if part.name.text == member_symbol.value.name.text:
-                    #             candidates.append(part)
-                    #
-                    # assert len(candidates) == 1
-
                     return solnodes2.ABISelector(solnodes2.Ref(member_symbol.value.ast2_node))
                 else:
                     # the named arg value comes as the argument of the parent call function expr
@@ -1609,6 +1620,9 @@ class Builder:
                 return solnodes2.Literal(expr.value, explicit_ttype, expr.unit)
         elif isinstance(expr, solnodes1.GetArrayValue):
             return solnodes2.ArrayLoad(self.refine_expr(expr.array_base), self.refine_expr(expr.index))
+        elif isinstance(expr, solnodes1.GetArraySlice):
+            return solnodes2.ArraySliceLoad(self.refine_expr(expr.array_base), self.refine_expr(expr.start_index),
+                                            self.refine_expr(expr.end_index))
         elif isinstance(expr, solnodes1.PayableConversion):
             # address payable cast
             assert len(expr.args) == 1
@@ -1679,7 +1693,8 @@ class Builder:
         return solnodes2.Parameter(self.var(node))
 
     def error_parameter(self, node: solnodes1.ErrorParameter):
-        return solnodes2.ErrorParameter(self.type_helper.map_type(node.var_type), solnodes2.Ident(node.name.text))
+        name = solnodes2.Ident(node.name.text if node.name else None)
+        return solnodes2.ErrorParameter(self.type_helper.map_type(node.var_type), name)
 
     def modifier(self, node: solnodes1.Modifier):
         if isinstance(node, solnodes1.VisibilityModifier2):
@@ -1748,6 +1763,8 @@ class Builder:
 
         assert not hasattr(ast1_node, 'ast2_node')
 
+        logging.getLogger('AST2').info(f' making skeleton for {type(ast1_node).__name__}({ast1_node.name}) :: {source_unit_name}')
+
         # Source unit name is only used for source units/top level units
         # This is the case where we have functions, errors, event, constants that are defined outside of a top level
         # node like a contract or interface, i.e. parentless definitions
@@ -1804,8 +1821,6 @@ class Builder:
                 return solnodes2.ModifierDefinition(name, [], [], None)
             else:
                 self._todo(n)
-
-        logging.getLogger('AST2').info(f' making skeleton for {ast1_node.name} :: {source_unit_name}')
 
         ast2_node = _make_new_node(ast1_node)
         ast1_node.ast2_node = ast2_node
@@ -1929,13 +1944,12 @@ class Builder:
                             assert isinstance(library_scope.value, solnodes1.LibraryDefinition)
                             library = self.type_helper.get_contract_type(part.scope.find_single(part.library_name.text))
                             if isinstance(part.override_type, solnodes1.AnyType):
-                                for sym in library_scope.all_symbols():
-                                    if isinstance(sym.value, solnodes1.FunctionDefinition):
-                                        input_params = sym.value.parameters
-                                        if input_params:
-                                            override_type = input_params[0].var_type
-                                            ast2_node.type_overrides.append(solnodes2.LibraryOverride(
-                                                self.type_helper.map_type(override_type), library))
+                                for sym in library_scope.get_all_functions():
+                                    input_params = sym.value.parameters
+                                    if input_params:
+                                        override_type = input_params[0].var_type
+                                        ast2_node.type_overrides.append(solnodes2.LibraryOverride(
+                                            self.type_helper.map_type(override_type), library))
 
                             else:
                                 ast2_node.type_overrides.append(

@@ -278,7 +278,7 @@ if __name__ == '__main__':
     # print(x.name, x.hometown.name, x.hometown.id)
 
     # base_dir = 'C:/Users/Bilal/Downloads/solidity-examples-main/solidity-examples-main/contracts'
-    base_dir = 'F:/Zellic/Workspace/solidity-parser/testcases/08_22'
+    base_dir = 'F:/Zellic/Workspace/solidity-parser/testcases/0.1.3'
     # base_dir = 'C:/Users/bibl/Downloads/ERC721A/contracts'
     # base_dir = 'C:/Users/bibl/Downloads/debridge-contracts-v1'
     # base_dir = 'F:/Zellic/Workspace/solidity-parser/testcases'
@@ -318,7 +318,7 @@ if __name__ == '__main__':
 
     # print(all_files)
 
-    all_files = ['./OperatorAttachAndBind.sol']
+    all_files = ['./SelfUsing.sol']
 
     for f in all_files:
         fs = symtab_builder.process_or_find_from_base_dir(f)
@@ -333,8 +333,9 @@ if __name__ == '__main__':
     ast2_builder.process_all()
 
     us = ast2_builder.get_top_level_units()
-    print(us[0].parts[2].code.code_str())
-    print(us)
+    for p in us[1].parts:
+        print(p.code.code_str())
+    # print(us)
     # fs = symtab_builder.process_or_find_from_base_dir('contracts/libraries/Flags.sol')
     # for s in fs.symbols.values():
     #     if len(s) != 1:
