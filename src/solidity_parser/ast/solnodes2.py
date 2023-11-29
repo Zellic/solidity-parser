@@ -1140,6 +1140,8 @@ class FunctionDefinition(ContractPart):
         parent_descriptor = self.parent.descriptor()
         return f'{parent_descriptor}::{self.name.text}({self.param_str(self.inputs)}) returns ({self.param_str(self.outputs)})'
 
+    def __str__(self):
+        return self.descriptor()
 
 @NodeDataclass
 class ModifierDefinition(ContractPart):
@@ -1667,6 +1669,8 @@ class DirectCall(Call):
     def code_str(self):
         return f'{self.ttype.code_str()}.{self.name.code_str()}{self.param_str()}'
 
+    def __str__(self):
+        return f'"{self.code_str()}"'
 
 # x.y
 @NodeDataclass
@@ -1710,6 +1714,8 @@ class FunctionCall(Call):
     def code_str(self):
         return f'{self.base.code_str()}.{self.name.code_str()}{self.param_str()}'
 
+    def __str__(self):
+        return f'"{self.code_str()}"'
 
 @NodeDataclass
 class FunctionPointerCall(Call):
