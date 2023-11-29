@@ -33,6 +33,15 @@ class Node:
     def linenumber(self) -> int:
         return int(self.location.split(":")[0])
 
+    def source_location(self):
+        if hasattr(self, 'scope') and self.scope:
+            from solidity_parser.ast.symtab import FileScope
+            file_scope = self.scope.find_first_ancestor_of(FileScope)
+            file_name = file_scope.source_unit_name
+        else:
+            file_name = '<unknown>'
+        return f'{file_name} @{self.location}'
+
     def offset(self) -> int:
         return int(self.location.split(":")[1])
 

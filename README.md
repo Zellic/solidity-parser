@@ -1,26 +1,48 @@
-# legacy-solidity-parser
+# Zellic Solidity Parser (solp)
 
-Parses and pretty-prints the top level objects from Solidity files
+### Description
 
-# Requirements
-requirements.txt<br>
-recent jdk
+Solp is a Python library used for reading, parsing and analysis Solidity source projects and contracts without having
+to use the `solc` compiler. This is done by having different grammars for different versions of Solidity, transforming
+them into a common AST and then further refining that AST into more specialised forms of IR for analysis. The resulting
+ASTs and IRs are easily usable by consumer applications without any additional dependencies.
 
-# Setup
+### Goals
 
-See setup.sh
+The goal of this project are to:
+  - parse Solidity source files into typed AST/IR structures
+  - load code from different Solidity versions(0.4-0.8^) for common analyses
+  - load entire Solidity projects for analysis with the requisite dependency context
+  - enable and provide a language server and IDE support
+  - be usable by developers and auditors in an IDE scripting context to generate insights for security analysis
 
-# Usage
 
-`python3 main.py example/AaveToken.sol` to directly run the program on a Solidity file
-<br>
-OR
-<br>
-`pip install .` to install the package and use it as a library (run setup.sh before doing this)
+### Status
 
-# Notes
+Currently it is used in the Audit Signoff Injector where it's used for signoff comment generation and function call
+analysis.
 
-Solidity versions>=0.8 use language targeted code in the grammar (Java), this prevents
-the generation of ANTLR bindings into python. The solution for this was modifying the grammar files
-themselves which means the Solidity grammar in this repo is custom for versions>=0.8.<br><br>
-The grammar for solidity versions 0.7/0.6 have now also been modified to allow extraction of the `contract` or `interface` or `library` keyword.
+  - AST1 parsing for Solidity 0.4+ - done
+  - AST1 -> AST2 refinement - done
+  - AST2 -> TAC-SSA-IR - in progress
+  - Integration and unit tests - partially implemented
+  - Language server
+
+### Requirements
+
+  - Python 3.10+ is recommended
+  - Java 8+ (for antlr grammar stub generation)
+
+### Setup
+
+`setup.py` generates the antlr Python grammar stubs, builds and installs solp as `solidity-parser` with `pip install .`
+
+
+### Usage
+
+Solp is not a standalone application so has no entry point to speak of. Example snippets and currently run
+configurations for development are in `main.py` but these aren't application usecases themselves.
+
+
+### How it works
+

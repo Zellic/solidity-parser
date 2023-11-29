@@ -34,7 +34,7 @@ class LoadedSource:
     def ast(self) -> List[solnodes.SourceUnit]:
         # Mechanism for creating the AST on demand and caching it
         if not hasattr(self, '_ast'):
-            logging.getLogger('VFS').info(f'Parsing {self.source_unit_name}')
+            logging.getLogger('VFS').debug(f'Parsing {self.source_unit_name}')
 
             if not self.ast_creator_callback:
                 creator = ast_helper.make_ast
@@ -154,7 +154,7 @@ class VirtualFileSystem:
             path = Path(path)
         path = path.resolve(strict=True)
 
-        logging.getLogger('VFS').info(f'Reading {path}')
+        logging.getLogger('VFS').debug(f'Reading {path}')
 
         with path.open(mode='r', encoding='utf-8') as f:
             return f.read()
