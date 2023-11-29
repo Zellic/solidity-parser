@@ -538,15 +538,17 @@ class TypeHelper:
             # address(this).balance"
 
             scopes = [scope]
-            if ttype.value.x.is_contract():
-                scopes.append(scope.find_type(solnodes1.AddressType(False)))
+            # TODO: add versioncheck
+            # if ttype.value.x.is_contract():
+            #     scopes.append(scope.find_type(solnodes1.AddressType(False)))
             return scopes
         elif isinstance(ttype, solnodes2.BuiltinType):
             scope = node.scope.find_single(ttype.name)
         elif isinstance(ttype, solnodes2.MetaTypeType):
-            is_interface = isinstance(ttype.ttype, solnodes2.ResolvedUserType)\
-                           and isinstance(ttype.ttype.value.x, solnodes2.InterfaceDefinition)
-            scope = node.scope.find_metatype(ttype.ttype, is_interface)
+            base_type = ttype.ttype
+            is_interface = base_type.is_user_type() and base_type.value.x.is_interface()
+            is_enum = base_type.is_user_type() and base_type.value.x.is_enum()
+            scope = node.scope.find_metatype(ttype.ttype, is_interface, is_enum)
         else:
             if use_encoded_type_key:
                 # encoded as <type:X>
