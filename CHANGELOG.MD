@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-### [0.0.2] - 2023-11-29
+### [0.1.2] - 2023-11-29
 
  - Updated README
  - AST2/AST2builder
@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
  - VFS
    - Changed log levels from info to debug
 
-### [0.0.1] - 2023-11-06
+### [0.1.1] - 2023-11-06
 
 Upgrades to ASI now require version bumping this library 
 
