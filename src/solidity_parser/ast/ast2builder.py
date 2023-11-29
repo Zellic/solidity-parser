@@ -1620,6 +1620,9 @@ class Builder:
                 return solnodes2.Literal(expr.value, explicit_ttype, expr.unit)
         elif isinstance(expr, solnodes1.GetArrayValue):
             return solnodes2.ArrayLoad(self.refine_expr(expr.array_base), self.refine_expr(expr.index))
+        elif isinstance(expr, solnodes1.GetArraySlice):
+            return solnodes2.ArraySliceLoad(self.refine_expr(expr.array_base), self.refine_expr(expr.start_index),
+                                            self.refine_expr(expr.end_index))
         elif isinstance(expr, solnodes1.PayableConversion):
             # address payable cast
             assert len(expr.args) == 1
