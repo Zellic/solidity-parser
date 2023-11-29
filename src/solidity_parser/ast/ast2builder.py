@@ -105,9 +105,13 @@ class TypeHelper:
                         return [self.symbol_to_ast2_type(s) for s in symbols]
             else:
                 for s in scopes:
-                    symbol = s.find_single(member)
-                    if symbol:
-                        return self.symbol_to_ast2_type(symbol)
+                    symbols = s.find(member)
+                    if symbols:
+                        # find returns supercontract functions too, the only way this is allowable is if the types all match
+                        symbol_types = [self.symbol_to_ast2_type(symbol) for symbol in symbols]
+                        all_same_types = [symbol_types[0] == s_t for s_t in symbol_types]
+                        self.builder._error('Multiple symbols matched with different types', all_same_types)
+                        return symbol_types[0]
             return []
         elif isinstance(expr, solnodes1.Literal):
             value = expr.value
@@ -1493,7 +1497,12 @@ class Builder:
                 elif is_argument:
                     # this is the first param in abi.encodeCall(A.f, ...)
                     # TODO: can this be ambiguous or does the reference always select a single function
-                    if len(member_symbols) == 1 and len(member_symbols[0]) == 1:
+                    if len(member_symbols) == 1:
+                        symbol_sources = [self.get_declaring_contract_scope_in_scope(d) for d in member_symbols[0]]
+                        are_sub_contracts = all(
+                            [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                        self._assert_error(f'{expr} has too many target definitions ({len(member_symbols[0])})',
+                                           are_sub_contracts)
                         func_sym = member_symbols[0][0]
                         if isinstance(func_sym.value, solnodes1.FunctionDefinition):
                             return solnodes2.GetFunctionPointer(solnodes2.Ref(func_sym.value.ast2_node))
@@ -1543,29 +1552,26 @@ class Builder:
                 # need to resolve this as if it was a function call, e.g. we have x.myFunc.selector and we treat it as
                 # if it's x.myFunc()
                 callees: List[Builder.FunctionCallee] = self.refine_expr(base, is_function_callee=True)
-                assert len(callees) == 1 and len(callees[0].symbols) == 1
 
-                member_symbol = callees[0].symbols[0]
-                possible_base = callees[0].base
+                self._assert_error('Invalid number of bases', len(callees) == 1)
+
+                callee = callees[0]
+
+                for callee_symbol in callee.symbols:
+                    callee_value = callee_symbol.resolve_base_symbol().value
+                    is_valid_type = isinstance(callee_value, (solnodes1.FunctionDefinition, solnodes1.EventDefinition))
+                    self._error(f'Must be a function or event, was: {type(callee_value)}', is_valid_type)
+
+                symbol_sources = [self.get_declaring_contract_scope_in_scope(s) for s in callee.symbols]
+                are_sub_contracts = all(
+                    [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                self._assert_error(f'Too many target definitions ({len(callee.symbols)})', are_sub_contracts)
+
+                member_symbol = callee.symbols[0]
+                possible_base = callee.base
 
                 # TODO: make this work without explicit check
                 if mname == 'selector':
-                    candidates = []
-
-                    if isinstance(possible_base, solnodes2.Expr):
-                        contract = possible_base.type_of()
-                    elif possible_base:
-                        contract = possible_base
-                    else:
-                        contract = self.get_self_object(expr).type_of()
-                    # shouldn't need to do arg checks for selector
-                    # for part in contract.value.x.parts:
-                    #     if isinstance(part, (solnodes2.FunctionDefinition, solnodes2.ErrorDefinition)):
-                    #         if part.name.text == member_symbol.value.name.text:
-                    #             candidates.append(part)
-                    #
-                    # assert len(candidates) == 1
-
                     return solnodes2.ABISelector(solnodes2.Ref(member_symbol.value.ast2_node))
                 else:
                     # the named arg value comes as the argument of the parent call function expr
