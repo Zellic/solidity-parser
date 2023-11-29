@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-### [0.1.2] - 2023-11-29
+### [0.1.3] - 2023-11-29
 
  - Updated README
  - AST2/AST2builder
@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
    - Added ordering for UserDefinedValueType nodes during building to fix SelfUsing case
  - VFS
    - Changed log levels from info to debug
+
+### [0.1.2] - 2023-11-08
+- Disable all 0.8.* parsers except for 0.8.22(default parser) in parse autoloading
 
 ### [0.1.1] - 2023-11-06
 
