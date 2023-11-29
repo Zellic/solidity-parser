@@ -49,15 +49,136 @@ def is_byte_array(ttype: 'Type') -> bool:
     return (isinstance(ttype, ArrayType) and isinstance(ttype.base_type, ByteType)) or isinstance(ttype, BytesType)
 
 
+__REASON_CHILD__ = '__child__'
+__FIELD_PARENT__ = 'parent'
+__REASON_INIT__ = '__init__'
+
+
 def NodeDataclass(cls, *args, **kwargs):
     # Add a hash based on the elements that make up this node. This is required because dataclass doesn't generate a
     # hash for us unless we pass in unsafe_hash=True on the decorator for every node subclass and even if we do that
     # it can't hash lists. Since get_all_children returns a generator of nodes (i.e. no lists), we can hash it as a
     # tuple, i.e. a "snapshot hash"
-    def __node__hash(self):
+    def compute_node_hash(self):
         return hash(tuple(self.get_all_children()))
-    cls.__hash__ = __node__hash
-    return dataclass(*[cls, *args], **kwargs)
+
+    def __hash__(self):
+        if not self._cached_hash:
+            # this hash can be computed many times if the dataclass field that made this instance dirty is not a real
+            # child, i.e. doesn't get returned in get_children() because its not a Node(e.g. the field is a List[str])
+            # For now just allow this because we'd have to recurse on the object to see if it really makes a difference
+            # to the hash, and it's not worth it
+            self._cached_hash = self.compute_node_hash()
+        return self._cached_hash
+
+    actual_dataclass = dataclass(*[cls, *args], **kwargs)
+
+    actual_init = actual_dataclass.__init__
+    actual_setattr = actual_dataclass.__setattr__
+
+    def __setattr__(self, name, value):
+        # wrap lists as they are mutable in our own list type that can notify when elements are changed
+        # since NodeList is also a list, this will take the existing nodelist and wrap it
+        if isinstance(value, list):
+            value = NodeList(self, value)
+
+        actual_setattr(self, name, value)
+        # if this attribute was declared as a dataclass field, the state of this node is dirty as the
+        # contents changed
+        if name in actual_dataclass.__dataclass_fields__:
+            self._set_dirty(name, value)
+
+    def _set_dirty(self, name, value):
+        # in the case of lists, name can be an int or slice
+
+        # a node is considered hash dirty if its direct children or grandchildren attributes are changed
+        #  - if the parent of a node is changed, the node does not become hash dirty
+        # __FIELD_PARENT__ is triggered when the parent is changed
+        # __REASON_CHILD__ is not a real attribute, it's triggered to alert the parent of this node that the child was
+        #                  made hash dirty(e.g. because of a grandchild becoming hash dirty)
+        # final case is for real attributes in this node that were just changed
+        if name != __FIELD_PARENT__ or name == __REASON_CHILD__:
+            # print("HashDirty: " + str(id(self))[9:] +"  because of " + str(name))
+            self._cached_hash = None
+        if self.parent:
+            # parent is recursively dirty
+            self.parent._set_dirty(__REASON_CHILD__, self)
+
+    def __init__(self, *args, **kwargs):
+        actual_init(self, *args, **kwargs)
+        self._cached_hash = None
+
+    actual_dataclass.__hash__ = __hash__
+    actual_dataclass.compute_node_hash = compute_node_hash
+    actual_dataclass.__setattr__ = __setattr__
+    actual_dataclass.__init__ = __init__
+    actual_dataclass._set_dirty = _set_dirty
+
+    return actual_dataclass
+
+
+@NodeDataclass
+class NodeList(list):
+    def __init__(self, parent: 'Node', seq=()):
+        super().__init__(seq)
+        self.parent = parent
+
+    def __setitem__(self, key, value):
+        # seems to get called with slices too, that's why __setslice__ is stubbed with TODO
+        super().__setitem__(key, value)
+        self._set_dirty(key, value)
+
+    def __delitem__(self, key):
+        super().__delitem__(key)
+        self._set_dirty(key, None)
+
+    def __setslice__(self, i, j, sequence):
+        raise NotImplemented
+
+    def __eq__(self, other):
+        if isinstance(other, list):
+            return super().__eq__(other)
+        raise NotImplemented
+
+    def append(self, __object):
+        ret = super().append(__object)
+        self._set_dirty('__append__', __object)
+        return ret
+
+    def clear(self):
+        ret = super().clear()
+        self._set_dirty('__clear__', None)
+        return ret
+
+    def extend(self, __iterable):
+        ret = super().extend(__iterable)
+        self._set_dirty('__extend__', None)
+        return ret
+
+    def insert(self, __index, __object):
+        ret = super().insert(__index, __object)
+        self._set_dirty('__insert__', __object)
+        return ret
+
+    def pop(self, __index):
+        ret = super().pop(__index)
+        self._set_dirty('__pop__', None)
+        return ret
+
+    def remove(self, __value):
+        ret = super().remove(__value)
+        self._set_dirty('__remove__', None)
+        return ret
+
+    def reverse(self):
+        ret = super().reverse()
+        self._set_dirty('__reverse__', None)
+        return ret
+
+    def sort(self, *args, **kwargs):
+        ret = super().sort(*args, **kwargs)
+        self._set_dirty('__sort__', None)
+        return ret
 
 
 @dataclass
@@ -67,12 +188,13 @@ class Ref(Generic[T]):
 
 @NodeDataclass
 class Node:
-    parent: Optional['Node'] = field(init=False, repr=False, hash=False, compare=False)
+    parent: Optional['Node'] = field(init=False, repr=False, hash=False, compare=False, default=None)
     comments: Optional[List[str]] = field(init=False, repr=False, hash=False, compare=False, default_factory=list)
 
     def get_children(self):
         for val in vars(self).values():
             # Don't include parent or Refs
+            #  or NodeLists (done implicitly by generator)
             if val is self.parent:
                 continue
 
@@ -95,7 +217,6 @@ class Node:
         raise ValueError('Node has no top level unit')
 
     def __post_init__(self):
-        self.parent = None
         self._set_child_parents()
         # self.created_in = inspect.stack()
 
@@ -464,7 +585,7 @@ class ByteType(Type):
 @NodeDataclass
 class BytesType(ArrayType):
     """ bytes type only (similar but not equal to byte[]/bytes1[]) """
-    base_type: Type = field(default=Bytes(1), init=False)
+    base_type: Type = field(default_factory=lambda: Bytes(1), init=False)
 
     def __str__(self):
         return self.code_str()
@@ -538,7 +659,7 @@ class StringType(ArrayType):
     """ Solidity native string type"""
 
     # makes this an Array[Byte] (as Solidity uses UTF8 for strings?)
-    base_type: Type = field(default=Bytes(1), init=False)
+    base_type: Type = field(default_factory=lambda: Bytes(1), init=False)
 
     def __str__(self): return "string"
 
