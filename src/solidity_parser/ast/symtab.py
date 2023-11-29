@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Union, List, Dict, Optional, Type, Tuple
+from typing import Union, List, Dict, Optional, Type, Tuple, Set
 from collections import defaultdict
 from enum import Enum
 
@@ -129,7 +129,7 @@ class CrossScopeSymbolAlias(Symbol):
         self.other_symbol = other_symbol
 
     def resolve_base_symbol(self) -> 'Symbol':
-        return self.other_symbol
+        return self.other_symbol.resolve_base_symbol()
 
 
 class Scope(Scopeable):
@@ -143,8 +143,24 @@ class Scope(Scopeable):
         # check if the name exists in the table and it contains something
         return name in self.symbols and bool(self.symbols[name])
 
-    def all_symbols(self):
+    def get_direct_children(self):
         return set([item for sublist in self.symbols.values() for item in sublist])
+
+    def get_all_children(self, collect_predicate, explore_branch_predicate):
+        for direct_child in self.get_direct_children():
+            if collect_predicate(direct_child):
+                yield direct_child
+
+            if isinstance(direct_child, Scope) and explore_branch_predicate(direct_child):
+                yield from direct_child.get_all_children(collect_predicate, explore_branch_predicate)
+
+    def get_all_functions(self):
+        # common case for some operators: get child functions
+        collect = lambda s: isinstance(s.value, solnodes.FunctionDefinition)
+        # have to explore into using directive scopes as if the contract has one of these, the functions in the contract
+        # end up being scoped as children of the using directive
+        explore = lambda s: isinstance(s.value, (solnodes.UsingDirective, solnodes.SourceUnit))
+        return self.get_all_children(collect, explore)
 
     def import_symbols_from_scope(self, other_scope: 'Scope'):
         self.imported_scopes.append(other_scope)
@@ -159,17 +175,23 @@ class Scope(Scopeable):
         for name in symbol.aliases:
             self.symbols[name].append(symbol)
 
-    def find_current_level(self, name: str, predicate=None) -> Optional[List[Symbol]]:
+    def find_current_level(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
+        if visited_scopes is not None:
+            if self in visited_scopes:
+                return []
+            visited_scopes.add(self)
+
         found_symbols = test_predicate(self.find_local(name), predicate)
+
         if not found_symbols:
-            found_symbols = self.find_imported(name, predicate)
+            found_symbols = self.find_imported(name, predicate, visited_scopes)
         return found_symbols
 
-    def find_imported(self, name: str, predicate=None) -> Optional[List[Symbol]]:
+    def find_imported(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
         for scope in self.imported_scopes:
             # TODO: unsure whether this should be find_local or find. This is just the old import_symbols_from_scope
             #  functionality for now
-            syms = test_predicate(scope.find_current_level(name), predicate)
+            syms = scope.find_current_level(name, predicate, visited_scopes)
             if syms:
                 return syms
         return []
@@ -184,12 +206,13 @@ class Scope(Scopeable):
         return self.parent_scope.find(name, predicate=predicate) if self.parent_scope else []
 
     def find(self, name: str, find_base_symbol: bool = False, predicate=None) -> Optional[List[Symbol]]:
+        visited_scopes = set()
         # check this scope first
-        found_symbols = self.find_current_level(name, predicate)
+        found_symbols = self.find_current_level(name, predicate, visited_scopes)
 
         # check the parent scope if it wasn't in this scope
         if not found_symbols:
-            found_symbols = self.find_from_parent(name, predicate=predicate)
+            found_symbols = self.find_from_parent(name, predicate)
 
         if not found_symbols:
             return []
@@ -262,7 +285,7 @@ class Scope(Scopeable):
             # that's why I've separated it out
             return scope
 
-    def find_metatype(self, ttype, is_interface) -> 'Scope':
+    def find_metatype(self, ttype, is_interface, is_enum) -> 'Scope':
         # Find or create a scope with the type <metatype: {ttype}> on demand which has the builtin values that
         # type(ttype) has in Solidity
         key = meta_type_key(ttype)
@@ -281,7 +304,7 @@ class Scope(Scopeable):
             # base_ttype = ttype.ttype
 
             # All the int types have a min and a max
-            if ttype.is_int():
+            if ttype.is_int() or is_enum:
                 members.extend([('min', ttype), ('max', ttype)])
 
             # Interfaces have interfaceId (bytes4)
@@ -302,7 +325,7 @@ class Scope(Scopeable):
         indent = '  ' * level
         indent1 = '  ' + indent
 
-        all_syms = self.all_symbols()
+        all_syms = self.get_direct_children()
 
         if all_syms:
             nl_indent = '\n' + indent1
@@ -514,7 +537,7 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
     def __init__(self, ast_node: Union[solnodes.ContractDefinition, solnodes.InterfaceDefinition]):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
 
-    def find_current_level(self, name: str, predicate=None) -> Optional[List[Symbol]]:
+    def find_current_level(self, name: str, predicate=None, visited_scopes: Set = None, check_hierarchy=True) -> Optional[List[Symbol]]:
         found_already = set()
         results = []
 
@@ -525,17 +548,18 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
                     found_already.add(base_s)
                     results.append(s)
 
-        add_to_results(super().find_current_level(name, predicate))
-        add_to_results(self.find_in_contract_hierarchy(name, predicate))
+        add_to_results(super().find_current_level(name, predicate, visited_scopes))
+        if check_hierarchy:
+            add_to_results(self.find_in_contract_hierarchy(name, predicate, visited_scopes))
 
         return results
 
-    def find_in_contract_hierarchy(self, name: str, predicate):
+    def find_in_contract_hierarchy(self, name: str, predicate, visited_scopes):
         # dont look in self
         lookup_order = c3_linearise(self)[1:]
         ss = []
         for c in lookup_order:
-            if syms := c.find_current_level(name, predicate):
+            if syms := c.find_current_level(name, predicate, visited_scopes, check_hierarchy=False):
                 ss.extend(syms)
         return ss
 
@@ -589,8 +613,8 @@ class ImportSymbol(ScopeAndSymbol):
         import_path = self.value.path
         return source_unit.get_imported_source_unit(import_path)
 
-    def all_symbols(self):
-        return self.resolve_base_symbol().all_symbols()
+    def get_direct_children(self):
+        return self.resolve_base_symbol().get_direct_children()
 
     def find(self, name: str, find_base_symbol: bool = False, predicate=None) -> Optional[List[Symbol]]:
         return self.resolve_base_symbol().find(name, find_base_symbol, predicate)
@@ -598,8 +622,8 @@ class ImportSymbol(ScopeAndSymbol):
     def find_type(self, ttype) -> Scope:
         return self.resolve_base_symbol().find_type(ttype)
 
-    def find_metatype(self, ttype, is_interface) -> Scope:
-        return self.resolve_base_symbol().find_metatype(ttype, is_interface)
+    def find_metatype(self, ttype, is_interface, is_enum) -> Scope:
+        return self.resolve_base_symbol().find_metatype(ttype, is_interface, is_enum)
 
     def find_local(self, name: str) -> Optional[List[Symbol]]:
         return self.resolve_base_symbol().find_local(name)
@@ -607,11 +631,11 @@ class ImportSymbol(ScopeAndSymbol):
     def find_first_ancestor(self, predicate, get_parent=None):
         return self.resolve_base_symbol().find_first_ancestor(predicate, get_parent)
 
-    def find_imported(self, name: str, predicate=None) -> Optional[List[Symbol]]:
-        return self.resolve_base_symbol().find_imported(name, predicate)
+    def find_imported(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
+        return self.resolve_base_symbol().find_imported(name, predicate, visited_scopes)
 
-    def find_current_level(self, name: str, predicate=None) -> Optional[List[Symbol]]:
-        return self.resolve_base_symbol().find_current_level(name, predicate)
+    def find_current_level(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
+        return self.resolve_base_symbol().find_current_level(name, predicate, visited_scopes)
 
     def find_first_ancestor_of(self, ttype: Union[Type, Tuple[Type]]):
         return self.resolve_base_symbol().find(ttype)
@@ -636,7 +660,8 @@ class AliasImportSymbol(ImportSymbol):
         alias: solnodes.SymbolAlias = self.value.aliases[self.alias_index]
         symbol_name = alias.symbol.text
         imported_scope = self.get_imported_scope()
-        return imported_scope.find_single(symbol_name)
+        imported_symbol = imported_scope.find_single(symbol_name)
+        return imported_symbol.resolve_base_symbol() # recurse in case this was imported too
 
 
 class UnitImportSymbol(ImportSymbol):
@@ -644,7 +669,7 @@ class UnitImportSymbol(ImportSymbol):
         ImportSymbol.__init__(self, ast_node.alias.text, ast_node)
 
     def resolve_base_symbol(self) -> 'Symbol':
-        return self.get_imported_scope()
+        return self.get_imported_scope().resolve_base_symbol()
 
 
 class ProxyScope(ScopeAndSymbol):
@@ -654,11 +679,11 @@ class ProxyScope(ScopeAndSymbol):
             self.import_symbols_from_scope(base_scope)
         self.base_scope = base_scope
 
-    def find_from_parent(self, name: str, predicate=None):
-        if self.base_scope:
-            return self.base_scope.find(name, predicate=predicate)
-        else:
-            return super().find_from_parent(name, predicate)
+    # def find_from_parent(self, name: str, predicate=None):
+    #     if self.base_scope:
+    #         return self.base_scope.find(name, predicate=predicate)
+    #     else:
+    #         return super().find_from_parent(name, predicate)
 
     def resolve_base_symbol(self) -> 'Symbol':
         if self.base_scope:
@@ -675,7 +700,7 @@ class UsingFunctionSymbol(Symbol):
         self.override_type = override_type
 
     def resolve_base_symbol(self) -> 'Symbol':
-        return self.target
+        return self.target.resolve_base_symbol()
 
 
 class UsingOperatorSymbol(Symbol):
@@ -687,7 +712,7 @@ class UsingOperatorSymbol(Symbol):
         self.operator = operator
 
     def resolve_base_symbol(self) -> 'Symbol':
-        return self.target
+        return self.target.resolve_base_symbol()
 
 
 class Builder2:
@@ -736,13 +761,24 @@ class Builder2:
 
         self.add_to_scope(self.root_scope, fs)
 
-        for index, node in enumerate(source_units):
+        for index, node in self.sort_ast_nodes(source_units):
             self.add_node_dfs(fs, node, Builder2.Context(fs, None), True, index)
 
-        for index, node in enumerate(source_units):
+        for index, node in self.sort_ast_nodes(source_units):
             self.add_node_dfs(fs, node, Builder2.Context(fs, None), False, index)
 
         return fs
+
+    def sort_ast_nodes(self, nodes):
+        type_defining_nodes = []
+        other_nodes = []
+        for n in nodes:
+            if isinstance(n, solnodes.UserValueType):
+                type_defining_nodes.append(n)
+            else:
+                other_nodes.append(n)
+        return enumerate(type_defining_nodes + other_nodes)
+
 
     def add_node_dfs(self, parent_scope, node, context: Context, build_skeletons, visit_index=0):
         """
@@ -824,7 +860,8 @@ class Builder2:
         # Note we also do this for using directives now
 
         latest_scope = current_scope
-        for child_index, child_node in enumerate(node.get_children()):
+        # TODO: order these
+        for child_index, child_node in self.sort_ast_nodes(node.get_children()):
             # Enums values are shared between nodes, so they'd end up getting processed multiple times and their
             # 'scope' would be inaccurate
             if isinstance(child_node, Enum):
@@ -914,6 +951,11 @@ class Builder2:
             # Resolve the name used here to the actual contract/struct/etc (symbol)
             raw_name = target_type.name.text
             target_type_scope = self.lookup_name_in_scope(current_scope, raw_name)
+            if not target_type_scope:
+                # happened in a case where a contract imported a Type 'Delay' from 'Time' and used Time.Delay in the
+                # contract, but in the 'Time' library the type was referenced as 'Delay' => 'Delay' wasn't defined in
+                # the current contract but was defined in the library.
+                target_type_scope = self.lookup_name_in_scope(target_type.scope, raw_name)
             # Use the name as defined by the target type symbol itself so that we can do definite checks against
             # this type and the first parameter type later, i.e. for A.B.MyT, use MyT as the type key
             target_scope_name = target_type_scope.resolve_base_symbol().value.name.text
@@ -1010,8 +1052,6 @@ class Builder2:
 
         # TODO: filter private functions
         func_def = symbol.value
-        if not isinstance(func_def, solnodes.FunctionDefinition):
-            return None
         if func_def.parameters:
             first_parameter_type = func_def.parameters[0].var_type
             # Resolve the parameter type if required (if it's a user defined type) and compared to the
@@ -1030,15 +1070,12 @@ class Builder2:
         cur_scope = self.find_using_current_scope(node, context)
         library_scope: Scope = cur_scope.find_single(node.library_name.text, find_base_symbol=True)
 
-        for symbol in library_scope.all_symbols():
+        for symbol in library_scope.get_all_functions():
             func_def = symbol.value
-            if not isinstance(func_def, solnodes.FunctionDefinition) or not func_def.parameters:
+            if not func_def.parameters:
                 continue
             target_type = func_def.parameters[0].var_type
             target_type_scope, target_scope_name = self.find_using_target_scope_and_name(cur_scope, target_type)
-            # target_type_scope = self.lookup_name_in_scope(symbol.parent_scope, target_type.name.text)
-            # target_type_scope = target_type_scope.resolve_base_symbol()
-            # scope_name = target_type_scope.resolve_base_symbol().aliases[0]
 
             scope_to_add_to = self.get_proxy_scope_for_type(cur_scope, target_type, target_scope_name, target_type_scope, library_scope, check_lib=False)
 
@@ -1057,8 +1094,8 @@ class Builder2:
 
         target_type_scope, target_scope_name = self.find_using_target_scope_and_name(cur_scope, target_type)
 
-        using_symbols = [self.get_using_function_symbol_for_func(target_type, target_type_scope, s) for s in
-                         library_scope.all_symbols()]
+        using_symbols = [self.get_using_function_symbol_for_func(target_type, target_type_scope, s)
+                         for s in library_scope.get_all_functions()]
 
         if node.is_global:
             scope_to_add_to = target_type_scope
@@ -1072,7 +1109,7 @@ class Builder2:
 
     def find_using_current_scope(self, node, context):
         if hasattr(node, 'owning_scope'):
-            cur_scope = node.owning_scope
+            return node.owning_scope
         # required since now usings can be put in the file scope
         return context.unit_scope if context.unit_scope else context.file_scope
 
@@ -1164,7 +1201,7 @@ class Builder2:
 
                 udvt_type = solnodes.UserType(solnodes.Ident(node.name.text))
                 # set the scope of this node: when it's looked up later, it needs a scope
-                udvt_type.scope = node.scope
+                udvt_type.scope = node.owning_scope
 
                 methods = [
                     ('wrap', [node.value], [udvt_type]),
