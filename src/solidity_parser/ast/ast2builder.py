@@ -1180,7 +1180,7 @@ class Builder:
             assert not possible_base or is_local_call
 
             return solnodes2.EmitEvent(solnodes2.Ref(sym.value.ast2_node), new_args)
-        elif isinstance(sym.value, solnodes1.Var):
+        elif isinstance(sym.value, (solnodes1.Var, solnodes1.Parameter)):
             # refine_expr again but this time not as a function callee to get the callee as an expr
             return solnodes2.FunctionPointerCall(option_args, new_args, self.refine_expr(callee))
         self._todo(expr)
@@ -1690,7 +1690,8 @@ class Builder:
         return solnodes2.Parameter(self.var(node))
 
     def error_parameter(self, node: solnodes1.ErrorParameter):
-        return solnodes2.ErrorParameter(self.type_helper.map_type(node.var_type), solnodes2.Ident(node.name.text))
+        name = solnodes2.Ident(node.name.text if node.name else None)
+        return solnodes2.ErrorParameter(self.type_helper.map_type(node.var_type), name)
 
     def modifier(self, node: solnodes1.Modifier):
         if isinstance(node, solnodes1.VisibilityModifier2):
