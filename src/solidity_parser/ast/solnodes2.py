@@ -1489,6 +1489,22 @@ class ArrayStore(Expr):
 
 
 @NodeDataclass
+class ArraySliceLoad(Expr):
+    """ Gets a subarray at the given start and end indices from the given array """
+    base: Expr
+    start_index: Expr
+    end_index: Expr
+
+    def type_of(self) -> Type:
+        return self.base.type_of()
+
+    def code_str(self):
+        start_str = self.start_index.code_str() if self.start_index else ''
+        end_str = self.end_index.code_str() if self.end_index else ''
+        return f'{self.base.code_str()}[{start_str}:{end_str}]'
+
+
+@NodeDataclass
 class CreateInlineArray(Expr):
     """ Solidity 8 inline array creation
 
