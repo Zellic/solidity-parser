@@ -1944,13 +1944,12 @@ class Builder:
                             assert isinstance(library_scope.value, solnodes1.LibraryDefinition)
                             library = self.type_helper.get_contract_type(part.scope.find_single(part.library_name.text))
                             if isinstance(part.override_type, solnodes1.AnyType):
-                                for sym in library_scope.all_symbols():
-                                    if isinstance(sym.value, solnodes1.FunctionDefinition):
-                                        input_params = sym.value.parameters
-                                        if input_params:
-                                            override_type = input_params[0].var_type
-                                            ast2_node.type_overrides.append(solnodes2.LibraryOverride(
-                                                self.type_helper.map_type(override_type), library))
+                                for sym in library_scope.get_all_functions():
+                                    input_params = sym.value.parameters
+                                    if input_params:
+                                        override_type = input_params[0].var_type
+                                        ast2_node.type_overrides.append(solnodes2.LibraryOverride(
+                                            self.type_helper.map_type(override_type), library))
 
                             else:
                                 ast2_node.type_overrides.append(
