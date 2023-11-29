@@ -439,6 +439,9 @@ class TopLevelUnit(Node, ABC):
     def is_udvt(self) -> bool:
         return isinstance(self, UserDefinedValueTypeDefinition)
 
+    def is_enum(self) -> bool:
+        return isinstance(self, EnumDefinition)
+
 
 @NodeDataclass
 class ArrayType(Type):
