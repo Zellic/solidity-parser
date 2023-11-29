@@ -186,6 +186,9 @@ class TypeHelper:
                 return base_type.base_type
             else:
                 return self.builder._todo(base_type)
+        elif isinstance(expr, solnodes1.GetArraySlice):
+            base_type = self.get_expr_type(expr.array_base)
+            return base_type
         elif isinstance(expr, solnodes1.BinaryOp):
             t1 = self.get_expr_type(expr.left, force_tuple=expr.op.name.startswith('ASSIGN'))
             t2 = self.get_expr_type(expr.right)
