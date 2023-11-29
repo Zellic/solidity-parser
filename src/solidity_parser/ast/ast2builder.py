@@ -732,7 +732,7 @@ class Builder:
                     # load the parent which will in turn define skeletons for its children, including the current
                     # ast1_node
                     parent_was_loaded = hasattr(parent_scope.value, 'ast2_node')
-                    logging.getLogger('AST2').info(f'Loading parent {parent_scope.aliases[0]}::{ast1_node.name.text}')
+                    logging.getLogger('AST2').info(f'Loading parent of {ast1_node.name.text} ({parent_scope.aliases[0]})')
                     parent_type = self.load_if_required(parent_scope)
                     source_unit_name = f'{parent_type.source_unit_name}${parent_type.name.text}'
 
@@ -744,7 +744,7 @@ class Builder:
                         # MyLib defines a function f that takes MyEnum as a parameter. Loading MyEnum requires MyLib to
                         # be loaded but loading MyLib requires MyEnum to be loaded for the parameter type in f.
                         logging.getLogger('AST2').info(
-                            f'Defining circular ref type {source_unit_name}::{ast1_node.name.text}')
+                            f'Defining circular ref type: {ast1_node.name.text} from {source_unit_name}')
                         ast2_node = self.define_skeleton(ast1_node, source_unit_name)
                     else:
                         # Parent wasn't previously defined and so it was loaded, in turn creating skeletons for its
@@ -1047,7 +1047,7 @@ class Builder:
             # no resolved callees
             return self._error(f"Can't resolve call: {expr}, candidates={candidates}, args={arg_types}")
         elif len(candidates) > 1:
-            logging.getLogger('AST2').info(f'Matched multiple buckets for: {expr}, choosing first from {candidates}')
+            logging.getLogger('AST2').debug(f'Matched multiple buckets for: {expr}, choosing first from {candidates}')
 
         # Choose the candidate from the first bucket
         # FunctionCallee, (input: types, output: types)
@@ -1759,6 +1759,8 @@ class Builder:
 
         assert not hasattr(ast1_node, 'ast2_node')
 
+        logging.getLogger('AST2').info(f' making skeleton for {type(ast1_node).__name__}({ast1_node.name}) :: {source_unit_name}')
+
         # Source unit name is only used for source units/top level units
         # This is the case where we have functions, errors, event, constants that are defined outside of a top level
         # node like a contract or interface, i.e. parentless definitions
@@ -1815,8 +1817,6 @@ class Builder:
                 return solnodes2.ModifierDefinition(name, [], [], None)
             else:
                 self._todo(n)
-
-        logging.getLogger('AST2').info(f' making skeleton for {ast1_node.name} :: {source_unit_name}')
 
         ast2_node = _make_new_node(ast1_node)
         ast1_node.ast2_node = ast2_node
