@@ -303,6 +303,9 @@ class Type(Node, ABC):
     def is_void(self) -> bool:
         return False
 
+    def type_key(self):
+        return self.code_str()
+
 
 @NodeDataclass
 class VoidType(Type):
@@ -566,7 +569,7 @@ class AddressType(Type):
         return True
 
     def code_str(self):
-        return 'address' + ('payable' if self.is_payable else '')
+        return 'address' + (' payable' if self.is_payable else '')
 
 
 @NodeDataclass
