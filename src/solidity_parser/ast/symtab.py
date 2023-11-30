@@ -386,11 +386,11 @@ def create_builtin_scope(key, value=None, values=None, functions=None):
 
 
 def type_key(ttype) -> str:
-    return f'<type:{str(ttype)}>'
+    return f'<type:{ttype.type_key()}>'
 
 
 def meta_type_key(ttype) -> str:
-    return f'<metatype:{str(ttype)}>'
+    return f'<metatype:{ttype.type_key()}>'
 
 
 class RootScope(Scope):

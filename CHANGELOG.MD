@@ -5,8 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-### [0.1.3] - 2023-11-29
+### [0.1.4] - 2023-11-30
+ - Changed address payable code_str `addresspayable` to `address payable`
+ - Fixed type mapping for names shadowed in proxy scopes(because of using directives)
+ - Fixed ast2builder skeletoning nodes twice
+ - Added type_key() to solnodes1 and solnodes2 Types to fix `ResolvedUserType(X)` lookups (now just uses `X`)
 
+### [0.1.3] - 2023-11-29
  - Updated README
  - AST2/AST2builder
    - Added is_enum() helper to TopLevelUnit

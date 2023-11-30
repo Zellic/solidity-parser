@@ -437,8 +437,14 @@ class TypeHelper:
         if isinstance(arg, solnodes1.Ident):
             # lookup the ident in the current scope and if it's a top level type, it's a type
             symbols = arg.scope.find(arg.text)
-            if len(symbols) == 1 and self.builder.is_top_level(symbols[0].value):
-                return self.symbol_to_ast2_type(symbols[0])
+            if len(symbols) == 1:
+                sym = symbols[0]
+                if hasattr(sym, 'base_scope'):
+                    # this is hit when the found symbol is a proxy scope
+                    sym = sym.base_scope
+                resolved_sym = sym.resolve_base_symbol()
+                if self.builder.is_top_level(resolved_sym.value):
+                    return self.symbol_to_ast2_type(resolved_sym)
         if isinstance(arg, solnodes1.GetArrayValue):
             if isinstance(arg.array_base, solnodes1.Type):
                 # make a copy of the base type and put it in an array
@@ -724,7 +730,7 @@ class Builder:
                     logging.getLogger('AST2').info(f'Defining top level unit {source_unit_name}::{ast1_node.name.text}')
                     # force skeleton of the whole file, filescope.value is the ast1 parts
                     for part in parent_scope.value:
-                        if part is not None and self.should_create_skeleton(part):
+                        if part is not None and self.should_create_skeleton(part) and not hasattr(part, 'ast2_node'):
                             # None = EOF
                             self.define_skeleton(part, source_unit_name)
                     ast2_node = ast1_node.ast2_node
