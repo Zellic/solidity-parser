@@ -1190,7 +1190,9 @@ class Builder2:
             elif isinstance(node, solnodes.SymbolImportDirective):
                 return [AliasImportSymbol(node, i) for i in range(0, len(node.aliases))]
             elif isinstance(node, solnodes.UnitImportDirective):
-                return UnitImportSymbol(node)
+                # wrap this in a list as UnitImportSymbol is a scope and symbol and the caller will
+                # scope the next nodes as children of this which breaks some resolution stuff in ast2
+                return [UnitImportSymbol(node)]
             elif isinstance(node, solnodes.ImportDirective):
                 # This is an import that looks like: import "myfile.sol". All the symbols from myfile are loaded into
                 # the current file scope, so we have to load myfile, take its symbols and add them to the current file
