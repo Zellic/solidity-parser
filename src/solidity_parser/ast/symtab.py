@@ -20,8 +20,12 @@ def bytes():
     return solnodes.BytesType()
 
 
+def bytesn(n):
+    return solnodes.FixedLengthArrayType(solnodes.ByteType(), n)
+
+
 def bytes32():
-    return solnodes.FixedLengthArrayType(solnodes.ByteType(), 32)
+    return bytesn(32)
 
 
 def uint(size=256):
@@ -407,7 +411,7 @@ class RootScope(Scope):
         # FIXME: Sender is actually not payable as per 0.8 breaking changes, but if we make it not payable it breaks
         #  some pre 0.8 contracts, need a way to version symtab behaviour in AST2
         msg_object.add(BuiltinValue('sender', solnodes.AddressType(True)))
-        msg_object.add(BuiltinValue('data', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+        msg_object.add(BuiltinValue('data', bytes()))
         msg_object.add(BuiltinValue('sig', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
 
         self.add(msg_object)
@@ -484,6 +488,8 @@ class RootScope(Scope):
 
         # Builtin global functions
         self.add(BuiltinFunction('keccak256', None, [bytes32()]))
+        self.add(BuiltinFunction('sha256', None, [bytes32()]))
+        self.add(BuiltinFunction('ripemd160', None, [bytesn(20)]))
         # addmod(uint x, uint y, uint k) returns (uint)
         # mulmod(uint x, uint y, uint k) returns (uint)
         self.add(BuiltinFunction('addmod', [uint(), uint(), uint()], [uint()]))
