@@ -192,7 +192,11 @@ class Node:
     comments: Optional[List[str]] = field(init=False, repr=False, hash=False, compare=False, default_factory=list)
 
     def get_children(self):
-        for val in vars(self).values():
+        # get the dataclass fields instead of vars() here: two benefits:
+        #  we loop fewer times as there are less things
+        #  we include only the explicit fields of each dataclass so won't pick up accidental recursions
+        for k in self.__dataclass_fields__.keys():
+            val = getattr(self, k)
             # Don't include parent or Refs
             #  or NodeLists (done implicitly by generator)
             if val is self.parent:
