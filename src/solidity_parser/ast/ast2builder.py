@@ -1060,7 +1060,9 @@ class Builder:
         # Choose the candidate from the first bucket
         # FunctionCallee, (input: types, output: types)
         # TODO: get named args for PartialFunctionCallee
-        possible_base, sym, ftype, is_synthetic = candidates[0]
+        possible_base, unresolved_sym, ftype, is_synthetic = candidates[0]
+
+        sym = unresolved_sym.resolve_base_symbol()
 
         if ftype.is_mapping():
             # for mapping types, the dst is the output type
@@ -1140,7 +1142,7 @@ class Builder:
             # e.g. myInt.xyz(abc) where xyz is in a library, IntLibrary and xyz(int, int) is a function in IntLibrary
             # therefore the inputs are [myInt, abc], target funtion is IntLibrary.xyz
             # Using directives are only used for libraries atm so this would end up as a DirectCall
-            if isinstance(sym, symtab.UsingFunctionSymbol):
+            if isinstance(unresolved_sym, symtab.UsingFunctionSymbol):
                 # prepend myInt to the arg list
                 new_args = [possible_base] + new_args
                 # set the base to the library that declares the func so that below we emit a DirectCall
