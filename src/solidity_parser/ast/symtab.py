@@ -209,6 +209,16 @@ class Scope(Scopeable):
     def find_from_parent(self, name: str, predicate=None):
         return self.parent_scope.find(name, predicate=predicate) if self.parent_scope else []
 
+    def find_multi_part_symbol(self, name, find_base_symbol: bool = False, predicate=None):
+        if '.' in name:
+            parts = name.split('.')
+            s = self
+            for p in parts:
+                s = s.find_single(p, find_base_symbol=find_base_symbol, predicate=predicate)
+            return s
+        else:
+            return self.find_single(name, find_base_symbol=find_base_symbol, predicate=predicate)
+
     def find(self, name: str, find_base_symbol: bool = False, predicate=None) -> Optional[List[Symbol]]:
         visited_scopes = set()
         # check this scope first
@@ -575,7 +585,7 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
         for inherit_specifier in self.value.inherits:
             # inherit specifier => name type => name ident => text str
             name = inherit_specifier.name.name.text
-            symbol = klass_file_scope.find_single(name, True)
+            symbol = klass_file_scope.find_multi_part_symbol(name, True)
             assert isinstance(symbol, ContractOrInterfaceScope), f'Got {symbol.aliases}::{type(symbol)}'
             superklasses.append(symbol)
         return superklasses
@@ -934,16 +944,6 @@ class Builder2:
     def scope_name(self, base_name, node):
         return f'<{base_name}>@{node.location}'
 
-    def lookup_name_in_scope(self, scope, name):
-        if '.' in name:
-            parts = name.split('.')
-            s = scope
-            for p in parts:
-                s = s.find_single(p)
-            return s
-        else:
-            return scope.find_single(name)
-
     def find_using_target_scope_and_name(self, current_scope, target_type: solnodes.Type):
         # TODO: Not sure if this is possible and I don't want to handle it(yet), just want to handle Types
         #  for target_type
@@ -956,12 +956,12 @@ class Builder2:
         if isinstance(target_type, solnodes.UserType):
             # Resolve the name used here to the actual contract/struct/etc (symbol)
             raw_name = target_type.name.text
-            target_type_scope = self.lookup_name_in_scope(current_scope, raw_name)
+            target_type_scope = current_scope.find_multi_part_symbol(raw_name)
             if not target_type_scope:
                 # happened in a case where a contract imported a Type 'Delay' from 'Time' and used Time.Delay in the
                 # contract, but in the 'Time' library the type was referenced as 'Delay' => 'Delay' wasn't defined in
                 # the current contract but was defined in the library.
-                target_type_scope = self.lookup_name_in_scope(target_type.scope, raw_name)
+                target_type_scope = target_type.scope.find_multi_part_symbol(raw_name)
             # Use the name as defined by the target type symbol itself so that we can do definite checks against
             # this type and the first parameter type later, i.e. for A.B.MyT, use MyT as the type key
             target_scope_name = target_type_scope.resolve_base_symbol().value.name.text
@@ -1063,7 +1063,7 @@ class Builder2:
             # Resolve the parameter type if required (if it's a user defined type) and compared to the
             # target type
             if isinstance(first_parameter_type, solnodes.UserType):
-                param_type_symbol = self.lookup_name_in_scope(symbol.parent_scope, first_parameter_type.name.text)
+                param_type_symbol = symbol.parent_scope.find_multi_part_symbol(first_parameter_type.name.text)
                 if param_type_symbol.resolve_base_symbol() == target_type_scope.resolve_base_symbol():
                     return make_using_symbol(symbol, target_type)
             elif first_parameter_type == target_type:
@@ -1137,7 +1137,7 @@ class Builder2:
         for attachment in node.attachments_or_bindings:
             # attachment, e.g. using { myF, ... } for MyType ;
             # operator binding, e.g. using { myF as - } for MyType ;
-            symbol = self.lookup_name_in_scope(cur_scope, attachment.member_name.text)
+            symbol = cur_scope.find_multi_part_symbol(attachment.member_name.text)
             if not symbol:
                 raise ValueError(f'No symbol found in using directive: {str(attachment.member_name)}')
 
