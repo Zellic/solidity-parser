@@ -619,7 +619,9 @@ class TypeHelper:
     def _symtab_top_level_predicate(self):
         # This is needed for old contracts before the 'constructor' keyword was used so that when we look up 'X'
         # we don't hit 'function X' i.e. the constructor in the current contract, instead we only look for a user type
-        return lambda sym: self.builder.is_top_level(sym.resolve_base_symbol().value)
+
+        # filescope can happen e.g. import "..." as X, then for the type identifier path: X.Y, X is a FileScope
+        return lambda sym: isinstance(sym, symtab.FileScope) or self.builder.is_top_level(sym.resolve_base_symbol().value)
 
     def get_user_type(self, ttype: solnodes1.UserType):
         """Maps an AST1 UserType to AST2 ResolvedUserType"""
