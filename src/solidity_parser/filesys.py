@@ -136,8 +136,7 @@ class VirtualFileSystem:
             if loaded_source:
                 return loaded_source
 
-        raise f"Can't import {import_path} from {importer_source_unit_name}"
-
+        raise ValueError(f"Can't import {import_path} from {importer_source_unit_name} ({bool(contents)},{bool(loaded_source)})")
 
     def _add_loaded_source(self, source_unit_name: str, source_code: str, creator=None, origin=None) -> LoadedSource:
         loaded_source = LoadedSource(source_unit_name, source_code, creator if creator else ast_helper.make_ast)

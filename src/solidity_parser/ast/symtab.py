@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Union, List, Dict, Optional, Type, Tuple, Set
+from typing import Union, List, Dict, Optional, Type, Tuple, Set, Collection
 from collections import defaultdict
 from enum import Enum
 
@@ -20,8 +20,12 @@ def bytes():
     return solnodes.BytesType()
 
 
+def bytesn(n):
+    return solnodes.FixedLengthArrayType(solnodes.ByteType(), n)
+
+
 def bytes32():
-    return solnodes.FixedLengthArrayType(solnodes.ByteType(), 32)
+    return bytesn(32)
 
 
 def uint(size=256):
@@ -69,6 +73,15 @@ def test_predicate(xs, predicate=None):
     return [x for x in xs if predicate(x)]
 
 
+def _add_to_results(possible_symbols: Collection, results: List, found_already: Set):
+    for s in possible_symbols:
+        res_syms = s.get_as_dealiased_symbols()
+        for base_s in res_syms:
+            if base_s not in found_already:
+                found_already.add(base_s)
+                results.append(s)
+
+
 class Scopeable:
     """Element that can be added as a child of a Scope"""
     
@@ -100,6 +113,13 @@ class Scopeable:
     def find_first_ancestor_of(self, ttype: Union[Type, Tuple[Type]]):
         return self.find_first_ancestor(lambda x: isinstance(x, ttype))
 
+    def _check_single_symbol(self, name, results, default):
+        if len(results) == 1:
+            return results[0]
+        if len(results) > 1:
+            raise ValueError(f'Expected 1 but got {len(results)} symbols for "{name}" in scope {self.aliases[0]}')
+        return default
+
 
 class Symbol(Scopeable):
     def __init__(self, aliases: Optional[Aliases], value):
@@ -108,9 +128,16 @@ class Symbol(Scopeable):
         self.value = value
         self.order = -1
 
-    def resolve_base_symbol(self) -> 'Symbol':
-        # Return the symbol this symbol points to, if one exists.
-        return self
+    def get_as_dealiased_symbols(self) -> List['Symbol']:
+        return [self]
+
+    def res_syms(self) -> List['Symbol']:
+        # Return the symbols this symbol points to, if any exist.
+        return [self]
+
+    def res_syms_single(self):
+        possible_symbols = self.res_syms()
+        return self._check_single_symbol('', possible_symbols, None)
 
     def set_parent_scope(self, parent_scope: 'Scope'):
         Scopeable.set_parent_scope(self, parent_scope)
@@ -128,8 +155,11 @@ class CrossScopeSymbolAlias(Symbol):
         Symbol.__init__(self, aliases, other_symbol.value)
         self.other_symbol = other_symbol
 
-    def resolve_base_symbol(self) -> 'Symbol':
-        return self.other_symbol.resolve_base_symbol()
+    def res_syms(self) -> List['Symbol']:
+        return self.other_symbol.res_syms()
+
+    def get_as_dealiased_symbols(self) -> List[Symbol]:
+        return self.other_symbol.get_as_dealiased_symbols()
 
 
 class Scope(Scopeable):
@@ -143,7 +173,7 @@ class Scope(Scopeable):
         # check if the name exists in the table and it contains something
         return name in self.symbols and bool(self.symbols[name])
 
-    def get_direct_children(self):
+    def get_direct_children(self) -> Collection[Symbol]:
         return set([item for sublist in self.symbols.values() for item in sublist])
 
     def get_all_children(self, collect_predicate, explore_branch_predicate):
@@ -188,13 +218,12 @@ class Scope(Scopeable):
         return found_symbols
 
     def find_imported(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
+        found_already = set()
+        results = []
         for scope in self.imported_scopes:
-            # TODO: unsure whether this should be find_local or find. This is just the old import_symbols_from_scope
-            #  functionality for now
             syms = scope.find_current_level(name, predicate, visited_scopes)
-            if syms:
-                return syms
-        return []
+            _add_to_results(syms, results, found_already)
+        return results
 
     def find_local(self, name: str) -> Optional[List[Symbol]]:
         """Finds a mapped symbol in this scope only"""
@@ -202,10 +231,20 @@ class Scope(Scopeable):
             return list(self.symbols[name])
         return []
 
-    def find_from_parent(self, name: str, predicate=None):
+    def find_from_parent(self, name: str, predicate=None) -> List[Symbol]:
         return self.parent_scope.find(name, predicate=predicate) if self.parent_scope else []
 
-    def find(self, name: str, find_base_symbol: bool = False, predicate=None) -> Optional[List[Symbol]]:
+    def find_multi_part_symbol(self, name, find_base_symbol: bool = False, predicate=None):
+        if '.' in name:
+            parts = name.split('.')
+            s = self
+            for p in parts:
+                s = s.find_single(p, find_base_symbol=find_base_symbol, predicate=predicate)
+            return s
+        else:
+            return self.find_single(name, find_base_symbol=find_base_symbol, predicate=predicate)
+
+    def find(self, name: str, find_base_symbol: bool = False, predicate=None, dealias: bool = True) -> Optional[List[Symbol]]:
         visited_scopes = set()
         # check this scope first
         found_symbols = self.find_current_level(name, predicate, visited_scopes)
@@ -219,71 +258,67 @@ class Scope(Scopeable):
 
         # get the base symbols if required
         if find_base_symbol:
-            return [s.resolve_base_symbol() for s in found_symbols]
+            return [res_sym for s in found_symbols for res_sym in s.res_syms()]
+        elif dealias:
+            return [dea_sym for s in found_symbols for dea_sym in s.get_as_dealiased_symbols()]
         else:
             return list(found_symbols)
 
     def find_single(self, name: str, find_base_symbol: bool = False, default=None, predicate=None) -> Optional[Symbol]:
         results = self.find(name, find_base_symbol=find_base_symbol, predicate=predicate)
+        return self._check_single_symbol(name, results, default)
 
-        if len(results) == 1:
-            return results[0]
-
-        if len(results) > 1:
-            raise ValueError(f'Expected 1 but got {len(results)} symbols for "{name}" in scope {self.aliases[0]}')
-
-        return default
-
-    def find_type(self, ttype) -> 'Scope':
+    def find_type(self, ttype, predicate=None, as_single=False) -> 'Scope':
         key = type_key(ttype)
-        scope = self.find_single(key)
 
-        if scope is None:
-            if ttype.is_array():
-                # Arrays are also kind of meta types but the key is formed as a normal type key instead of a metatype
-                # key. Depending on the storage type of the array (which we don't currently associated with the Type
-                # itself: this requires investigation)
-                # The following members can be available:
-                # https://docs.soliditylang.org/en/develop/types.html#array-members
-                # We add them all regardless of the storage type and will let code later on handle the rules for
-                # allowing calls to arrays with the wrong storage location.
-
-                values = [('length', solnodes.IntType(False, 256))]
-                # These are not available for String (which is a subclass of Array)
-                methods = [
-                    # TODO: should these be copied?
-                    ('push', [], [ttype.base_type]),
-                    # Before solidity 0.6, this returns the new array length, >= 0.6 returns nothing
-                    ('push', [ttype.base_type], []),
-                    ('pop', [], [])
-                ] if not ttype.is_string() else []
-                scope = create_builtin_scope(key, ttype, values=values, functions=methods)
-            else:
-                # TODO: guard for the probably bit
-                # this is a primitive (probably). E.g. We look up <type: int256>
-                fields = []
-                methods = []
-                if ttype.is_function():
-                    # Function selector, specific to the function type itself
-                    fields.append(('selector', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
-                    # before solidity 0.7 instead of f{gas: x, value: y)(args), f.gas(x).value(y)(args) was the way
-                    # options were passed
-                    # To simulate this, we stub value and gas as functions that have the function type itself as the
-                    # return type
-                    methods = [
-                        ('value', [solnodes.IntType(False, 256)], [ttype]),
-                        ('gas', [solnodes.IntType(False, 256)], [ttype]),
-                    ]
-                scope = create_builtin_scope(key, ttype, values=fields, functions=methods)
-            self.add_global_symbol(scope)
-            return scope
-        elif isinstance(scope, BuiltinObject):
-            # already exists as a builtin
-            return scope
+        if as_single:
+            possible_scope = self.find_single(key, predicate=predicate)
+            if possible_scope:
+                return possible_scope
         else:
-            # exists but this is a weird case where we have a using statement that extends the builtin,
-            # that's why I've separated it out
-            return scope
+            possible_scopes = self.find(key, predicate=predicate)
+            if possible_scopes:
+                return possible_scopes
+
+        if ttype.is_array():
+            # Arrays are also kind of meta types but the key is formed as a normal type key instead of a metatype
+            # key. Depending on the storage type of the array (which we don't currently associated with the Type
+            # itself: this requires investigation)
+            # The following members can be available:
+            # https://docs.soliditylang.org/en/develop/types.html#array-members
+            # We add them all regardless of the storage type and will let code later on handle the rules for
+            # allowing calls to arrays with the wrong storage location.
+
+            values = [('length', solnodes.IntType(False, 256))]
+            # These are not available for String (which is a subclass of Array)
+            methods = [
+                # TODO: should these be copied?
+                ('push', [], [ttype.base_type]),
+                # Before solidity 0.6, this returns the new array length, >= 0.6 returns nothing
+                ('push', [ttype.base_type], []),
+                ('pop', [], [])
+            ] if not ttype.is_string() else []
+            scope = create_builtin_scope(key, ttype, values=values, functions=methods)
+        else:
+            # TODO: guard for the probably bit
+            # this is a primitive (probably). E.g. We look up <type: int256>
+            fields = []
+            methods = []
+            if ttype.is_function():
+                # Function selector, specific to the function type itself
+                fields.append(('selector', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+                # before solidity 0.7 instead of f{gas: x, value: y)(args), f.gas(x).value(y)(args) was the way
+                # options were passed
+                # To simulate this, we stub value and gas as functions that have the function type itself as the
+                # return type
+                methods = [
+                    ('value', [solnodes.IntType(False, 256)], [ttype]),
+                    ('gas', [solnodes.IntType(False, 256)], [ttype]),
+                ]
+            scope = create_builtin_scope(key, ttype, values=fields, functions=methods)
+        self.add_global_symbol(scope)
+
+        return scope if as_single else [scope]
 
     def find_metatype(self, ttype, is_interface, is_enum) -> 'Scope':
         # Find or create a scope with the type <metatype: {ttype}> on demand which has the builtin values that
@@ -308,8 +343,8 @@ class Scope(Scopeable):
                 members.extend([('min', ttype), ('max', ttype)])
 
             # Interfaces have interfaceId (bytes4)
-            if is_interface:
-                members.append(('interfaceId', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+            # if is_interface:
+            members.append(('interfaceId', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
 
             # Create the scope based on the above selected members
             self.add_global_symbol(scope := create_builtin_scope(key, ttype, values=members))
@@ -386,11 +421,35 @@ def create_builtin_scope(key, value=None, values=None, functions=None):
 
 
 def type_key(ttype) -> str:
-    return f'<type:{str(ttype)}>'
+    return f'<type:{ttype.type_key()}>'
 
 
 def meta_type_key(ttype) -> str:
-    return f'<metatype:{str(ttype)}>'
+    return f'<metatype:{ttype.type_key()}>'
+
+
+def make_merged_scope(scopes_to_merge, common_parent):
+    # all have to have a common parent and value
+    same_values = all([s.value == scopes_to_merge[0].value for s in scopes_to_merge])
+    # same_parents = all([s.parent_scope == scopes_to_merge[0].parent_scope for s in scopes_to_merge])
+
+    # assert same_parents
+    assert same_values
+
+    alias = 'merged:[' + ','.join([s.aliases[0] for s in scopes_to_merge]) + ']'
+
+    existing_scope = common_parent.find_single(alias)
+    if existing_scope:
+        return existing_scope
+
+    merged_scope = ScopeAndSymbol(alias, scopes_to_merge[0].value)
+
+    for s in scopes_to_merge:
+        merged_scope.import_symbols_from_scope(s)
+
+    common_parent.add(merged_scope)
+
+    return merged_scope
 
 
 class RootScope(Scope):
@@ -407,7 +466,7 @@ class RootScope(Scope):
         # FIXME: Sender is actually not payable as per 0.8 breaking changes, but if we make it not payable it breaks
         #  some pre 0.8 contracts, need a way to version symtab behaviour in AST2
         msg_object.add(BuiltinValue('sender', solnodes.AddressType(True)))
-        msg_object.add(BuiltinValue('data', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+        msg_object.add(BuiltinValue('data', bytes()))
         msg_object.add(BuiltinValue('sig', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
 
         self.add(msg_object)
@@ -484,6 +543,8 @@ class RootScope(Scope):
 
         # Builtin global functions
         self.add(BuiltinFunction('keccak256', None, [bytes32()]))
+        self.add(BuiltinFunction('sha256', None, [bytes32()]))
+        self.add(BuiltinFunction('ripemd160', None, [bytesn(20)]))
         # addmod(uint x, uint y, uint k) returns (uint)
         # mulmod(uint x, uint y, uint k) returns (uint)
         self.add(BuiltinFunction('addmod', [uint(), uint(), uint()], [uint()]))
@@ -541,16 +602,9 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
         found_already = set()
         results = []
 
-        def add_to_results(ss):
-            for s in ss:
-                base_s = s.resolve_base_symbol()
-                if base_s not in found_already:
-                    found_already.add(base_s)
-                    results.append(s)
-
-        add_to_results(super().find_current_level(name, predicate, visited_scopes))
+        _add_to_results(super().find_current_level(name, predicate, visited_scopes), results, found_already)
         if check_hierarchy:
-            add_to_results(self.find_in_contract_hierarchy(name, predicate, visited_scopes))
+            _add_to_results(self.find_in_contract_hierarchy(name, predicate, visited_scopes), results, found_already)
 
         return results
 
@@ -569,7 +623,7 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
         for inherit_specifier in self.value.inherits:
             # inherit specifier => name type => name ident => text str
             name = inherit_specifier.name.name.text
-            symbol = klass_file_scope.find_single(name, True)
+            symbol = klass_file_scope.find_multi_part_symbol(name, True)
             assert isinstance(symbol, ContractOrInterfaceScope), f'Got {symbol.aliases}::{type(symbol)}'
             superklasses.append(symbol)
         return superklasses
@@ -608,43 +662,54 @@ class ImportSymbol(ScopeAndSymbol):
     def __init__(self, aliases: Optional[Aliases], ast_node: solnodes.ImportDirective):
         ScopeAndSymbol.__init__(self, aliases, ast_node)
 
+    def get_as_dealiased_symbols(self) -> List['Symbol']:
+        return [dea_sym for i_s in self._get_imported_symbols() for dea_sym in i_s.get_as_dealiased_symbols()]
+
     def get_imported_scope(self) -> Optional[FileScope]:
         source_unit: FileScope = self.parent_scope
         import_path = self.value.path
         return source_unit.get_imported_source_unit(import_path)
 
-    def get_direct_children(self):
-        return self.resolve_base_symbol().get_direct_children()
+    def _get_imported_symbols(self) -> List[Symbol]:
+        pass
 
-    def find(self, name: str, find_base_symbol: bool = False, predicate=None) -> Optional[List[Symbol]]:
-        return self.resolve_base_symbol().find(name, find_base_symbol, predicate)
+    def res_syms(self) -> List['Symbol']:
+        return [res_sym for i_s in self._get_imported_symbols() for res_sym in i_s.res_syms()]
+    
+    def get_direct_children(self) -> Collection[Symbol]:
+        return [direct_child for i_s in self._get_imported_symbols() for direct_child in i_s.get_direct_children()]
+
+    def find(self, name: str, find_base_symbol: bool = False, predicate=None, dealias: bool = True) -> Optional[List[Symbol]]:
+        return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find(name, find_base_symbol, predicate, dealias)]
 
     def find_type(self, ttype) -> Scope:
-        return self.resolve_base_symbol().find_type(ttype)
+        raise NotImplemented
 
     def find_metatype(self, ttype, is_interface, is_enum) -> Scope:
-        return self.resolve_base_symbol().find_metatype(ttype, is_interface, is_enum)
+        raise NotImplemented
 
     def find_local(self, name: str) -> Optional[List[Symbol]]:
-        return self.resolve_base_symbol().find_local(name)
+        return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find_local(name)]
 
     def find_first_ancestor(self, predicate, get_parent=None):
-        return self.resolve_base_symbol().find_first_ancestor(predicate, get_parent)
-
-    def find_imported(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
-        return self.resolve_base_symbol().find_imported(name, predicate, visited_scopes)
-
-    def find_current_level(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
-        return self.resolve_base_symbol().find_current_level(name, predicate, visited_scopes)
+        raise NotImplemented
 
     def find_first_ancestor_of(self, ttype: Union[Type, Tuple[Type]]):
-        return self.resolve_base_symbol().find(ttype)
+        return NotImplemented
+
+    def find_imported(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
+        return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find_imported(name, predicate, visited_scopes)]
+
+    def find_current_level(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
+        return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find_current_level(name, predicate, visited_scopes)]
 
     def find_single(self, name: str, find_base_symbol: bool = False, default=None, predicate=None) -> Optional[Symbol]:
-        return self.resolve_base_symbol().find_single(name, find_base_symbol, default, predicate)
+        # default to [] in subcalls so if nothing is found nothing gets appended to results
+        results = [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find_single(name, find_base_symbol, [], predicate)]
+        return self._check_single_symbol(name, results, default)
 
-    def find_from_parent(self, name: str, predicate=None):
-        return self.resolve_base_symbol().find_from_parent(name, predicate)
+    def find_from_parent(self, name: str, predicate=None) -> List[Symbol]:
+        return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find_from_parent(name, predicate)]
 
 
 class AliasImportSymbol(ImportSymbol):
@@ -656,20 +721,21 @@ class AliasImportSymbol(ImportSymbol):
         self.alias_index = alias_index
         ImportSymbol.__init__(self, ast_node.aliases[alias_index].alias.text, ast_node)
 
-    def resolve_base_symbol(self) -> 'Symbol':
+    def _get_imported_symbols(self) -> List['Symbol']:
         alias: solnodes.SymbolAlias = self.value.aliases[self.alias_index]
         symbol_name = alias.symbol.text
         imported_scope = self.get_imported_scope()
-        imported_symbol = imported_scope.find_single(symbol_name)
-        return imported_symbol.resolve_base_symbol() # recurse in case this was imported too
+        imported_symbols = imported_scope.find(symbol_name)
+        # the imported symbols may themselves resolve to multiple symbols
+        return [single_sym for i_s in imported_symbols for single_sym in i_s.res_syms()]
 
 
 class UnitImportSymbol(ImportSymbol):
     def __init__(self, ast_node: solnodes.UnitImportDirective):
         ImportSymbol.__init__(self, ast_node.alias.text, ast_node)
 
-    def resolve_base_symbol(self) -> 'Symbol':
-        return self.get_imported_scope().resolve_base_symbol()
+    def _get_imported_symbols(self) -> List['Symbol']:
+        return self.get_imported_scope().res_syms()
 
 
 class ProxyScope(ScopeAndSymbol):
@@ -679,17 +745,16 @@ class ProxyScope(ScopeAndSymbol):
             self.import_symbols_from_scope(base_scope)
         self.base_scope = base_scope
 
-    # def find_from_parent(self, name: str, predicate=None):
-    #     if self.base_scope:
-    #         return self.base_scope.find(name, predicate=predicate)
-    #     else:
-    #         return super().find_from_parent(name, predicate)
-
-    def resolve_base_symbol(self) -> 'Symbol':
+    def res_syms(self) -> List['Symbol']:
         if self.base_scope:
-            return self.base_scope.resolve_base_symbol()
+            return self.base_scope.res_syms()
         else:
-            return self
+            return [self]
+
+
+class UsingDirectiveScope(ScopeAndSymbol):
+    def __init__(self, node: solnodes.UsingDirective):
+        ScopeAndSymbol.__init__(self, f'Using:{node.location}', node)
 
 
 class UsingFunctionSymbol(Symbol):
@@ -699,8 +764,8 @@ class UsingFunctionSymbol(Symbol):
         self.target = target
         self.override_type = override_type
 
-    def resolve_base_symbol(self) -> 'Symbol':
-        return self.target.resolve_base_symbol()
+    def res_syms(self) -> List['Symbol']:
+        return self.target.res_syms()
 
 
 class UsingOperatorSymbol(Symbol):
@@ -711,8 +776,8 @@ class UsingOperatorSymbol(Symbol):
         self.override_type = override_type
         self.operator = operator
 
-    def resolve_base_symbol(self) -> 'Symbol':
-        return self.target.resolve_base_symbol()
+    def res_syms(self) -> List['Symbol']:
+        return self.target.res_syms()
 
 
 class Builder2:
@@ -879,25 +944,47 @@ class Builder2:
                             # the target type directly
                             continue
                         else:
+
+                            # latest == last contract scope
+
+                            latest_contract = latest_scope.find_first_ancestor_of((ContractOrInterfaceScope, LibraryScope))
+
+
                             # non global using: create the new enclosing scope
                             newly_created_scope = self.make_using_scope(child_node)
+                            # add an import link from the latest scope(LAT) to the newly created one(NEW). The NEW scope
+                            # also ends up being added as a normal symbol to the LAT scope but the alias for NEW is
+                            # not a real symbol name, e.g. 'Using:25:735'. If NEW wasn't imported into LAT, no symbols
+                            # in NEW would be visible as they would have to be qualified with the mangled name. The
+                            # import mechanism in scope looks directly into imported scopes which is what you would
+                            # expect if all the symbols of NEW were brought into LAT.
+                            # Note: we still need to add NEW to LAT as a symbol in this case to make sure the child
+                            # parent relationship is correct so traversing up and down the scope tree works.
                             latest_scope.import_symbols_from_scope(newly_created_scope)
 
-                    # continue with scoping
-                    self.add_to_scope(latest_scope, newly_created_scope)
                     child_node.owning_scope = newly_created_scope
+
+                    if isinstance(child_node, solnodes.VarDecl):
+                        # continue with scoping
+                        self.add_to_scope(latest_scope, newly_created_scope)
+                    else:
+                        # using directive
+                        self.add_to_scope(latest_contract, newly_created_scope)
 
                 # recurse the child node. note that for all code stmts/exprs make_symbols_for_node() won't create new symbols or
                 # scopes(returns None/[]) so this is really to attach the 'newly_created_scope' to the AST child nodes
                 # 'scope' of this VarDecl. This is also why we only do this during skeleton building, as the subnodes
                 # here don't affect the scope tree themselves: we just want to tell them their 'scope'.
                 self.add_node_dfs(latest_scope, child_node, context, build_skeletons, child_index)
-                latest_scope = child_node.owning_scope
+
+                if isinstance(child_node, solnodes.VarDecl):
+                    latest_scope = child_node.owning_scope
             else:
                 self.add_node_dfs(latest_scope, child_node, context, build_skeletons, child_index)
 
     def make_using_scope(self, node: solnodes.UsingDirective):
-        return self.make_scope(node, f'Using:{node.location}')
+        # return self.make_scope(node, f'Using:{node.location}')
+        return UsingDirectiveScope(node)
 
     def make_var_decl_scope(self, node: solnodes.VarDecl):
         # This is the synthetic scope in which the VarDecl is live
@@ -928,16 +1015,6 @@ class Builder2:
     def scope_name(self, base_name, node):
         return f'<{base_name}>@{node.location}'
 
-    def lookup_name_in_scope(self, scope, name):
-        if '.' in name:
-            parts = name.split('.')
-            s = scope
-            for p in parts:
-                s = s.find_single(p)
-            return s
-        else:
-            return scope.find_single(name)
-
     def find_using_target_scope_and_name(self, current_scope, target_type: solnodes.Type):
         # TODO: Not sure if this is possible and I don't want to handle it(yet), just want to handle Types
         #  for target_type
@@ -950,19 +1027,21 @@ class Builder2:
         if isinstance(target_type, solnodes.UserType):
             # Resolve the name used here to the actual contract/struct/etc (symbol)
             raw_name = target_type.name.text
-            target_type_scope = self.lookup_name_in_scope(current_scope, raw_name)
+            target_type_scope = current_scope.find_multi_part_symbol(raw_name)
             if not target_type_scope:
                 # happened in a case where a contract imported a Type 'Delay' from 'Time' and used Time.Delay in the
                 # contract, but in the 'Time' library the type was referenced as 'Delay' => 'Delay' wasn't defined in
                 # the current contract but was defined in the library.
-                target_type_scope = self.lookup_name_in_scope(target_type.scope, raw_name)
+                target_type_scope = target_type.scope.find_multi_part_symbol(raw_name)
             # Use the name as defined by the target type symbol itself so that we can do definite checks against
             # this type and the first parameter type later, i.e. for A.B.MyT, use MyT as the type key
-            target_scope_name = target_type_scope.resolve_base_symbol().value.name.text
+            target_scope_name = target_type_scope.res_syms_single().value.name.text
         else:
             # Solidity type, e.g. <type:int>, <type:byte[]}, etc
-            # needs to be a list because
-            target_type_scope = current_scope.find_type(target_type)
+
+            # find a single type, this should be the Builtin version. ignore any proxy scopes, i.e. any previously
+            # processed using directives for this type
+            target_type_scope = current_scope.find_type(target_type, predicate=lambda x: not isinstance(x, ProxyScope), as_single=True)
             target_scope_name = target_type_scope.aliases[0]
         return target_type_scope, target_scope_name
 
@@ -1057,8 +1136,8 @@ class Builder2:
             # Resolve the parameter type if required (if it's a user defined type) and compared to the
             # target type
             if isinstance(first_parameter_type, solnodes.UserType):
-                param_type_symbol = self.lookup_name_in_scope(symbol.parent_scope, first_parameter_type.name.text)
-                if param_type_symbol.resolve_base_symbol() == target_type_scope.resolve_base_symbol():
+                param_type_symbol = symbol.parent_scope.find_multi_part_symbol(first_parameter_type.name.text)
+                if param_type_symbol.res_syms_single() == target_type_scope.res_syms_single():
                     return make_using_symbol(symbol, target_type)
             elif first_parameter_type == target_type:
                 return make_using_symbol(symbol, target_type)
@@ -1131,7 +1210,7 @@ class Builder2:
         for attachment in node.attachments_or_bindings:
             # attachment, e.g. using { myF, ... } for MyType ;
             # operator binding, e.g. using { myF as - } for MyType ;
-            symbol = self.lookup_name_in_scope(cur_scope, attachment.member_name.text)
+            symbol = cur_scope.find_multi_part_symbol(attachment.member_name.text)
             if not symbol:
                 raise ValueError(f'No symbol found in using directive: {str(attachment.member_name)}')
 
@@ -1184,7 +1263,9 @@ class Builder2:
             elif isinstance(node, solnodes.SymbolImportDirective):
                 return [AliasImportSymbol(node, i) for i in range(0, len(node.aliases))]
             elif isinstance(node, solnodes.UnitImportDirective):
-                return UnitImportSymbol(node)
+                # wrap this in a list as UnitImportSymbol is a scope and symbol and the caller will
+                # scope the next nodes as children of this which breaks some resolution stuff in ast2
+                return [UnitImportSymbol(node)]
             elif isinstance(node, solnodes.ImportDirective):
                 # This is an import that looks like: import "myfile.sol". All the symbols from myfile are loaded into
                 # the current file scope, so we have to load myfile, take its symbols and add them to the current file

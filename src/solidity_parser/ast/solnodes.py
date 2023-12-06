@@ -87,6 +87,9 @@ class Type(Node, ABC):
     def is_address(self) -> bool:
         return False
 
+    def type_key(self):
+        return str(self)
+
 
 @dataclass
 class ArrayType(Type):
