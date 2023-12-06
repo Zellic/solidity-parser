@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.5] - 2023-12-06
+
+ - AST2/AST2builder
+   - Fixed issues with GetArrayValue nodes misparsing in AST2
+   - Patched issue where multiple types have the same name in a contract context
+   - Added load_non_top_level_if_required
+   - Fixed issue with reskeletoning free floating AST2 nodes
+   - Fixed bug where using function calls weren't being desugared
+ - Parser060/070
+   - Fixed issue with inline array expressions parsed as tuples
+ - Solnodes2
+   - Made get_children only return dataclass children
+   - Fixed address payable code str output
+- Symtab
+  - Changed symtab Using directive nesting to flat format
+  - Removed interfaceId interface check due to abstract contract having the field
+  - Fixed msg.data being bytes4 to bytes
+  - Fixed qualified name lookups for some symtab refs
+  - Changed resolve_base_symbol() (single) to res_syms() (multiple)
+  - Added sha256 and ripemd160 builtins
+  - Added UsingDirectiveScope
+
 ### [0.1.4] - 2023-11-30
  - Changed address payable code_str `addresspayable` to `address payable`
  - Fixed type mapping for names shadowed in proxy scopes(because of using directives)
