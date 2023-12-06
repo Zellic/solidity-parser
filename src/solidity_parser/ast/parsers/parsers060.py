@@ -361,7 +361,13 @@ def _string_literal(parser, literal: SolidityParser.StringLiteralContext):
 
 
 def _tuple_expr(parser, expr: SolidityParser.TupleExpressionContext):
-    return solnodes.Literal(tuple(parser.make_all(expr)))
+    if expr.getChild(0).getText() == '[':
+        # for some reason the old grammars don't have rules that differentiate between
+        # tuple expressions and inline array initialisers
+        return solnodes.NewInlineArray(parser.make_all(expr))
+    else:
+        # otherwise it's a '(' i.e. tuple
+        return solnodes.Literal(tuple(parser.make_all(expr)))
 
 
 def _member_load(parser, expr: SolidityParser.MemberLoadContext):
