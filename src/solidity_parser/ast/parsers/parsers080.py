@@ -68,7 +68,8 @@ def _pragma_directive(parser, pragma_directive: SolidityParser.PragmaDirectiveCo
     total_str = ''
     for token in pragma_directive.PragmaToken():
         total_str += token.getText()
-    parts = total_str.split(None, 1)
+    sep = '=' if '=' in total_str else None
+    parts = total_str.split(sep, 1)
     assert len(parts) == 2
 
     name_ident = parser.wrap_node(pragma_directive, solnodes.Ident(parts[0]))
