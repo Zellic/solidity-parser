@@ -28,40 +28,6 @@ class TypeHelper:
     def any_or_all(args):
         return (len(args) == 0) or (any(args) == all(args))
 
-    def find_event(self, ttype: solnodes2.ResolvedUserType, name: str) -> solnodes2.EventDefinition:
-        # Not sure if inheritance is allowed for events. Afaik a contract can only call events defined in itself
-
-        unit = ttype.value.x
-
-        assert isinstance(unit, (solnodes2.ContractDefinition, solnodes2.InterfaceDefinition))
-
-        def matches(x):
-            # TODO: parameter type match
-            return isinstance(x, solnodes2.EventDefinition) and x.name.text == name
-        candidates = [x for x in unit.parts if matches(x)]
-
-        assert len(candidates) == 1
-
-        return candidates[0]
-
-    def check_elementary_cast(self, value: solnodes2.Expr, expected_ttype: solnodes2.Type) -> solnodes2.Expr:
-        # based loosely on https://docs.soliditylang.org/en/v0.8.17/types.html#conversions-between-elementary-types
-        value_ttype = value.type_of()
-        if expected_ttype.can_implicitly_cast_from(value_ttype):
-            return value
-
-        # for ints to fixed size byte arrays, we ignore the hex/dec syntax and treat all ints as ints
-        if expected_ttype.is_array() and expected_ttype.is_fixed_size() and expected_ttype.base_type.is_byte() and value_ttype.is_int():
-            expected_bits = expected_ttype.size * 8
-            actual_bits = value_ttype.size
-            is_zero = isinstance(value, solnodes2.Literal) and value.value == 0
-
-            if actual_bits <= expected_bits or is_zero:
-                # fits, e.g. bytes2 d = 0x1234; , put in an explicit cast
-                return solnodes2.Cast(deepcopy(expected_ttype), value)
-            else:
-                raise ValueError(f'Invalid implicit type cast: {value_ttype} to {expected_ttype}')
-
     def get_current_contract_type(self, node) -> solnodes2.ResolvedUserType:
         return self.get_contract_type(self.builder.get_declaring_contract_scope(node))
 
@@ -160,7 +126,8 @@ class TypeHelper:
             elif isinstance(value, tuple):
                 type_args = [self.map_as_type_arg(arg) for arg in value]
                 are_type_args = [isinstance(arg, (solnodes1.Type, solnodes2.Type)) for arg in type_args]
-                assert TypeHelper.any_or_all(are_type_args)
+
+                self.builder._assert_error('Tuple type args must be any or all', TypeHelper.any_or_all(are_type_args))
 
                 if any(are_type_args):
                     # the grammar has 'TupleExpression' s, e.g. '(' exprList ')'. The exprs it allows can also be types.
@@ -171,7 +138,9 @@ class TypeHelper:
                     else:
                         return solnodes2.TupleType([self.map_type(t) for t in type_args])
 
-                assert all([isinstance(e, solnodes1.Expr) for e in value])
+                self.builder._assert_error('Expected all exprs in tuple',
+                                           all([isinstance(e, solnodes1.Expr) for e in value]))
+
                 if len(value) == 1:
                     if force_tuple:
                         return solnodes2.TupleType([self.get_expr_type(value[0])])
@@ -231,9 +200,11 @@ class TypeHelper:
                 if expr.op != solnodes1.BinaryOpCode.ASSIGN:
                     # can only compare ints, but we can't use t1 == t2 as we can compare different int types, e.g.
                     # this.x (uint256) == 0 (uint8)
-                    assert (t1.is_int() and t2.is_int()) or \
-                           (solnodes2.is_byte_array(t1) and solnodes2.is_byte_array(t2)) or \
-                           (solnodes2.is_byte_array(t1) and t2.is_int())
+
+                    self.builder._assert_error(f'Invalid assign types {t1}, vs {t2}',
+                                               (t1.is_int() and t2.is_int())
+                                               or (solnodes2.is_byte_array(t1) and solnodes2.is_byte_array(t2))
+                                               or (solnodes2.is_byte_array(t1) and t2.is_int()))
 
                     if t1.is_int():  # t2 is also an int here
                         return t1 if t1.size > t2.size else t2
@@ -241,7 +212,9 @@ class TypeHelper:
                     if not t2.is_tuple():
                         # tuple assign, note the lhs can have a subset of the RHS, e.g. (a, ) = f()
                         # FIXME: check this properly, myBytes[i] = "x";
-                        assert (t1.can_implicitly_cast_from(t2)) or (t1.is_byte() and t2.is_string())
+                        self.builder._assert_error(f'Tuple assign type conformity {t1} vs {t2}',
+                                                   (t1.can_implicitly_cast_from(t2))
+                                                   or (t1.is_byte() and t2.is_string()))
                 return t2
             else:
                 return self.builder._todo(expr.op)
@@ -249,7 +222,7 @@ class TypeHelper:
             t1 = self.get_expr_type(expr.left)
             t2 = self.get_expr_type(expr.right)
 
-            assert t1.is_int() == t2.is_int()
+            self.builder._error(f'Ternary int == int {t1} vs {t2}', t1.is_int() == t2.is_int())
 
             if t1.is_int():
                 # if they're both ints, then take the bigger type
@@ -269,7 +242,8 @@ class TypeHelper:
                     elif t1.can_implicitly_cast_from(t2):
                         return t2
                     else:
-                        assert False, 'No base type?'
+                        self.builder._assert_error(f'Mismatching ternary cast bases {t1} vs {t2}',
+                                                   t2.can_implicitly_cast_from(t1))
         elif isinstance(expr, solnodes1.UnaryOp):
             expr_type = self.get_expr_type(expr.expr)
 
@@ -324,19 +298,12 @@ class TypeHelper:
         return self.builder._todo(expr)
 
     def get_function_expr_type(self, expr, allow_multiple=False, return_target_symbol=False):
-
-        def do_return(symbol, ttype):
-            if return_target_symbol:
-                return symbol, ttype
-            else:
-                return ttype
-
         callee = expr.callee
         if isinstance(callee, solnodes1.Type):
             if callee.is_address():
                 # special case where address(uint160) maps to address payable:
                 # see https://docs.soliditylang.org/en/develop/050-breaking-changes.html
-                assert len(expr.args) == 1
+                self.builder._error(f'Args={expr.args}', len(expr.args) == 1)
                 arg_type = self.get_expr_type(expr.args[0])
 
                 if arg_type.is_int() and not arg_type.is_signed and arg_type.size == 160:
@@ -365,10 +332,12 @@ class TypeHelper:
         callable_ttypes = list(set(callable_ttypes))
 
         type_calls = [is_cast_call(ft) for ft in callable_ttypes]
-        assert TypeHelper.any_or_all(type_calls)
+
+        self.builder._error(f'Type calls must be any or all: {type_calls}', TypeHelper.any_or_all(type_calls))
 
         if any(type_calls):
-            assert len(callable_ttypes) == 1
+            self.builder._error(f'Cast takes 1 argument: len={len(callable_ttypes)}', len(callable_ttypes) == 1)
+
             tc = callable_ttypes[0]
             # constructor call/new type
             if tc.is_builtin():
@@ -379,7 +348,8 @@ class TypeHelper:
                 # TODO: check if we should return the constructor function type here instead
                 return tc
 
-        assert all([ft.is_function() or ft.is_mapping() for ft in callable_ttypes])
+        callable_calls = [ft.is_function() or ft.is_mapping() for ft in callable_ttypes]
+        self.builder._assert_error(f'Non cast call must be callables: {callable_calls}', all(callable_calls))
 
         candidates = []
         for ttype in callable_ttypes:
@@ -397,7 +367,10 @@ class TypeHelper:
                     continue
             elif ttype.is_mapping():
                 flattened_types = ttype.flatten()
-                assert len(flattened_types) == len(arg_types) + 1
+
+                self.builder._assert_error(f'{flattened_types} vs {arg_types}',
+                                           len(flattened_types) == len(arg_types) + 1)
+
                 input_types = flattened_types[:-1]
                 # match input types
                 if all([targ.can_implicitly_cast_from(actual) for targ, actual in zip(input_types, arg_types)]):
@@ -406,7 +379,7 @@ class TypeHelper:
                 self.builder._todo(ttype)
 
         if len(candidates) != 1:
-            raise ValueError('Can\'t resolve call')
+            self.builder._error(f'Can\'t resolve call')
 
         output_types = candidates[0]
 
@@ -415,7 +388,7 @@ class TypeHelper:
         #       generic
         if isinstance(callee, solnodes1.GetMember) and isinstance(callee.obj_base, solnodes1.Ident):
             if callee.obj_base.text == 'abi' and callee.name.text == 'decode':
-                assert output_types is None
+                self.builder._assert_error(f'Polymorphic abi.decode => {output_types}', output_types is None)
                 # drop the first argument type so output types are t1, t2...
                 #  abi.decode(bytes memory encodedData, (t1, t2...)) returns (t1, t2...)
                 output_types = arg_types[1:]
@@ -433,7 +406,7 @@ class TypeHelper:
         # sometimes stuff like uint[] gets parsed as GetArrayValue(array_base=IntType(...), index=None))
         if isinstance(arg, solnodes1.Type):
             # simple case
-            return arg
+            return self.map_type(arg)
         elif isinstance(arg, solnodes1.Ident):
             # lookup the ident in the current scope and if it's a top level type, it's a type
             symbols = arg.scope.find(arg.text)
@@ -448,10 +421,13 @@ class TypeHelper:
         elif isinstance(arg, solnodes1.GetArrayValue):
             # try and coerce the base node into a type, this handles cases where the array_base
             # is an Ident or a Type, etc
-            if isinstance(arg.array_base, (solnodes1.Ident, solnodes1.Type)):
-                base_ttype = self.get_expr_type(arg.array_base)
-            else:
-                self.builder._assert_error(f'Cannot coerce to type: {arg}')
+            if isinstance(arg.array_base, (solnodes1.Type, solnodes1.Ident)):
+                possible_base_ttype = self.map_as_type_arg(arg.array_base)
+                if possible_base_ttype and isinstance(possible_base_ttype, solnodes2.Type):
+                    base_ttype = possible_base_ttype
+                else:
+                    # base case
+                    return arg
 
             if arg.index:
                 # e.g. bytes32[100]
@@ -479,7 +455,8 @@ class TypeHelper:
             if v := symbol.value:
                 # if this builtin object was created to scope a type, e.g. an byte[] or int256, etc, just
                 # resolve to the type directly instead of shadowing it as a builtin type
-                assert isinstance(v, (solnodes1.Type, solnodes2.Type))
+                self.builder._assert_error(f'Builtin symbol must be type: {type(v)}',
+                                           isinstance(v, (solnodes1.Type, solnodes2.Type)))
                 return self.map_type(v)
             else:
                 return solnodes2.BuiltinType(symbol.name)
@@ -524,7 +501,8 @@ class TypeHelper:
         elif isinstance(value, solnodes1.Ident):
             if isinstance(value.parent, solnodes1.EnumDefinition):
                 # this is an enum member, the type is the enum itself
-                assert isinstance(value.scope, symtab.EnumScope)
+                self.builder._assert_error(f'Enum parent scope invalid: {type(value.scope)}',
+                                           isinstance(value.scope, symtab.EnumScope))
                 return self.symbol_to_ast2_type(value.scope)
         elif isinstance(value, solnodes1.ModifierDefinition):
             return solnodes2.FunctionType(self.param_types(value.parameters), [])
@@ -534,7 +512,7 @@ class TypeHelper:
         if isinstance(ttype, solnodes2.SuperType):
             return c3_linearise(self.builder.get_declaring_contract_scope(node))
         elif isinstance(ttype, solnodes2.ResolvedUserType):
-            scope = node.scope.find_single(ttype.value.x.name.text, predicate=self._symtab_top_level_predicate())
+            scope = node.scope.find_single(ttype.value.x.name.text, predicate=self._symtab_top_level_predicate(node.scope))
 
             if scope is not None and scope.value != ttype.scope.value:
                 if scope.res_syms_single() != ttype.scope.res_syms_single():
@@ -627,12 +605,24 @@ class TypeHelper:
         ttype.scope = user_type_symbol
         return ttype
 
-    def _symtab_top_level_predicate(self):
+    def _symtab_top_level_predicate(self, base_scope):
         # This is needed for old contracts before the 'constructor' keyword was used so that when we look up 'X'
         # we don't hit 'function X' i.e. the constructor in the current contract, instead we only look for a user type
 
         # filescope can happen e.g. import "..." as X, then for the type identifier path: X.Y, X is a FileScope
-        return lambda sym: isinstance(sym.res_syms_single(), symtab.FileScope) or self.builder.is_top_level(sym.res_syms_single().value)
+        def unit_scope_of(s):
+            return s.find_first_ancestor_of((symtab.ContractOrInterfaceScope, symtab.EnumScope, symtab.LibraryScope))
+
+        base_unit_scope = unit_scope_of(base_scope)
+        def accept(sym: symtab.Symbol):
+            resolved_sym = sym.res_syms_single()
+            if isinstance(resolved_sym, symtab.FileScope):
+                return True
+            if isinstance(sym, symtab.ProxyScope) and isinstance(sym.created_by.value, solnodes1.UsingDirective):
+                return unit_scope_of(sym) == base_unit_scope # dont inherit scopes created by using directives
+            return self.builder.is_top_level(resolved_sym.value)
+
+        return accept
 
     def get_user_type(self, ttype: solnodes1.UserType):
         """Maps an AST1 UserType to AST2 ResolvedUserType"""
@@ -644,10 +634,11 @@ class TypeHelper:
             scope = ttype.scope
 
             for p in parts:
-                scope = scope.find_single(p, predicate=self._symtab_top_level_predicate(), find_base_symbol=True)
+                scope = scope.find_single(p, predicate=self._symtab_top_level_predicate(scope), find_base_symbol=True)
             s = scope
         else:
-            s = ttype.scope.find_single(name, predicate=self._symtab_top_level_predicate(), find_base_symbol=True)
+            scope = ttype.scope
+            s = scope.find_single(name, predicate=self._symtab_top_level_predicate(scope), find_base_symbol=True)
 
         if not s:
             raise ValueError(f"Can't resolve {ttype}")
@@ -737,7 +728,8 @@ class Builder:
         if isinstance(ast1_node, (solnodes1.FunctionDefinition, solnodes1.ModifierDefinition, solnodes1.EventDefinition,
                                   solnodes1.ErrorDefinition, solnodes1.StateVariableDeclaration,
                                   solnodes1.ConstantVariableDeclaration)):
-            parent_scope = ast1_node.scope.find_first_ancestor(self.type_helper._symtab_top_level_predicate())
+            ast1_scope = ast1_node.scope
+            parent_scope = ast1_scope.find_first_ancestor(self.type_helper._symtab_top_level_predicate(ast1_scope))
 
             if isinstance(parent_scope, symtab.FileScope):
                 sun = parent_scope.source_unit_name
