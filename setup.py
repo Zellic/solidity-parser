@@ -26,7 +26,7 @@ class BuildPyWithGenerateCommand(setuptools.command.build_py.build_py):
 
 setup(
     name='solidity-parser',
-    version='0.1.6',
+    version='0.1.7',
 
     setuptools_git_versioning={
         "enabled": True,
@@ -36,7 +36,8 @@ setup(
         "antlr4-python3-runtime==4.11.1",
         "parameterized",
         "mock",
-        "jsons"
+        "jsons",
+        "snapshottest"
     ],
     cmdclass={
         'build_py': BuildPyWithGenerateCommand,
