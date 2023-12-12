@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### [0.1.7] - 2023-12-12
  - Fixed inherited Using directive scopes in subcontracts
  - Added snapshottest library for testing
+ - Fixed bug with ast2builder map_arg_as_type
 
 ### [0.1.6] - 2023-12-11
  - Fixed parsing bug with pragmas using `=` symbol
