@@ -1587,8 +1587,12 @@ class Builder:
                 #     logging.getLogger('AST2').info(
                 #         f'Multiple resolves for {str(base)}.{mname}, choosing first: {sym} from {sym.parent_scope.aliases}')
 
-                assert len(member_symbols) == 1 and len(member_symbols[0]) == 1
-                sym = member_symbols[0][0]
+                all_member_symbols = [ms for mss in member_symbols for ms in mss]
+                unique_member_symbols = []
+                symtab._add_to_results(all_member_symbols, unique_member_symbols, set())
+
+                self._assert_error(f'Expected single symbol, got: {member_symbols}', len(unique_member_symbols) == 1)
+                sym = unique_member_symbols[0]
 
                 if isinstance(sym, symtab.BuiltinValue):
                     if isinstance(base_type, solnodes2.BuiltinType):
