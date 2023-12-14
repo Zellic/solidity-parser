@@ -295,6 +295,9 @@ class TypeHelper:
                     base_type = solnodes2.PreciseIntType(is_signed, max_total_length, max_real_bit_length)
 
                 return solnodes2.FixedLengthArrayType(base_type, len(expr.elements))
+            else:
+                self.builder._assert_error(f'Different element types: {arg_types}', all([arg_types[0] == t for t in arg_types]))
+                return solnodes2.FixedLengthArrayType(arg_types[0], len(expr.elements))
         return self.builder._todo(expr)
 
     def get_function_expr_type(self, expr, allow_multiple=False, return_target_symbol=False):
