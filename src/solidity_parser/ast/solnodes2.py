@@ -449,6 +449,20 @@ class TopLevelUnit(Node, ABC):
     def is_enum(self) -> bool:
         return isinstance(self, EnumDefinition)
 
+    def find_named_parts(self, name: str, explore_mro: bool, matching_types):
+        results = []
+        for p in self.parts:
+            if p.name.text == name and isinstance(p, matching_types):
+                results.append(p)
+
+        if not explore_mro:
+            return results
+
+        for super_t in self.get_supers():
+            results.extend(super_t.find_named_parts(name, True, matching_types))
+
+        return results
+
 
 @NodeDataclass
 class ArrayType(Type):
@@ -1355,8 +1369,7 @@ class StateVarLoad(Expr):
             matches = [m for m in unit.members if
                        m.name.text == self.name.text and isinstance(m, StructMember)]
         else:
-            matches = [p for p in unit.parts if
-                       p.name.text == self.name.text and isinstance(p, StateVariableDeclaration)]
+            matches = unit.find_named_parts(self.name.text, True, StateVariableDeclaration)
 
         assert len(matches) == 1
         return matches[0].ttype
