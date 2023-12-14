@@ -1505,6 +1505,13 @@ class Builder:
                 base_type = self.type_helper.get_contract_type(base_scope)
                 return solnodes2.StaticVarLoad(base_type, solnodes2.Ident(ident_target.name.text))
             elif isinstance(ident_target, solnodes1.StateVariableDeclaration):
+                var_declaring_contract = self.get_declaring_contract_scope(ident_target)
+
+                # even though it's parsed as a statevardecl, it can still be a const with the const modifier
+                if solnodes1.has_modifier_kind(ident_target, solnodes1.MutabilityModifierKind.CONSTANT):
+                    return solnodes2.StaticVarLoad(self.type_helper.get_contract_type(var_declaring_contract),
+                                                   solnodes2.Ident(ident_target.name.text))
+
                 # i.e. Say we are in contract C and ident is 'x', check that 'x' is declared in C
                 # this is so that we know the 'base' of this load will be 'self'
                 ast1_current_contract = self.get_declaring_contract_scope(expr)
@@ -1899,7 +1906,10 @@ class Builder:
             elif isinstance(n, solnodes1.ErrorDefinition):
                 return solnodes2.ErrorDefinition(name, [])
             elif isinstance(n, solnodes1.StateVariableDeclaration):
-                return solnodes2.StateVariableDeclaration(name, None, [], None)
+                if solnodes1.has_modifier_kind(n, solnodes1.MutabilityModifierKind.CONSTANT):
+                    return solnodes2.ConstantVariableDeclaration(name, None, None)
+                else:
+                    return solnodes2.StateVariableDeclaration(name, None, [], None)
             elif isinstance(n, solnodes1.ConstantVariableDeclaration):
                 return solnodes2.ConstantVariableDeclaration(name, None, None)
             elif isinstance(n, solnodes1.EventDefinition):
