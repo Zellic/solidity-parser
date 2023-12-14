@@ -676,9 +676,15 @@ class Builder:
             # Store current state
             prev_state = self.state
             # Update current state
-            self.state = Builder.State(node)
+            state = self.state = Builder.State(node)
             try:
                 result = func(self, node, *args, **kwargs)
+            except CodeProcessingError:
+                raise
+            except Exception as e:
+                node = state.current_node
+                file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
+                raise CodeProcessingError(e.args[0], file_scope.source_unit_name, node.linenumber(), node.offset())
             finally:
                 # Restore state after call
                 self.state = prev_state
