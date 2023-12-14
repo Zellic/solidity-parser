@@ -1215,7 +1215,10 @@ class Builder:
                 # create nested mapping loads multiple args were passed to this "call".
                 # e.g. myMapping(x, y) => (myMapping[x])[y], i.e. have to create the inner one first
 
-                expr_base = possible_base
+                # possible_base here is actually the base of the load, i.e. we have b.x(a)
+                # possible_base == b
+                # we need to set the base to a state var load or we lose information about x
+                expr_base = solnodes2.StateVarLoad(possible_base, solnodes2.Ident(sym.value.name.text))
 
                 for expr_key in new_args:
                     new_expr = solnodes2.MappingLoad(expr_base, expr_key)
