@@ -453,7 +453,7 @@ def make_merged_scope(scopes_to_merge, common_parent):
 
 
 class RootScope(Scope):
-    def __init__(self):
+    def __init__(self, parser_version: version_util.Version):
         Scope.__init__(self, '<root>')
 
         self.compiler_version = None
@@ -463,9 +463,14 @@ class RootScope(Scope):
         # The function gasleft was previously known as msg.gas, which was deprecated in version 0.4.21 and removed in
         # version 0.5.0
         msg_object.add(BuiltinValue('gas', solnodes.IntType(False, 256)))
-        # FIXME: Sender is actually not payable as per 0.8 breaking changes, but if we make it not payable it breaks
+        # Sender is actually not payable as per 0.8 breaking changes, but if we make it not payable it breaks
         #  some pre 0.8 contracts, need a way to version symtab behaviour in AST2
-        msg_object.add(BuiltinValue('sender', solnodes.AddressType(True)))
+        if parser_version:
+            sender_type = solnodes.AddressType(parser_version.minor < 8)
+        else:
+            # default to not payable as the majority of stuff now is >0.8
+            sender_type = solnodes.AddressType(False)
+        msg_object.add(BuiltinValue('sender', sender_type))
         msg_object.add(BuiltinValue('data', bytes()))
         msg_object.add(BuiltinValue('sig', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
 
@@ -787,12 +792,12 @@ class Builder2:
             self.file_scope = file_scope
             self.unit_scope = unit_scope
 
-    def __init__(self, vfs: VirtualFileSystem):
-        self.root_scope = RootScope()
+    def __init__(self, vfs: VirtualFileSystem, parser_version: version_util.Version = None):
+        self.root_scope = RootScope(parser_version)
         self.vfs = vfs
+        self.parser_version = parser_version
 
     def process_or_find(self, loaded_source: LoadedSource):
-        # found_fs = [s for s in self.root_scope.symbols if isinstance(s, FileScope) and s.source_unit_name == loaded_source.source_unit_name]
         found_fs = self.root_scope.symbols.get(FileScope.alias(loaded_source.source_unit_name))
         if found_fs:
             assert len(found_fs) == 1
@@ -1072,6 +1077,9 @@ class Builder2:
             # proxy_scope = self.make_proxy_scope(target_scope_name, unit_scope, None, library_scope)
             raise ValueError(f'No scope for type: {target_type}({target_scope_name})')
         elif isinstance(target_type_scope, ProxyScope):
+
+            # FIXME: deprecated case as proxy scopes aren't nested anymore, need to recheck this with tests
+
             # Got the scope for T but it's a proxy scope; this can mean a couple of things:
             #  if this scope was not created by us then it must've come from some other source:
             #   1. Before, using directives weren't allowed at the file level so the scope came from another unit
