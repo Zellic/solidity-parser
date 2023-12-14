@@ -1571,6 +1571,9 @@ class MappingLoad(Expr):
     def code_str(self):
         return f'{self.base.code_str()}[{self.key.code_str()}]'
 
+    def type_of(self) -> Type:
+        base_ttype = self.base.type_of()
+        return base_ttype.dst
 
 @NodeDataclass
 class MappingStore(Expr):
