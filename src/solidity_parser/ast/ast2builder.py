@@ -424,13 +424,13 @@ class TypeHelper:
         elif isinstance(arg, solnodes1.GetArrayValue):
             # try and coerce the base node into a type, this handles cases where the array_base
             # is an Ident or a Type, etc
-            if isinstance(arg.array_base, (solnodes1.Type, solnodes1.Ident)):
-                possible_base_ttype = self.map_as_type_arg(arg.array_base)
-                if possible_base_ttype and isinstance(possible_base_ttype, solnodes2.Type):
-                    base_ttype = possible_base_ttype
-                else:
-                    # base case
-                    return arg
+            base_ttype = None
+
+            possible_base_ttype = self.builder.refine_expr(arg.array_base, allow_type=True)
+            if possible_base_ttype and isinstance(possible_base_ttype, solnodes2.Type):
+                base_ttype = possible_base_ttype
+            else:
+                return arg
 
             if arg.index:
                 # e.g. bytes32[100]
