@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.8] - 2023-12-14
+ - Fixed many internal AST2 bugs
+ - Added parser_version to symtab.Builder2
+
 ### [0.1.7] - 2023-12-12
  - Fixed inherited Using directive scopes in subcontracts
  - Added snapshottest library for testing
