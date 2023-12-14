@@ -549,7 +549,13 @@ class TypeHelper:
         else:
             if use_encoded_type_key:
                 # encoded as <type:X>
-                scopes = node.scope.find_type(ttype)
+                scopes = []
+                if ttype.is_address() and ttype.is_payable:
+                    # address payable is essentially a sub type of address
+                    scopes.extend(node.scope.find_type(solnodes2.AddressType(False)))
+                    scopes.extend(node.scope.find_type(solnodes2.AddressType(True)))
+                else:
+                    scopes.extend(node.scope.find_type(ttype))
                 return scopes
             else:
                 # used for 'bytes' and 'string' .concat. They are builtin scopes with builtin calls
