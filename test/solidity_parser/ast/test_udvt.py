@@ -7,7 +7,7 @@ from solidity_parser.ast import symtab, ast2builder, solnodes, solnodes2
 class TestUDVT(unittest.TestCase):
 
     def setUp(self) -> None:
-        self.vfs = filesys.VirtualFileSystem('../testcases/08_22')
+        self.vfs = filesys.VirtualFileSystem('testcases/08_22')
         self.symtab_builder = symtab.Builder2(self.vfs)
         self.ast2_builder = ast2builder.Builder()
 
