@@ -7,7 +7,7 @@ from solidity_parser.ast import symtab, ast2builder, solnodes2
 class TestUsingDirectives(unittest.TestCase):
 
     def setUp(self) -> None:
-        self.vfs = filesys.VirtualFileSystem('../testcases/using_directives')
+        self.vfs = filesys.VirtualFileSystem('testcases/using_directives')
         self.symtab_builder = symtab.Builder2(self.vfs)
         self.ast2_builder = ast2builder.Builder()
 
