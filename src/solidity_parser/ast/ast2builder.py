@@ -670,6 +670,8 @@ class Builder:
         self.state = None
         self.temp_var_counter = 0
 
+        self.code_errors = []
+
     def error_context(func):
         @functools.wraps(func)
         def with_error_context(self: 'Builder', node, *args, **kwargs):
@@ -684,7 +686,7 @@ class Builder:
             except Exception as e:
                 node = state.current_node
                 file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
-                raise CodeProcessingError(e.args[0], file_scope.source_unit_name, node.linenumber(), node.offset())
+                raise CodeProcessingError(e.args[0] if e.args else f'{type(e)}', file_scope.source_unit_name, node.linenumber(), node.offset())
             finally:
                 # Restore state after call
                 self.state = prev_state
@@ -1810,6 +1812,15 @@ class Builder:
 
         self._todo(node)
 
+    def process_code_block(self, node: solnodes1.Block):
+        try:
+            result_code = self.block(node)
+            return result_code
+        except CodeProcessingError as e:
+            self.code_errors.append(e)
+            logging.getLogger('AST2').error(f'Processing error: {e.args[0]}')
+            return solnodes2.UnprocessedCode(e)
+
     def block(self, node: solnodes1.Block):
         if node:
             return solnodes2.Block(
@@ -2075,7 +2086,7 @@ class Builder:
 
         if isinstance(ast1_node, solnodes1.FunctionDefinition):
             ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
-            ast2_node.code = self.block(ast1_node.code) if ast1_node.code else None
+            ast2_node.code = self.process_code_block(ast1_node.code) if ast1_node.code else None
             return refine_node(ast2_node)
 
         if isinstance(ast1_node, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration)):
@@ -2091,7 +2102,7 @@ class Builder:
 
         if isinstance(ast1_node, solnodes1.ModifierDefinition):
             ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
-            ast2_node.code = self.block(ast1_node.code) if ast1_node.code else None
+            ast2_node.code = self.process_code_block(ast1_node.code) if ast1_node.code else None
             return refine_node(ast2_node)
 
         # don't return anything here
