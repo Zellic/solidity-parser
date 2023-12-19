@@ -455,6 +455,7 @@ class Var(Node):
 class VarDecl(Stmt):
     variables: List[Var]
     value: Expr
+    is_lhs_tuple: bool = False
 
 
 @dataclass
