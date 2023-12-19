@@ -429,12 +429,15 @@ def _var_decl_stmt(parser, stmt: SolidityParser.VariableDeclarationStatementCont
 
     if stmt.variableDeclaration() is not None:
         variables = [parser.make(stmt.variableDeclaration())]
+        is_tuple = False
     else:
         variables = parser.make_all(stmt.variableDeclarationTuple())
+        is_tuple = True
 
     return solnodes.VarDecl(
         variables,
-        parser.make(stmt.expression())
+        parser.make(stmt.expression()),
+        is_tuple
     )
 
 

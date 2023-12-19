@@ -141,14 +141,18 @@ def _var_decl_stmt(parser, stmt: SolidityParser.VariableDeclarationStatementCont
         # desugar it into multiple variables, TODO: figure out the types in a later type inference pass
         names = parser.make(stmt.identifierList())
         variables = [solnodes.Var(solnodes.VarType(), name, None) for name in names]
+        is_tuple = True
     elif stmt.variableDeclaration() is not None:
         variables = [parser.make(stmt.variableDeclaration())]
+        is_tuple = False
     else:
         variables = parser.make_all(stmt.variableDeclarationList())
+        is_tuple = True
 
     return solnodes.VarDecl(
         variables,
-        parser.make(stmt.expression())
+        parser.make(stmt.expression()),
+        is_tuple
     )
 
 
