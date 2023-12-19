@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.9] - 2023-12-19
+ - Added soft errors in AST2 for code processing exceptions
+ - Improved FCA to account for unprocessed function code
+ - Fixed AST1 parsing issue for VarDecl tuples desugars that have 1 element, e.g. (x,) = ...
+ - Changed AST2 log levels from info to debug
+
 ### [0.1.8] - 2023-12-14
  - Fixed many internal AST2 bugs
  - Added parser_version to symtab.Builder2
