@@ -727,7 +727,7 @@ class Builder:
             n = self.to_refine.popleft()
 
             sun = n.scope.find_first_ancestor_of(symtab.FileScope).source_unit_name
-            logging.getLogger('AST2').info(f'Processing {type(n).__name__}({n.name}) in {sun}')
+            logging.getLogger('AST2').debug(f'Processing {type(n).__name__}({n.name}) in {sun}')
 
             self.refine_unit_or_part(n)
 
@@ -774,7 +774,7 @@ class Builder:
 
                 if isinstance(parent_scope, symtab.FileScope):
                     source_unit_name = parent_scope.source_unit_name
-                    logging.getLogger('AST2').info(f'Defining top level unit {source_unit_name}::{ast1_node.name.text}')
+                    logging.getLogger('AST2').debug(f'Defining top level unit {source_unit_name}::{ast1_node.name.text}')
                     # force skeleton of the whole file, filescope.value is the ast1 parts
                     for part in parent_scope.value:
                         # None = EOF
@@ -789,7 +789,7 @@ class Builder:
                     # load the parent which will in turn define skeletons for its children, including the current
                     # ast1_node
                     parent_was_loaded = hasattr(parent_scope.value, 'ast2_node')
-                    logging.getLogger('AST2').info(f'Loading parent of {ast1_node.name.text} ({parent_scope.aliases[0]})')
+                    logging.getLogger('AST2').debug(f'Loading parent of {ast1_node.name.text} ({parent_scope.aliases[0]})')
                     parent_type = self.load_if_required(parent_scope)
                     source_unit_name = f'{parent_type.source_unit_name}${parent_type.name.text}'
 
@@ -800,7 +800,7 @@ class Builder:
                         # This case is a bit weird and happens with circular references, i.e. MyLib defines MyEnum and
                         # MyLib defines a function f that takes MyEnum as a parameter. Loading MyEnum requires MyLib to
                         # be loaded but loading MyLib requires MyEnum to be loaded for the parameter type in f.
-                        logging.getLogger('AST2').info(
+                        logging.getLogger('AST2').debug(
                             f'Defining circular ref type: {ast1_node.name.text} from {source_unit_name}')
                         ast2_node = self.define_skeleton(ast1_node, source_unit_name)
                     else:
@@ -1247,7 +1247,7 @@ class Builder:
 
             is_local_call = self.is_subcontract(current_contract, func_declaring_contract)
 
-            assert not possible_base or is_local_call
+            self._assert_error(f'Event reference must be have no base, type base or be local: {is_local_call}/{possible_base}', (not possible_base or isinstance(possible_base, solnodes2.ResolvedUserType)) or is_local_call)
 
             return solnodes2.EmitEvent(solnodes2.Ref(sym.value.ast2_node), new_args)
         elif isinstance(sym.value, (solnodes1.Var, solnodes1.Parameter)):
@@ -1869,7 +1869,8 @@ class Builder:
 
         assert not hasattr(ast1_node, 'ast2_node')
 
-        logging.getLogger('AST2').info(f' making skeleton for {type(ast1_node).__name__}({ast1_node.name}) :: {source_unit_name}')
+        logging_f = logging.getLogger('AST2').debug
+        logging_f(f' making skeleton for {type(ast1_node).__name__}({ast1_node.name}) :: {source_unit_name}')
 
         # Source unit name is only used for source units/top level units
         # This is the case where we have functions, errors, event, constants that are defined outside of a top level
