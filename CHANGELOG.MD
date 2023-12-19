@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.10] - 2023-12-19
+ - Changed git versioning to setuptools versioning (was broken)
+
 ### [0.1.9] - 2023-12-19
  - Added soft errors in AST2 for code processing exceptions
  - Improved FCA to account for unprocessed function code

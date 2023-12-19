@@ -28,11 +28,7 @@ setup(
     name='solidity-parser',
     version='0.1.9',
 
-    setuptools_git_versioning={
-        "enabled": True,
-    },
     install_requires=[
-        "setuptools-git-versioning<2",
         "antlr4-python3-runtime==4.11.1",
         "parameterized",
         "mock",
