@@ -191,7 +191,9 @@ class Node:
     parent: Optional['Node'] = field(init=False, repr=False, hash=False, compare=False, default=None)
     comments: Optional[List[str]] = field(init=False, repr=False, hash=False, compare=False, default_factory=list)
 
-    def get_children(self):
+    def get_children(self, predicate=None):
+        if not predicate:
+            predicate = lambda _: True
         # get the dataclass fields instead of vars() here: two benefits:
         #  we loop fewer times as there are less things
         #  we include only the explicit fields of each dataclass so won't pick up accidental recursions
@@ -202,15 +204,15 @@ class Node:
             if val is self.parent:
                 continue
 
-            if isinstance(val, Node):
+            if isinstance(val, Node) and predicate(val):
                 yield val
             elif isinstance(val, (list, tuple)):
-                yield from [v for v in val if isinstance(v, Node)]
+                yield from [v for v in val if isinstance(v, Node) and predicate(v)]
 
-    def get_all_children(self):
+    def get_all_children(self, predicate=None):
         for direct_child in self.get_children():
             yield direct_child
-            yield from direct_child.get_all_children()
+            yield from direct_child.get_all_children(predicate)
 
     def get_top_level_unit(self) -> 'TopLevelUnit':
         parent = self
@@ -1925,3 +1927,9 @@ class Assembly(Stmt):
 class ExecModifiedCode(Stmt):
     # _; statement in modifier code bodies that show where modified function code gets executed
     pass
+
+
+@NodeDataclass
+class UnprocessedCode(Stmt):
+    error: Exception = field(repr=False, hash=False, compare=False)
+
