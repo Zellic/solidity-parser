@@ -821,12 +821,12 @@ class Builder:
             return None
 
         if isinstance(node, solnodes1.VarDecl):
-            if len(node.variables) == 1:
-                return solnodes2.VarDecl(self.var(node.variables[0]),
-                                         self.refine_expr(node.value, is_assign_rhs=True) if node.value else None)
-            else:
+            if len(node.variables) > 1 or node.is_lhs_tuple:
                 return solnodes2.TupleVarDecl([self.var(x) for x in node.variables],
                                               self.refine_expr(node.value, is_assign_rhs=True, allow_tuple_exprs=True))
+            else:
+                return solnodes2.VarDecl(self.var(node.variables[0]),
+                                         self.refine_expr(node.value, is_assign_rhs=True) if node.value else None)
         elif isinstance(node, solnodes1.ExprStmt):
             def map_node(x):
                 if isinstance(x, solnodes2.Expr):
