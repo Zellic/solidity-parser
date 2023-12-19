@@ -1,7 +1,10 @@
 import logging
 from typing import List, Union
+from enum import Enum
 
-from solidity_parser.ast.solnodes2 import FunctionCall, DirectCall, ResolvedUserType, TopLevelUnit, FunctionDefinition, Type, SuperType, Node, SuperObject, SelfObject
+from solidity_parser.ast.solnodes2 import (FunctionCall, DirectCall, ResolvedUserType, TopLevelUnit, FunctionDefinition,
+                                           Type, SuperType, Node, SuperObject, SelfObject, UnprocessedCode, Stmt,
+                                           Assembly)
 from solidity_parser.ast.mro_helper import c3_linearise
 from solidity_parser.ast.solnodes import VisibilityModifierKind, MutabilityModifierKind
 
@@ -152,15 +155,30 @@ def mark_sources(units: List[TopLevelUnit]):
                     p.is_fca_source = True
     return sources
 
-def is_fca_important(f):
+
+def is_fca_important(f: FunctionDefinition):
     return any('fca-important' in c for c in f.comments)
+
+
+def is_blackbox_node(f: FunctionDefinition):
+    return isinstance(f.code, UnprocessedCode)
+
+
+def has_inline_yul(f: FunctionDefinition):
+    return any([isinstance(s, Assembly) for s in f.get_all_children(lambda n: isinstance(n, Stmt))])
+
+
+class PathEdgeKind(Enum):
+    INTRA_CALL = 1
+    SINK_INTER = 2
+    SINK_NO_CODE = 3
+    SINK_FCA_IMPORTANT = 4
+    SINK_INLINE_YUL = 5
 
 
 def find_important_paths2(source: FunctionDefinition):
     def dfs(f, visited, prefix):
         # List of (call node, is_external_call)
-        important_paths = []
-
         if not f.code:
             return []
 
@@ -170,7 +188,11 @@ def find_important_paths2(source: FunctionDefinition):
 
         visited.add(f)
 
-        # print(f'{prefix} {f.descriptor()}')
+        if is_blackbox_node(f):
+            # sink because function couldn't be processed in AST, no further analysis possible along this path
+            return [[(f, PathEdgeKind.SINK_NO_CODE)]]
+
+        important_paths = []
 
         for code_node in f.code.get_all_children():
             if isinstance(code_node, (FunctionCall, DirectCall)):
@@ -184,14 +206,19 @@ def find_important_paths2(source: FunctionDefinition):
                     for t in targets:
                         dfs_valid_paths = dfs(t, visited, prefix + '  ')
                         for p in dfs_valid_paths:
-                            important_paths.append([(code_node, False), *p])
+                            important_paths.append([(code_node, PathEdgeKind.INTRA_CALL), *p])
 
                         if not dfs_valid_paths and is_fca_important(t):
                             # sink (marked with // fca-important)
-                            important_paths.append([(code_node, True)])
+                            important_paths.append([(code_node, PathEdgeKind.SINK_FCA_IMPORTANT)])
+
+                        if has_inline_yul(t):
+                            # sink because of inline asm
+                            important_paths.append([(code_node, PathEdgeKind.SINK_INLINE_YUL)])
+
                 else:
                     # sink (intercontract call)
-                    important_paths.append([(code_node, True)])
+                    important_paths.append([(code_node, PathEdgeKind.SINK_INTER)])
 
         return important_paths
 
