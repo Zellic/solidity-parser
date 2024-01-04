@@ -36,9 +36,11 @@ def ACCEPT(x):
     return True
 
 
+def unit_scope_of(s):
+    return s.find_first_ancestor_of((ContractOrInterfaceScope, EnumScope, LibraryScope))
+
+
 def ACCEPT_INHERITABLE(base_scope):
-    def unit_scope_of(s):
-        return s.find_first_ancestor_of((ContractOrInterfaceScope, EnumScope, LibraryScope))
     # creates a predicate. the given scope is the current scope where any lookup is allowed
     # e.g. if we are in a function in contract C we can access other members of C fine, but not
     base_unit_scope = unit_scope_of(base_scope)
@@ -49,6 +51,23 @@ def ACCEPT_INHERITABLE(base_scope):
         is_private = solnodes.has_modifier_kind(x.value, solnodes.VisibilityModifierKind.PRIVATE)
         return not is_private
     return do_test
+
+
+def is_top_level(node: solnodes.Node):
+    # Error and FunctionDefinitions are set as SourceUnits in AST1 but not in AST2
+    return isinstance(node, solnodes.SourceUnit) and not isinstance(node, (
+        solnodes.ImportDirective, solnodes.FunctionDefinition, solnodes.ErrorDefinition,
+        solnodes.StateVariableDeclaration, solnodes.ConstantVariableDeclaration))
+
+
+def ACCEPT_NO_INHERITED_USINGS(base_scope):
+    base_unit_scope = unit_scope_of(base_scope)
+    def accept(sym: 'Symbol'):
+        resolved_sym = sym.res_syms_single()
+        if isinstance(sym, ProxyScope) and isinstance(sym.created_by.value, solnodes.UsingDirective):
+            return unit_scope_of(sym) == base_unit_scope  # dont inherit scopes created by using directives
+        return is_top_level(resolved_sym.value)
+    return accept
 
 
 def ACCEPT_CALLABLES(x):
@@ -803,8 +822,6 @@ class Builder2:
             assert len(found_fs) == 1
             found_fs = found_fs[0]
 
-        logging.getLogger('ST').debug(f'FS {loaded_source.source_unit_name} exists={bool(found_fs)}')
-
         if not found_fs:
             found_fs = self.process_file(loaded_source.source_unit_name, loaded_source.ast)
 
@@ -826,6 +843,8 @@ class Builder2:
             source_units = source.ast
             if not source_units:
                 raise ValueError(f'Could not load {source_unit_name} from root')
+
+        logging.getLogger('ST').debug(f'FS Processing {source_unit_name}')
 
         fs = FileScope(self, self.vfs, source_unit_name, source_units)
 
@@ -1032,12 +1051,12 @@ class Builder2:
         if isinstance(target_type, solnodes.UserType):
             # Resolve the name used here to the actual contract/struct/etc (symbol)
             raw_name = target_type.name.text
-            target_type_scope = current_scope.find_multi_part_symbol(raw_name)
+            target_type_scope = current_scope.find_multi_part_symbol(raw_name, predicate=ACCEPT_NO_INHERITED_USINGS(current_scope))
             if not target_type_scope:
                 # happened in a case where a contract imported a Type 'Delay' from 'Time' and used Time.Delay in the
                 # contract, but in the 'Time' library the type was referenced as 'Delay' => 'Delay' wasn't defined in
                 # the current contract but was defined in the library.
-                target_type_scope = target_type.scope.find_multi_part_symbol(raw_name)
+                target_type_scope = target_type.scope.find_multi_part_symbol(raw_name, predicate=ACCEPT_NO_INHERITED_USINGS(current_scope))
             # Use the name as defined by the target type symbol itself so that we can do definite checks against
             # this type and the first parameter type later, i.e. for A.B.MyT, use MyT as the type key
             target_scope_name = target_type_scope.res_syms_single().value.name.text

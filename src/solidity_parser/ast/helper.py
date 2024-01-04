@@ -75,7 +75,7 @@ def get_processors(version: Version):
     return get()
 
 
-def make_ast(input_src, version: Version = None) -> List[solnodes.SourceUnit]:
+def make_ast(input_src, version: Version = None, origin=None) -> List[solnodes.SourceUnit]:
     if version is None:
         version = extract_version_from_src_input(input_src)
 
@@ -92,7 +92,7 @@ def make_ast(input_src, version: Version = None) -> List[solnodes.SourceUnit]:
     source_units = parse_tree.children
 
     if hasattr(parser, 'errors') and parser.errors:
-        raise AntlrParsingError(version, input_src, parser.errors)
+        raise AntlrParsingError(origin, version, input_src, parser.errors)
 
     return list(map(ast_parser.make, source_units))
 

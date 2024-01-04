@@ -8,6 +8,7 @@ from solidity_parser.ast import helper as ast_helper
 import os
 import logging
 import jsons
+from functools import partial
 
 
 @dataclass
@@ -35,12 +36,7 @@ class LoadedSource:
         # Mechanism for creating the AST on demand and caching it
         if not hasattr(self, '_ast'):
             logging.getLogger('VFS').debug(f'Parsing {self.source_unit_name}')
-
-            if not self.ast_creator_callback:
-                creator = ast_helper.make_ast
-            else:
-                creator = self.ast_creator_callback
-
+            creator = self.ast_creator_callback
             self._ast = creator(self.contents)
         return self._ast
 
@@ -139,7 +135,8 @@ class VirtualFileSystem:
         raise ValueError(f"Can't import {import_path} from {importer_source_unit_name} ({bool(contents)},{bool(loaded_source)})")
 
     def _add_loaded_source(self, source_unit_name: str, source_code: str, creator=None, origin=None) -> LoadedSource:
-        loaded_source = LoadedSource(source_unit_name, source_code, creator if creator else ast_helper.make_ast)
+        creator_with_origin = partial(creator if creator else ast_helper.make_ast, origin=origin)
+        loaded_source = LoadedSource(source_unit_name, source_code, creator_with_origin)
         self.sources[source_unit_name] = loaded_source
         self.origin_sources[origin] = loaded_source
         return loaded_source
