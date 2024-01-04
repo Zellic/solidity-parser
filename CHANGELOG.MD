@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.11] - 2024-01-04
+ - Minor AST2 fixes
+ - make_ast now takes the input source 'origin' to better locate parsing errors
+   - Added Origin to AntlrParsingError
+ - Removed polluting symtab exists debug line
+ - Fixed issue with type lookup in symtab pulling inherited Using types
+
 ### [0.1.10] - 2023-12-19
  - Changed git versioning to setuptools versioning (was broken)
 
