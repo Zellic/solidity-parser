@@ -421,6 +421,10 @@ class TypeHelper:
                 resolved_sym = sym.res_syms_single()
                 if self.builder.is_top_level(resolved_sym.value):
                     return self.symbol_to_ast2_type(resolved_sym)
+        elif isinstance(arg, solnodes1.GetMember):
+            possible_type = self.builder.refine_expr(arg)
+            if isinstance(possible_type, solnodes2.Type):
+                return possible_type
         elif isinstance(arg, solnodes1.GetArrayValue):
             # try and coerce the base node into a type, this handles cases where the array_base
             # is an Ident or a Type, etc

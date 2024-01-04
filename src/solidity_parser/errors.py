@@ -7,8 +7,8 @@ from solidity_parser.util.version_util import Version
 class AntlrParsingError(Exception):
     Detail = namedtuple('Detail', 'line_number, line_offset, msg')
 
-    def __init__(self, version: Version, input_src: str, details):
-        super().__init__(f'Antlr AST v{version} parsing error')
+    def __init__(self, unit_name: str, version: Version, input_src: str, details):
+        super().__init__(f'Antlr AST v{version} parsing error in {unit_name}')
         self.input_src = input_src
         self.details = [AntlrParsingError.Detail(*d) for d in details]
 
