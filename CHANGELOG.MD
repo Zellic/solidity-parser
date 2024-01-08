@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.12] -2024-01-08
+- Fixed line number issue with rules with `start` attributes
+- Added source start/end location markers for solnodes1
+- Updated main.py stress tester
+- Added requirement for python 3.10 in README
+
 ### [0.1.11] - 2024-01-04
  - Minor AST2 fixes
  - make_ast now takes the input source 'origin' to better locate parsing errors

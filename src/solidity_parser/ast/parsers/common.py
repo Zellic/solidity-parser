@@ -60,18 +60,27 @@ class ParserBase:
 
     def wrap_node(self, rule, node, add_comments=False):
         if isinstance(node, Node):
+            # we add 1 to each column in each of these because we used 1 based columns, see solnodes.SourceLocation
             if isinstance(rule.start, int):
                 # for terminal node symbols
                 node.location = f'{rule.line}:{rule.start}'
-            elif isinstance(rule.start.start, int):
+
+                node.start_location = solnodes.SourceLocation(rule.line, rule.column + 1)
+                token_len = rule.stop - rule.start + 1
+                node.end_location = solnodes.SourceLocation(rule.line, rule.column + token_len + 1)
+
+                node.start_buffer_index = rule.start
+                node.end_buffer_index = rule.stop + 1
+            else:
                 # this is the normal case
                 node.location = f'{rule.start.line}:{rule.start.start}'
-            else:
-                # this is a hack to support fcremo's codebase
-                # see: c3c05f5625b36a6b22a701031416d303a5605e0d
-                # this is not the ideal way to solve it, but is good enough
-                # for now (doesn't break other codebases)
-                node.location = f'{rule.start.start.line}:{rule.start.start.start}'
+
+                node.start_location = solnodes.SourceLocation(rule.start.line, rule.start.column + 1)
+                col_offset = rule.stop.stop - rule.stop.start + 1
+                node.end_location = solnodes.SourceLocation(rule.stop.line, rule.stop.column + col_offset + 1)
+
+                node.start_buffer_index = rule.start.start
+                node.end_buffer_index = rule.stop.stop + 1
 
             # For now just tag comments to contract definitions, function definitions, etc but not stmts, exprs, etc
             if isinstance(node, (solnodes.SourceUnit, solnodes.ContractPart)):

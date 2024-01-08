@@ -1,13 +1,32 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Any, Union, Optional
+from typing import List, Any, Union, Optional, NamedTuple
 from abc import ABC, abstractmethod
+from collections import namedtuple
+
+
+class SourceLocation(NamedTuple):
+    line: int
+    "Line number, beginning at 1"
+    column: int
+    "Column number, beginning at 1. E.g. the first character on the line is at column 1."
 
 
 class Node:
+    # TODO: want to get rid of this
     location: str
     "LineNumber:LinePosition, this is set dynamically in common.make"
     comments: List[str]
+
+    start_location: SourceLocation
+    "Source start location of this node (column is inclusive)"
+    end_location: SourceLocation
+    "Source end location of this node (column is exclusive)"
+
+    start_buffer_index: int
+    "Source start (0-based) position in the input text buffer(inclusive)"
+    end_buffer_index: int
+    "Source end (0-based) position in the input text buffer(exclusive)"
 
     def __post_init__(self):
         for child in self.get_children():

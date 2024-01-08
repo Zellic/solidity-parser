@@ -264,7 +264,7 @@ expression
   : expression ('++' | '--') # UnaryPostOp
   | 'new' typeName # NewType
   | expression '[' expression? ']' # ArrayLoad
-  | base=expression '[' start=expression? ':' end=expression? ']' # ArraySlice
+  | base=expression '[' start_expr=expression? ':' end_expr=expression? ']' # ArraySlice
   | expression '.' identifier # MemberLoad
 //  | expression '{' nameValueList '}' # FCNamedExpr
 //  | expression '(' functionCallArguments ')' # FCArgExpr
