@@ -279,8 +279,8 @@ def _new_obj(parser, expr: SolidityParser.NewTypeContext):
 def _array_slice(parser, expr: SolidityParser.ArraySliceContext):
     return solnodes.GetArraySlice(
         parser.make(expr.base),
-        parser.make(expr.start),
-        parser.make(expr.end)
+        parser.make(expr.start_expr),
+        parser.make(expr.end_expr)
     )
 
 

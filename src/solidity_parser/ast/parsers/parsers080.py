@@ -510,8 +510,8 @@ def _index_access(parser, expr: SolidityParser.IndexAccessContext):
 def _index_range_access(parser, expr: SolidityParser.IndexRangeAccessContext):
     return solnodes.GetArraySlice(
         parser.make(expr.expression(0)),
-        parser.make(expr.start),
-        parser.make(expr.end)
+        parser.make(expr.start_expr),
+        parser.make(expr.end_expr)
     )
 
 

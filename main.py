@@ -169,7 +169,7 @@ from solidity_parser.collectors import collector
 
 version_pattern = pattern = re.compile(r"v(\d)\.(\d)\.[0-9]+", re.IGNORECASE)
 
-if __name__ == '__main__1':
+if __name__ == '__main__':
     pp.install_extras()
     logging.basicConfig( level=logging.CRITICAL)
 
@@ -179,7 +179,7 @@ if __name__ == '__main__1':
     # file_name = 'F:/downloads/Contracts/00/00/000000000000c1cb11d5c062901f32d06248ce48'
 
     # start_idx = 182
-    start_idx = 0
+    start_idx = 35
     idx = 0
 
     for file_name in all_files:
@@ -203,9 +203,12 @@ if __name__ == '__main__1':
                 file_scopes = []
 
                 try:
-                    def creator(input_src):
-                        v = collector.get_minor_ver(input_src) or int(pattern.match(desc['CompilerVersion']).group(2))
-                        nodes = asthelper.make_ast(input_src, v)
+                    def creator(input_src, *args, **kwargs):
+                        try:
+                            v = version_util.extract_version_from_src_input(input_src)
+                        except:
+                            v = version_util.parse_version(desc['CompilerVersion'])
+                        nodes = asthelper.make_ast(input_src, *args, **kwargs, version=v)
                         for n in nodes:
                             if n:
                                 n.ver = v
@@ -216,18 +219,14 @@ if __name__ == '__main__1':
 
 
                         def _read_file_callback(su_name, base_dir, include_paths) -> str:
-                            return source_contents[su_name]
-
-
-                        add_loaded_source_original = vfs._add_loaded_source
-
-
-                        def _add_loaded_source(source_unit_name: str, source_code: str, _=None):
-                            return add_loaded_source_original(source_unit_name, source_code, creator)
-
+                            return su_name, source_contents[su_name]
 
                         # required shims
                         vfs._read_file_callback = _read_file_callback
+
+                        add_loaded_source_original = vfs._add_loaded_source
+                        def _add_loaded_source(*args, **kwargs):
+                            return add_loaded_source_original(*args, **kwargs, creator=creator)
                         vfs._add_loaded_source = _add_loaded_source
 
                         srcs = json.loads(desc['SourceCode'][1:-1])['sources']
@@ -241,7 +240,7 @@ if __name__ == '__main__1':
                     else:
                         c_name = desc['ContractName'] + '.sol'
                         c_code = desc['SourceCode']
-                        loaded_source = vfs._add_loaded_source(c_name, c_code, creator)
+                        loaded_source = vfs._add_loaded_source(c_name, c_code, creator, c_name)
                         file_scope = symtab_builder.process_or_find(loaded_source)
                         file_scopes.append(file_scope)
                 except errors.AntlrParsingError as e:
@@ -266,7 +265,7 @@ if __name__ == '__main__1':
 
 
 
-if __name__ == '__main__':
+if __name__ == '__main__1':
     pp.install_extras()
     logging.basicConfig( level=logging.DEBUG)
     # p = Path('../example/TestInput.json').resolve()
