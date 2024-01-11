@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-### [0.1.12] -2024-01-08
+### [0.1.13] - 2024-01-11
+ - Add SourceLocationSpan in AST1
+ - Stability fixes to do with using directives and symtab searching
+
+### [0.1.12] - 2024-01-08
 - Fixed line number issue with rules with `start` attributes
 - Added source start/end location markers for solnodes1
 - Updated main.py stress tester
