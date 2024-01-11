@@ -519,7 +519,7 @@ class TypeHelper:
         if isinstance(ttype, solnodes2.SuperType):
             return c3_linearise(self.builder.get_declaring_contract_scope(node))
         elif isinstance(ttype, solnodes2.ResolvedUserType):
-            scope = node.scope.find_single(ttype.value.x.name.text, predicate=self._symtab_top_level_predicate(node.scope))
+            scope = node.scope.find_user_type_scope(ttype.value.x.name.text)
 
             if scope is not None and scope.value != ttype.scope.value:
                 if scope.res_syms_single() != ttype.scope.res_syms_single():
@@ -638,24 +638,10 @@ class TypeHelper:
         return accept
 
     def get_user_type(self, ttype: solnodes1.UserType):
-        """Maps an AST1 UserType to AST2 ResolvedUserType"""
-        name = ttype.name.text
-
-        if '.' in name:
-            # this is a qualified identifier, i.e. X.Y or X.Y.Z, etc
-            parts = name.split('.')
-            scope = ttype.scope
-
-            for p in parts:
-                scope = scope.find_single(p, predicate=self._symtab_top_level_predicate(scope), find_base_symbol=True)
-            s = scope
-        else:
-            scope = ttype.scope
-            s = scope.find_single(name, predicate=self._symtab_top_level_predicate(scope), find_base_symbol=True)
-
+        """Maps an AST1 UserType to AST2 ResolvedUserType in the scope of the AST1 node that references the type"""
+        s = ttype.scope.find_user_type_scope(ttype.name.text)
         if not s:
             raise ValueError(f"Can't resolve {ttype}")
-
         return self.get_contract_type(s)
 
 
@@ -2057,9 +2043,9 @@ class Builder:
                 for part in ast1_node.parts:
                     if isinstance(part, solnodes1.UsingDirective):
                         if part.library_name:
-                            library_scope = part.scope.find_single(part.library_name.text, find_base_symbol=True)
+                            library_scope = part.scope.find_user_type_scope(part.library_name.text, find_base_symbol=True)
                             assert isinstance(library_scope.value, solnodes1.LibraryDefinition)
-                            library = self.type_helper.get_contract_type(part.scope.find_single(part.library_name.text))
+                            library = self.type_helper.get_contract_type(library_scope)
                             if isinstance(part.override_type, solnodes1.AnyType):
                                 for sym in library_scope.get_all_functions():
                                     input_params = sym.value.parameters
