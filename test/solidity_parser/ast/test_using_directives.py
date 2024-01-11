@@ -57,3 +57,6 @@ class TestUsingDirectives(unittest.TestCase):
         set_v = [p for p in units[0].parts if str(p.name) == 'set_v'][0]
         library_call = [c for c in set_v.code.get_all_children() if isinstance(c, solnodes2.Call)][0]
         self.assertEqual('FreeFunctions.sol.mask(n, 16)', library_call.code_str())
+
+    def test_no_inherited_using_scope(self):
+        self._load('./NoInheritedUsing.sol')
