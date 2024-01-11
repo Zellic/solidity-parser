@@ -26,14 +26,14 @@ class BuildPyWithGenerateCommand(setuptools.command.build_py.build_py):
 
 setup(
     name='solidity-parser',
-    version='0.1.12',
+    version='0.1.13',
 
     install_requires=[
         "antlr4-python3-runtime==4.11.1",
-        "parameterized",
-        "mock",
-        "jsons",
-        "snapshottest"
+        "parameterized==0.9.0",
+        "mock==5.0.2",
+        "jsons==1.6.3",
+        "snapshottest==0.6.0"
     ],
     cmdclass={
         'build_py': BuildPyWithGenerateCommand,
