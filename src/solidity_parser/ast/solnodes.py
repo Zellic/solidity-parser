@@ -12,6 +12,41 @@ class SourceLocation(NamedTuple):
     "Column number, beginning at 1. E.g. the first character on the line is at column 1."
 
 
+class SourceLocationSpan(NamedTuple):
+    start: SourceLocation
+    end: SourceLocation
+
+    def does_contain(self, loc: SourceLocation):
+        """
+        Checks whether the given 'loc' location is contained within this span.
+        E.g. if this span represents ((5,1), (10, 1)), i.e lines 5 to 10 and loc is (6, 1), the location is contained
+        :param loc:
+        :return:
+        """
+
+        if loc.line < self.start.line or loc.line > self.end.line:
+            # outside the line range
+            return False
+
+        # below: the location is in the line range
+
+        before_start, after_end = loc.column < self.start.column, loc.column > self.end.column
+        on_start_line, on_end_line = loc.line == self.start.line, loc.line == self.end.line
+
+        if on_start_line and on_end_line:
+            # i.e. start and end line are the same, check within column range
+            return not (before_start or after_end)
+        elif on_start_line:
+            # on the start line (not on the end line, end line != start line), check after the start col
+            return not before_start
+        elif on_end_line:
+            # above but for end line
+            return not after_end
+        else:
+            # start and end lines are not the same and the loc is somewhere between, but not on the start or end lines
+            return True
+
+
 class Node:
     # TODO: want to get rid of this
     location: str
@@ -27,6 +62,9 @@ class Node:
     "Source start (0-based) position in the input text buffer(inclusive)"
     end_buffer_index: int
     "Source end (0-based) position in the input text buffer(exclusive)"
+
+    def get_source_span(self):
+        return SourceLocationSpan(self.start_location, self.end_location)
 
     def __post_init__(self):
         for child in self.get_children():
