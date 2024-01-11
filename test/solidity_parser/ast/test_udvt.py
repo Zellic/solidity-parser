@@ -65,10 +65,9 @@ class TestUDVT(unittest.TestCase):
 
     def test_add_not_attached(self):
         # tests that the 'add' function wasn't attached to the Int scope, it was only bound to the + operator
-        with self.assertRaises(errors.CodeProcessingError) as context:
-            self._load('./OperatorAttachAndBindFailureCase.sol')
+        self._load('./OperatorAttachAndBindFailureCase.sol')
 
-        msg = str(context.exception)
+        msg = str(self.ast2_builder.code_errors[0])
 
         self.assertTrue('Can\'t resolve call' in msg, msg)
 
@@ -82,10 +81,9 @@ class TestUDVT(unittest.TestCase):
         self.assertEqual('OperatorAttachAndBind.sol.add(x, y)', library_call.code_str())
 
     def test_neg_too_many_args(self):
-        with self.assertRaises(errors.CodeProcessingError) as context:
-            self._load('./NegOperatorNotEnoughArgs.sol')
+        self._load('./NegOperatorNotEnoughArgs.sol')
 
-        msg = str(context.exception)
+        msg = str(self.ast2_builder.code_errors[0])
 
         self.assertTrue('Mismatched arg types: [ResolvedUserType(Int)] vs [ResolvedUserType(Int), ResolvedUserType(Int)]' in msg, msg)
 
