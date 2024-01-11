@@ -1301,9 +1301,12 @@ class TernaryOp(Expr):
         if t1.is_int():
             # if they're both ints, then take the bigger type
             return t1 if t1.size > t2.size else t2
+        elif t1.is_string() and t2.is_string():
+            # TODO: precise string vs non precise string? precise string(x) vs precise string (y)
+            return StringType()
         else:
             try:
-                assert t1 == t2
+                assert t1 == t2, f'{t1} vs {t2}'
                 return t1
             except AssertionError:
                 # t1 = addr payable, t2 = addr
@@ -1313,7 +1316,7 @@ class TernaryOp(Expr):
                 elif t1.can_implicitly_cast_from(t2):
                     return t2
                 else:
-                    assert False, 'No base type?'
+                    assert False, f'No base type? {t1} vs {t2}'
 
     def code_str(self):
         return f'{self.condition.code_str()} ? {self.left.code_str()} : {self.right.code_str()}'
