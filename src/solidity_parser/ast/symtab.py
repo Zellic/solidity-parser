@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Union, List, Dict, Optional, Type, Tuple, Set, Collection
+from typing import Union, List, Dict, Optional, Type, Tuple, Set, Collection, Callable
 from collections import defaultdict
 from enum import Enum
 
@@ -55,9 +55,28 @@ def ACCEPT_INHERITABLE(base_scope):
 
 def is_top_level(node: solnodes.Node):
     # Error and FunctionDefinitions are set as SourceUnits in AST1 but not in AST2
-    return isinstance(node, solnodes.SourceUnit) and not isinstance(node, (
-        solnodes.ImportDirective, solnodes.FunctionDefinition, solnodes.ErrorDefinition,
-        solnodes.StateVariableDeclaration, solnodes.ConstantVariableDeclaration))
+    return isinstance(node, (solnodes.ContractDefinition, solnodes.InterfaceDefinition, solnodes.LibraryDefinition,
+                             solnodes.EnumDefinition, solnodes.UserValueType, solnodes.StructDefinition))
+
+
+def is_using_directive_scope(sym: 'Symbol') -> bool:
+    return isinstance(sym, ProxyScope) and isinstance(sym.created_by.value, solnodes.UsingDirective)
+
+
+def predicate_ignore_inherited_usings(base_scope):
+    base_unit_scope = unit_scope_of(base_scope)
+
+    def accept(sym: 'Symbol') -> bool:
+        if is_using_directive_scope(sym):
+            # dont inherit scopes created by using directives
+            return unit_scope_of(sym) == base_unit_scope
+        return True
+    return accept
+
+
+def predicate_accept_top_levels(sym: 'Symbol') -> bool:
+    resolved_sym = sym.res_syms_single()
+    return is_top_level(resolved_sym.value)
 
 
 def ACCEPT_NO_INHERITED_USINGS(base_scope):
@@ -287,6 +306,33 @@ class Scope(Scopeable):
         results = self.find(name, find_base_symbol=find_base_symbol, predicate=predicate)
         return self._check_single_symbol(name, results, default)
 
+    def find_user_type_scope(self, name, find_base_symbol: bool = False, default=None, predicate=None):
+        if '.' in name:
+            qualifier, search_str = name.rsplit('.', 1)
+            scope_to_search_in = self.find_user_type_scope(qualifier, predicate=predicate)
+        else:
+            scope_to_search_in, search_str = self, name
+
+        pred_fs = [
+            predicate_ignore_inherited_usings(scope_to_search_in),
+            predicate_accept_top_levels
+        ]
+
+        if predicate:
+            pred_fs.append(predicate)
+
+        total_pred = lambda s: all([p(s) for p in pred_fs])
+        results = scope_to_search_in.find(search_str, predicate=total_pred, dealias=False)
+
+        # the only proxy scope allowed in the results is the one created in the current contract
+        if len(results) > 1:
+            if is_using_directive_scope(results[0]):
+                return results[0]
+
+        result = scope_to_search_in._check_single_symbol(search_str, results, default)
+
+        return result.res_syms_single() if find_base_symbol else result
+
     def find_type(self, ttype, predicate=None, as_single=False) -> 'Scope':
         key = type_key(ttype)
 
@@ -445,30 +491,6 @@ def type_key(ttype) -> str:
 
 def meta_type_key(ttype) -> str:
     return f'<metatype:{ttype.type_key()}>'
-
-
-def make_merged_scope(scopes_to_merge, common_parent):
-    # all have to have a common parent and value
-    same_values = all([s.value == scopes_to_merge[0].value for s in scopes_to_merge])
-    # same_parents = all([s.parent_scope == scopes_to_merge[0].parent_scope for s in scopes_to_merge])
-
-    # assert same_parents
-    assert same_values
-
-    alias = 'merged:[' + ','.join([s.aliases[0] for s in scopes_to_merge]) + ']'
-
-    existing_scope = common_parent.find_single(alias)
-    if existing_scope:
-        return existing_scope
-
-    merged_scope = ScopeAndSymbol(alias, scopes_to_merge[0].value)
-
-    for s in scopes_to_merge:
-        merged_scope.import_symbols_from_scope(s)
-
-    common_parent.add(merged_scope)
-
-    return merged_scope
 
 
 class RootScope(Scope):
@@ -647,7 +669,7 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
         for inherit_specifier in self.value.inherits:
             # inherit specifier => name type => name ident => text str
             name = inherit_specifier.name.name.text
-            symbol = klass_file_scope.find_multi_part_symbol(name, True)
+            symbol = klass_file_scope.find_user_type_scope(name, find_base_symbol=True)
             assert isinstance(symbol, ContractOrInterfaceScope), f'Got {symbol.aliases}::{type(symbol)}'
             superklasses.append(symbol)
         return superklasses
@@ -1049,15 +1071,19 @@ class Builder2:
         # as a type key. For user reference types, it depends on how it's referenced, e.g. it could be just
         # MyT or could be qualified as A.B.MyT where B is in the scope of A and MyT is in the scope of B (etc)
         if isinstance(target_type, solnodes.UserType):
-            # Resolve the name used here to the actual contract/struct/etc (symbol)
             raw_name = target_type.name.text
-            target_type_scope = current_scope.find_multi_part_symbol(raw_name, predicate=ACCEPT_NO_INHERITED_USINGS(current_scope))
-            if not target_type_scope:
-                # happened in a case where a contract imported a Type 'Delay' from 'Time' and used Time.Delay in the
-                # contract, but in the 'Time' library the type was referenced as 'Delay' => 'Delay' wasn't defined in
-                # the current contract but was defined in the library.
-                target_type_scope = target_type.scope.find_multi_part_symbol(raw_name, predicate=ACCEPT_NO_INHERITED_USINGS(current_scope))
-            # Use the name as defined by the target type symbol itself so that we can do definite checks against
+            target_type_scope = current_scope.find_user_type_scope(raw_name)
+
+            # NOTE: with find_user_type_scope now, this shouldn't happen
+            # target_type_scope = current_scope.find_multi_part_symbol(raw_name, predicate=ACCEPT_NO_INHERITED_USINGS(current_scope))
+            # if not target_type_scope:
+            #     # happened in a case where a contract imported a Type 'Delay' from 'Time' and used Time.Delay in the
+            #     # contract, but in the 'Time' library the type was referenced as 'Delay' => 'Delay' wasn't defined in
+            #     # the current contract but was defined in the library.
+            #     target_type_scope = target_type.scope.find_multi_part_symbol(raw_name, predicate=ACCEPT_NO_INHERITED_USINGS(current_scope))
+
+            # Resolve the name used here to the actual contract/struct/etc (symbol)
+            # Use the name as defined by the actual symbol itself so that we can do consistent checks against
             # this type and the first parameter type later, i.e. for A.B.MyT, use MyT as the type key
             target_scope_name = target_type_scope.res_syms_single().value.name.text
         else:
@@ -1160,21 +1186,25 @@ class Builder2:
         func_def = symbol.value
         if func_def.parameters:
             first_parameter_type = func_def.parameters[0].var_type
-            # Resolve the parameter type if required (if it's a user defined type) and compared to the
-            # target type
-            if isinstance(first_parameter_type, solnodes.UserType):
-                param_type_symbol = symbol.parent_scope.find_multi_part_symbol(first_parameter_type.name.text)
-                if param_type_symbol.res_syms_single() == target_type_scope.res_syms_single():
-                    return make_using_symbol(symbol, target_type)
-            elif first_parameter_type == target_type:
-                return make_using_symbol(symbol, target_type)
+            # from: https://github.com/ethereum/solidity/blob/develop/docs/contracts/using-for.rst
+            # "If you specify a library, all non-private functions in the library get attached, even those where the
+            # type of the first parameter does not match the type of the object. The type is checked at the point the
+            # function is called and function overload resolution is performed."
+            # if isinstance(first_parameter_type, solnodes.UserType):
+            #     param_type_symbol = symbol.find_user_type_scope(first_parameter_type.name.text)
+            #     if param_type_symbol.res_syms_single() == target_type_scope.res_syms_single():
+            #         return make_using_symbol(symbol, target_type)
+            # elif first_parameter_type == target_type:
+            #     return make_using_symbol(symbol, target_type)
+            return make_using_symbol(symbol, first_parameter_type)
         return None
 
     def process_using_any_type(self, context: Context, node: solnodes.UsingDirective):
         # using L for *
         # For each function in the library, f(a0,...), target type is type(a0), add a symbol for it
         cur_scope = self.find_using_current_scope(node, context)
-        library_scope: Scope = cur_scope.find_single(node.library_name.text, find_base_symbol=True)
+        # require the base symbol here, don't want to collect any functions below that are themselves from a using scope
+        library_scope: Scope = cur_scope.find_user_type_scope(node.library_name.text, find_base_symbol=True)
 
         for symbol in library_scope.get_all_functions():
             func_def = symbol.value
@@ -1194,7 +1224,8 @@ class Builder2:
         cur_scope = self.find_using_current_scope(node, context)
 
         # This is L
-        library_scope: Scope = cur_scope.find_single(node.library_name.text, find_base_symbol=True)
+        # require the base symbol here, don't want to collect any functions below that are themselves from a using scope
+        library_scope: Scope = cur_scope.find_user_type_scope(node.library_name.text, find_base_symbol=True)
         # This is T
         target_type = node.override_type
 
