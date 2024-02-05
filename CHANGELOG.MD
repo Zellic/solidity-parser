@@ -1,9 +1,18 @@
-
+ 
 ## Changelog
 All notable changes to this project will be documented in this file.
  
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
+
+### [0.1.14] - 2024-02-05
+ - Fixed AST1 parser line number tracking
+ - Updated AST2 error handling
+ - Fixed issues with free floating functions/events/errors
+ - Added `start_location` and `end_location` to ast2 nodes
+ - Added `origin` to `LoadedSource`
+ - Added origin tracking to VFS
+
 
 ### [0.1.13] - 2024-01-11
  - Add SourceLocationSpan in AST1
