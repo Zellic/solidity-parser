@@ -29,6 +29,7 @@ class StandardJsonInput:
 class LoadedSource:
     source_unit_name: str
     contents: str
+    origin: Optional[Path]
     ast_creator_callback: Optional[Callable[[str], List[solnodes.SourceUnit]]]
 
     @property
@@ -59,7 +60,7 @@ class VirtualFileSystem:
         self.import_remaps: List[ImportMapping] = []
 
         self.sources: Dict[str, LoadedSource] = {}
-        self.origin_sources: Dict[str, LoadedSource] = {}
+        self.origin_sources: Dict[str, List[LoadedSource]] = {}
 
     @property
     def base_path(self):
@@ -136,9 +137,15 @@ class VirtualFileSystem:
 
     def _add_loaded_source(self, source_unit_name: str, source_code: str, creator=None, origin=None) -> LoadedSource:
         creator_with_origin = partial(creator if creator else ast_helper.make_ast, origin=origin)
-        loaded_source = LoadedSource(source_unit_name, source_code, creator_with_origin)
+        if source_unit_name in self.sources:
+            raise ValueError(f'{source_unit_name} has already been loaded in VFS')
+
+        loaded_source = LoadedSource(source_unit_name, source_code, origin, creator_with_origin)
+        if origin not in self.origin_sources:
+            self.origin_sources[origin] = []
+        self.origin_sources[origin].append(loaded_source)
+        
         self.sources[source_unit_name] = loaded_source
-        self.origin_sources[origin] = loaded_source
         return loaded_source
 
     def _read_file(self, path: str, is_cli_path=True) -> str:
