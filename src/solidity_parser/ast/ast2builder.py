@@ -718,51 +718,41 @@ class Builder:
         current_node: solnodes1.Node
 
     def __init__(self):
-        self.synthetic_toplevels: Dict[str, solnodes2.FileDefinition] = {}
-        self.normal_toplevels = []
-        self.type_helper = TypeHelper(self)
-        self.to_refine: Deque[solnodes1.SourceUnit] = deque()
-
-        self.state = None
-        self.temp_var_counter = 0
-
+        error_handler = ErrorHandler(create_state=Builder.State)
         self.code_errors = []
 
-    def error_context(func):
+        self.refine_stmt = error_handler.with_error_context(self.refine_stmt)
+        self.refine_expr = error_handler.with_error_context(self.refine_expr)
+        
+        self.type_helper = TypeHelper(self, error_handler)
+
+        self.error_handler = error_handler
+
+        self.synthetic_toplevels: Dict[str, solnodes2.FileDefinition] = {}
+        self.normal_toplevels = []
+        self.to_refine: Deque[solnodes1.SourceUnit] = deque()
+
+        self.temp_var_counter = 0
+
+    def link_with_ast1(func):
         @functools.wraps(func)
-        def with_error_context(self: 'Builder', node, *args, **kwargs):
-            # Store current state
-            prev_state = self.state
-            # Update current state
-            state = self.state = Builder.State(node)
-            try:
-                result = func(self, node, *args, **kwargs)
-            except CodeProcessingError:
-                raise
-            except Exception as e:
-                node = state.current_node
-                file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
-                raise CodeProcessingError(e.args[0] if e.args else f'{type(e)}', file_scope.source_unit_name, node.linenumber(), node.offset())
-            finally:
-                # Restore state after call
-                self.state = prev_state
+        def _wrapped(self: 'Builder', ast1_node, *args, **kwargs):
+            result = func(self, ast1_node, *args, **kwargs)
+
+            if not result:
+                return result
+
+            if isinstance(result, list):
+                code_nodes = result
+            elif result:
+                code_nodes = [result]
+
+            for n in code_nodes:
+                n.start_location = ast1_node.start_location
+                n.end_location = ast1_node.end_location
+
             return result
-        return with_error_context
-
-    def _error(self, msg, *predicates):
-        # Used for user level errors, i.e. the input code has an issue
-        failure = not predicates or any(not p for p in predicates)
-        # i.e. one failed. If there were no predicates supplied, it's a guaranteed failure
-        if failure:
-            node = self.state.current_node
-            file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
-            raise CodeProcessingError(msg, file_scope.source_unit_name, node.linenumber(), node.offset())
-
-        return True
-
-    def _assert_error(self, msg, *predicates):
-        # Used for 'internal' errors, i.e. compiler man assumptions that must pass
-        return self._error(f'Internal assertion fault: {msg}', *predicates)
+        return _wrapped
 
     def get_top_level_units(self) -> List[solnodes2.TopLevelUnit]:
         return list(self.synthetic_toplevels.values()) + self.normal_toplevels
@@ -868,10 +858,7 @@ class Builder:
         else:
             raise ValueError(f"Invalid type resolve: {type(ast1_node)}")
 
-    def _todo(self, node):
-        self._error(f'{type(node)} not supported/implemented')
-
-    @error_context
+    @link_with_ast1
     def refine_stmt(self, node: solnodes1.Stmt, allow_none=False):
         if node is None:
             assert allow_none
@@ -1401,7 +1388,7 @@ class Builder:
 
         return [Builder.FunctionCallee(base, symbols) for base, symbols in new_buckets.items()]
 
-    @error_context
+    @link_with_ast1
     def refine_expr(self, expr: solnodes1.Expr, is_function_callee=False, allow_type=False, allow_tuple_exprs=False,
                     allow_multiple_exprs=False, allow_none=True, allow_stmt=False, is_argument=False,
                     is_assign_rhs=False, allow_event=False):
