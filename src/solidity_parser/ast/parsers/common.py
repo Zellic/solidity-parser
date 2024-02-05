@@ -60,6 +60,8 @@ class ParserBase:
 
     def wrap_node(self, rule, node, add_comments=False):
         if isinstance(node, Node):
+            if hasattr(rule, 'symbol'):
+                rule = rule.symbol
             # we add 1 to each column in each of these because we used 1 based columns, see solnodes.SourceLocation
             if isinstance(rule.start, int):
                 # for terminal node symbols

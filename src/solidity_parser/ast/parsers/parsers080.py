@@ -140,7 +140,7 @@ def _library_definition(parser, library_definition: SolidityParser.LibraryDefini
 def _inheritance_specifier(parser, inheritance_specifier: SolidityParser.InheritanceSpecifierContext):
     type_name = parser.make(inheritance_specifier.identifierPath())
     return solnodes.InheritSpecifier(
-        solnodes.UserType(type_name),
+        parser.wrap_node(inheritance_specifier.identifierPath(), solnodes.UserType(type_name)),
         parser.make(inheritance_specifier.callArgumentList(), default=[])
     )
 
@@ -171,9 +171,9 @@ def _constructor_definition(parser, constructor_definition: SolidityParser.Const
 
 def _function_definition(parser, function_definition: SolidityParser.FunctionDefinitionContext):
     if function_definition.Fallback():
-        name = solnodes.SpecialFunctionKind.FALLBACK
+        name = parser.wrap_node(function_definition.Fallback(), solnodes.Ident(solnodes.SpecialFunctionKind.FALLBACK.value))
     elif function_definition.Receive():
-        name = solnodes.SpecialFunctionKind.RECEIVE
+        name = parser.wrap_node(function_definition.Receive(), solnodes.Ident(solnodes.SpecialFunctionKind.RECEIVE.value))
     else:
         name = parser.make(function_definition.identifier())
 
@@ -238,7 +238,7 @@ def _fallback_function_definition(parser, fallback_function_definition: Solidity
     modifiers += parser.make_all_rules(fallback_function_definition.overrideSpecifier())
 
     return solnodes.FunctionDefinition(
-        solnodes.SpecialFunctionKind.FALLBACK,
+        parser.wrap_node(fallback_function_definition.Fallback(), solnodes.Ident(solnodes.SpecialFunctionKind.FALLBACK.value)),
         parser.make(fallback_function_definition.parameterList(0), default=[]),
         modifiers,
         parser.make(fallback_function_definition.returnParameters, default=[]),
@@ -265,7 +265,7 @@ def _receive_function_definition(parser, receive_function_definition: SolidityPa
     modifiers += parser.make_all_rules(receive_function_definition.overrideSpecifier())
 
     return solnodes.FunctionDefinition(
-        solnodes.SpecialFunctionKind.RECEIVE,
+        parser.wrap_node(receive_function_definition.Receive(), solnodes.Ident(solnodes.SpecialFunctionKind.RECEIVE.value)),
         [],
         modifiers,
         [],
@@ -356,7 +356,7 @@ def _override_specifier(parser, override_specific: SolidityParser.OverrideSpecif
     overrides = parser.make_all_rules(override_specific.identifierPath())
 
     return solnodes.OverrideSpecifier(
-        map_helper(lambda override: solnodes.UserType(override), overrides)
+        map_helper(lambda override: parser.wrap_node(override, solnodes.UserType(override)), overrides)
     )
 
 
@@ -478,21 +478,21 @@ def _catch_clause(parser, catch_clause: SolidityParser.CatchClauseContext):
 
 def _emit(parser, stmt: SolidityParser.EmitStatementContext):
     return solnodes.Emit(
-        solnodes.CallFunction(
+        parser.wrap_node(stmt, solnodes.CallFunction(
             parser.make(stmt.expression()),
             [],
             parser.make(stmt.callArgumentList())
-        )
+        ))
     )
 
 
 def _revert(parser, stmt: SolidityParser.RevertStatementContext):
     return solnodes.Revert(
-        solnodes.CallFunction(
+        parser.wrap_node(stmt, solnodes.CallFunction(
             parser.make(stmt.expression()),
             [],
             parser.make(stmt.callArgumentList())
-        )
+        ))
     )
 
 
@@ -571,7 +571,7 @@ def _mapping_type(parser, mapping: SolidityParser.MappingTypeContext):
     key = parser.make(mapping.key)
     # Previous grammars had the key as a type, 0.8 grammar defined is as a raw ident path, so wrap it here
     if isinstance(key, solnodes.Ident):
-        key = solnodes.UserType(key)
+        key = parser.wrap_node(mapping.key, solnodes.UserType(key))
     return solnodes.MappingType(
         key,
         parser.make(mapping.value)
