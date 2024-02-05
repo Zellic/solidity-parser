@@ -507,7 +507,11 @@ class TypeHelper:
         return [self.map_type(p.var_type) for p in ps]
 
     def symbol_to_ast2_type(self, symbol) -> solnodes2.Type:
-        if isinstance(symbol, symtab.UsingFunctionSymbol):
+        if isinstance(symbol, symtab.FileScope):
+            # apparently you can prefix with a file name now? e.g. MyErrors.ErrorX() where MyErrors is the imported 'MyErrors.sol' file and
+            # 'ErrorX' is a free function/error in that file
+            return self.get_contract_type(symbol)
+        elif isinstance(symbol, symtab.UsingFunctionSymbol):
             value = symbol.value
             # X.abc(), remove the type of X to the start of the input types
             return solnodes2.FunctionType(self.param_types(value.parameters)[1:], self.param_types(value.returns))
@@ -574,14 +578,21 @@ class TypeHelper:
         if isinstance(ttype, solnodes2.SuperType):
             return c3_linearise(self.builder.get_declaring_contract_scope(node))
         elif isinstance(ttype, solnodes2.ResolvedUserType):
+            if isinstance(ttype.value.x, solnodes2.FileDefinition):
+                # don't find another scope other than the filescope for this filedefinition, it can't be put in a using directive like
+                # normal user types
+                scope = ttype.value.x.scope
+                assert isinstance(scope, symtab.FileScope)
+                return [scope]
+            
             scope = node.scope.find_user_type_scope(ttype.value.x.name.text)
 
             if scope is not None and scope.value != ttype.scope.value:
                 if scope.res_syms_single() != ttype.scope.res_syms_single():
                     logging.getLogger('AST2').warning(f'Type {ttype.value.x.descriptor()} is used at {node.source_location()} but looking up {ttype.value.x.name.text} in this scope results in a different type!')
                     scope = ttype.scope
-                else:
-                    self.builder._assert_error('Wtf?')
+                # else:
+                #     self.error_handler.assert_error('Wtf?')
 
             if scope is None:
                 # Weird situation where an object of type T is used in a contract during an intermediate computation but
@@ -679,7 +690,7 @@ class TypeHelper:
 
         # filescope can happen e.g. import "..." as X, then for the type identifier path: X.Y, X is a FileScope
         def unit_scope_of(s):
-            return s.find_first_ancestor_of((symtab.ContractOrInterfaceScope, symtab.EnumScope, symtab.LibraryScope))
+            return s.find_first_ancestor_of((symtab.FileScope, symtab.ContractOrInterfaceScope, symtab.EnumScope, symtab.LibraryScope, symtab.UserDefinedValueTypeScope))
 
         base_unit_scope = unit_scope_of(base_scope)
         def accept(sym: symtab.Symbol):
@@ -1250,6 +1261,7 @@ class Builder:
                 # set the base to the library that declares the func so that below we emit a DirectCall
                 possible_base = self.type_helper.get_contract_type(func_declaring_contract)
 
+            self.load_non_top_level_if_required(sym.value)
             name = solnodes2.Ident(sym.value.name.text)
             if isinstance(possible_base, solnodes2.Expr):
                 return solnodes2.FunctionCall(option_args, new_args, possible_base, name)
@@ -1544,15 +1556,18 @@ class Builder:
                 return solnodes2.GlobalValue(f'{base_scope.aliases[0]}.{ident_symbol.aliases[0]}', self.type_helper.map_type(ident_symbol.ttype))
 
             ident_target = ident_symbol.value  # the AST1 node that this Ident is referring to
-
+            
             if isinstance(ident_target, solnodes1.FunctionDefinition):
                 # TODO: can this be ambiguous or does the reference always select a single function
                 return solnodes2.GetFunctionPointer(solnodes2.Ref(ident_target.ast2_node))
             elif isinstance(ident_target, solnodes1.ConstantVariableDeclaration):
                 base_scope = self.get_declaring_contract_scope(ident_target)
                 base_type = self.type_helper.get_contract_type(base_scope)
+                self.load_non_top_level_if_required(ident_target)
                 return solnodes2.StaticVarLoad(base_type, solnodes2.Ident(ident_target.name.text))
             elif isinstance(ident_target, solnodes1.StateVariableDeclaration):
+                self.load_non_top_level_if_required(ident_target)
+                
                 var_declaring_contract = self.get_declaring_contract_scope(ident_target)
 
                 # even though it's parsed as a statevardecl, it can still be a const with the const modifier
@@ -1572,7 +1587,7 @@ class Builder:
                 return solnodes2.StateVarLoad(solnodes2.SelfObject(contract_type.value), solnodes2.Ident(expr.text))
             elif isinstance(ident_target, (solnodes1.Parameter, solnodes1.Var)):
                 return solnodes2.LocalVarLoad(self.var(ident_target))
-            elif self.is_top_level(ident_target):
+            elif self.is_top_level(ident_target) or isinstance(ident_symbol, symtab.FileScope):
                 ttype = self.type_helper.symbol_to_ast2_type(ident_symbol)
                 if is_argument:
                     return solnodes2.TypeLiteral(ttype)
@@ -1580,7 +1595,7 @@ class Builder:
                     assert allow_type
                     return ttype
             else:
-                self._todo(ident_target)
+                self.error_handler.todo(ident_target)
         elif isinstance(expr, solnodes1.CallFunction):
             return self.refine_call_function(expr, allow_stmt=allow_stmt, allow_event=allow_event)
         elif isinstance(expr, solnodes1.GetMember):
