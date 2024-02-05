@@ -37,7 +37,7 @@ def ACCEPT(x):
 
 
 def unit_scope_of(s):
-    return s.find_first_ancestor_of((ContractOrInterfaceScope, EnumScope, LibraryScope))
+    return s.find_first_ancestor_of((FileScope, ContractOrInterfaceScope, EnumScope, LibraryScope, UserDefinedValueTypeScope))
 
 
 def ACCEPT_INHERITABLE(base_scope):
