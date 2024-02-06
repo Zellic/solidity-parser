@@ -6,7 +6,7 @@ from .helper import register_solnodes2_formatter
 from solidity_parser.filesys import VirtualFileSystem
 from solidity_parser.ast.symtab import Builder2 as SymtabBuilder
 from solidity_parser.ast import solnodes as solnodes1, solnodes2, helper
-from solidity_parser.ast.ast2builder import Builder as AST2Builder, TypeHelper
+from solidity_parser.ast.ast2builder import Builder as AST2Builder, TypeHelper, ErrorHandler
 
 from snapshottest import TestCase as SnapshotTestCase
 from snapshottest.file import FileSnapshot
@@ -103,7 +103,7 @@ class TestSolidityAnalyzer(TestCase):
 
     def setUp(self):
         self.builder = AST2Builder()
-        self.type_helper = TypeHelper(self.builder)
+        self.type_helper = self.builder.type_helper
 
     def test_get_expr_type_ast1_type(self):
         with patch.object(self.type_helper, 'map_type') as mock_map_type:
