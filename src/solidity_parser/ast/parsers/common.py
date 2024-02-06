@@ -58,6 +58,17 @@ class ParserBase:
         else:
             return map_helper(self.make, [r for r in rules if is_grammar_rule(r)])
 
+    def copy_source_data(self, decorated_node, node_to_decorate):
+        node_to_decorate.location = decorated_node.location
+        node_to_decorate.start_location = decorated_node.start_location
+        node_to_decorate.end_location = decorated_node.end_location
+        node_to_decorate.start_buffer_index = decorated_node.start_buffer_index
+        node_to_decorate.end_buffer_index = decorated_node.end_buffer_index
+
+        if hasattr(decorated_node, 'comments'):
+            node_to_decorate.comments = decorated_node.comments
+        return node_to_decorate
+
     def wrap_node(self, rule, node, add_comments=False):
         if isinstance(node, Node):
             if hasattr(rule, 'symbol'):
