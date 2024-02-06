@@ -356,7 +356,7 @@ def _override_specifier(parser, override_specific: SolidityParser.OverrideSpecif
     overrides = parser.make_all_rules(override_specific.identifierPath())
 
     return solnodes.OverrideSpecifier(
-        map_helper(lambda override: parser.wrap_node(override, solnodes.UserType(override)), overrides)
+        map_helper(lambda override: parser.copy_source_data(override, solnodes.UserType(override)), overrides)
     )
 
 

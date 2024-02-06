@@ -60,7 +60,7 @@ class VirtualFileSystem:
         self.import_remaps: List[ImportMapping] = []
 
         self.sources: Dict[str, LoadedSource] = {}
-        self.origin_sources: Dict[str, List[LoadedSource]] = {}
+        self.origin_sources: Dict[str, LoadedSource] = {}
 
     @property
     def base_path(self):
@@ -124,6 +124,8 @@ class VirtualFileSystem:
         if import_source_name in self.sources:
             return self.sources[import_source_name]
 
+        logging.getLogger('VFS').debug(f'Import path {import_path} in {importer_source_unit_name} => {import_source_name}')
+
         # When the source is not available in the virtual filesystem, the compiler passes the source unit name to the
         # import callback. The Host Filesystem Loader will attempt to use it as a path and look up the file on disk.
         origin, contents = self._read_file_callback(import_source_name, self._base_path, self.include_paths)
@@ -136,16 +138,18 @@ class VirtualFileSystem:
         raise ValueError(f"Can't import {import_path} from {importer_source_unit_name} ({bool(contents)},{bool(loaded_source)})")
 
     def _add_loaded_source(self, source_unit_name: str, source_code: str, creator=None, origin=None) -> LoadedSource:
-        creator_with_origin = partial(creator if creator else ast_helper.make_ast, origin=origin)
         if source_unit_name in self.sources:
             raise ValueError(f'{source_unit_name} has already been loaded in VFS')
 
+        if origin in self.origin_sources:
+            raise ValueError(f'{origin}({source_unit_name}) has already been loaded as {self.origin_sources[origin].source_unit_name}')
+
+        creator_with_origin = partial(creator if creator else ast_helper.make_ast, origin=origin)
         loaded_source = LoadedSource(source_unit_name, source_code, origin, creator_with_origin)
-        if origin not in self.origin_sources:
-            self.origin_sources[origin] = []
-        self.origin_sources[origin].append(loaded_source)
-        
+
+        self.origin_sources[origin] = loaded_source
         self.sources[source_unit_name] = loaded_source
+
         return loaded_source
 
     def _read_file(self, path: str, is_cli_path=True) -> str:
