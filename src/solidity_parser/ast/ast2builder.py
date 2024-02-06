@@ -51,10 +51,10 @@ class ErrorHandler:
         return self._todo(node)
 
     def error(self, msg, *predicates):
-        return self._error(msg, predicates)
+        return self._error(msg, *predicates)
 
     def assert_error(self, msg, *predicates):
-        return self._assert_error(msg, predicates)
+        return self._assert_error(msg, *predicates)
 
     def _todo(self, node):
         self._error(f'{type(node)} not supported/implemented')
