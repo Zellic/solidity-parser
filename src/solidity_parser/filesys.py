@@ -4,6 +4,7 @@ from typing import List, Dict, Optional, Union, Callable, Tuple
 from collections import namedtuple
 from solidity_parser.ast import solnodes
 from solidity_parser.ast import helper as ast_helper
+from solidity_parser.util.version_util import Version
 
 import os
 import logging
@@ -46,7 +47,7 @@ ImportMapping = namedtuple('ImportMapping', ['context', 'prefix', 'target'])
 
 
 class VirtualFileSystem:
-    def __init__(self, base_path: str, cwd: str = None, include_paths: List[str] = None):
+    def __init__(self, base_path: str, cwd: str = None, include_paths: List[str] = None, compiler_version: Version = None):
         if cwd is None:
             cwd = os.getcwd()
         self.cwd = cwd
@@ -61,6 +62,8 @@ class VirtualFileSystem:
 
         self.sources: Dict[str, LoadedSource] = {}
         self.origin_sources: Dict[str, LoadedSource] = {}
+
+        self.compiler_version = compiler_version
 
     @property
     def base_path(self):
@@ -144,8 +147,15 @@ class VirtualFileSystem:
         if origin in self.origin_sources:
             raise ValueError(f'{origin}({source_unit_name}) has already been loaded as {self.origin_sources[origin].source_unit_name}')
 
-        creator_with_origin = partial(creator if creator else ast_helper.make_ast, origin=origin)
-        loaded_source = LoadedSource(source_unit_name, source_code, origin, creator_with_origin)
+        basic_creator = creator if creator else ast_helper.make_ast
+        creator_options = {
+            'origin': origin
+        }
+        if self.compiler_version:
+            creator_options['version'] = self.compiler_version
+        partial_creator = partial(basic_creator, **creator_options)
+
+        loaded_source = LoadedSource(source_unit_name, source_code, origin, partial_creator)
 
         self.origin_sources[origin] = loaded_source
         self.sources[source_unit_name] = loaded_source
