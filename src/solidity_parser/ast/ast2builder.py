@@ -1341,7 +1341,13 @@ class Builder:
         # lookup the symbol via the operator symbol itself, e.g. '-', '+' , etc . This is so 2ary sub and 1arg neg can
         # be found with both UnaryOpCode.NEG and BinaryOpCode.SUB as they are both represented with '-'.
         sym_name = str(expr.op.value)
-        member_symbols = [scope_symbols for s in udvt_scopes if (scope_symbols := s.find_single(sym_name))]
+
+        def matches_params(symbol):
+            # FIXME: dirty way to find the matching one, use actual type matching like normal arg matching done in ast2
+            func = symbol.value
+            return hasattr(func, 'parameters') and len(func.parameters) == len(input_types)
+
+        member_symbols = [scope_symbols for s in udvt_scopes if (scope_symbols := s.find_single(sym_name, predicate=matches_params))]
 
         self.error_handler.assert_error(f'Too many bound functions for {sym_name} operator: {member_symbols}',
                            len(member_symbols) <= 1)

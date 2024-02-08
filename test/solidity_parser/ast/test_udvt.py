@@ -85,7 +85,7 @@ class TestUDVT(unittest.TestCase):
 
         msg = str(self.ast2_builder.code_errors[0])
 
-        self.assertTrue('Mismatched arg types: [ResolvedUserType(Int)] vs [ResolvedUserType(Int), ResolvedUserType(Int)]' in msg, msg)
+        self.assertTrue('No bound functions for - operator' in msg, msg)
 
     def test_add_operator_bound_with_import(self):
         self._load('./NegOperator.sol')
