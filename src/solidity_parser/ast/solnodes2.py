@@ -123,6 +123,12 @@ class NodeList(list):
         super().__init__(seq)
         self.parent = parent
 
+    def __str__(self):
+        return list.__str__(self)
+
+    def __repr__(self):
+        return list.__repr__(self)
+
     def __setitem__(self, key, value):
         # seems to get called with slices too, that's why __setslice__ is stubbed with TODO
         super().__setitem__(key, value)
