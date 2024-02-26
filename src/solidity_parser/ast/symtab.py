@@ -601,6 +601,7 @@ class RootScope(Scope):
 
         self.add(BuiltinFunction('gasleft', [], [uint()]))
 
+        self.add(BuiltinFunction('blobhash', [uint()], [bytes32()]))
         self.add(BuiltinFunction('blockhash', [uint()], [bytes32()]))
 
         self.add(BuiltinFunction('require', [solnodes.BoolType(), solnodes.StringType()], []))
