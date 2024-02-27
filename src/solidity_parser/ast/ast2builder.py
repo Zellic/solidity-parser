@@ -647,7 +647,9 @@ class TypeHelper:
             size_type = self.get_expr_type(ttype.size)
             # Fix for some weird grammar parsing issues where a fixed length array type is parsed as a variable length
             # array type with a literal passed as the size expr, so here we change it to a fixed one
-            if size_type.is_int() and size_type.is_literal_type():
+            # Check for isinstance(ttype.size, solnodes1.Literal) as a compile time constant expr, e.g. Record[2**253]
+            # is a fixed sized but FixedLengthArrayType needs an int not an expr that computes an int.
+            if size_type.is_int() and size_type.is_literal_type() and isinstance(ttype.size, solnodes1.Literal):
                 size = ttype.size.value
                 assert isinstance(size, int)
                 return solnodes2.FixedLengthArrayType(base_type, size)
