@@ -845,8 +845,13 @@ class FunctionType(Type):
 
     def code_str(self):
         # function (<parameter types>) {internal|external} [pure|view|payable] [returns (<return types>)]
-        return f'function ({", ".join(t.code_str() for t in self.inputs)}) return ({", ".join(t.code_str() for t in self.outputs)})'
+        return f'function ({", ".join(t.code_str() for t in self.inputs)}) returns ({", ".join(t.code_str() for t in self.outputs)})'
 
+    def type_key(self):
+        # doesn't include modifiers for now
+        input_params = ', '.join([p.type_key() for p in self.inputs])
+        output_params = ', '.join([p.type_key() for p in self.outputs])
+        return f'function ({input_params}) returns ({output_params})'
 
 @NodeDataclass
 class TupleType(Type):

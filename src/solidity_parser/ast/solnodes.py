@@ -848,6 +848,12 @@ class FunctionType(Type):
         # TODO
         return f'FT'
 
+    def type_key(self):
+        # doesn't include modifiers for now
+        input_params = ', '.join([p.var_type.type_key() for p in self.parameters])
+        output_params = ', '.join([p.var_type.type_key() for p in self.return_parameters])
+        return f'function ({input_params}) returns ({output_params})'
+
     def is_function(self) -> bool:
         return True
 
