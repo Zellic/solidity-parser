@@ -191,6 +191,23 @@ class NodeList(list):
 class Ref(Generic[T]):
     x: T
 
+    def __repr__(self):
+        # this is needed for snapshot testing, GenericRepr uses repr to built the snapshot
+        ref_target = '?'
+        if hasattr(self.x, 'descriptor'):
+            ref_target = self.x.descriptor()
+        else:
+            par = self.x.parent
+            if hasattr(self.x, 'name'):
+                par_d = ''
+                if hasattr(par, 'descriptor'):
+                    par_d = par.descriptor() + '.'
+                elif hasattr(par, 'name'):
+                    par_d = par.name + '.'
+                ref_target = f'{par_d}{self.x.name}'
+
+        return f'<REF({ref_target})>'
+
 
 @NodeDataclass
 class Node:
