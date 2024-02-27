@@ -1632,18 +1632,21 @@ class GlobalValue(Expr):
 
 @NodeDataclass
 class ABISelector(Expr):
-    function: Ref[Union[FunctionDefinition, ErrorDefinition]]
+    function: Union[Ref[Union[FunctionDefinition, ErrorDefinition]], Expr]
 
     def type_of(self) -> Type:
         return Bytes(4)
 
     def __str__(self):
-        f = self.function.x
-        owner_name = f.parent.source_unit_name
-        return f'{owner_name}.{f.name.text}.selector'
+        return self.code_str()
 
     def code_str(self):
-        return str(self)
+        if isinstance(self.function, Ref):
+            f = self.function.x
+            owner_name = f.parent.source_unit_name
+            return f'{owner_name}.{f.name.text}.selector'
+        else:
+            return f'{self.function.code_str()}.selector'
 
 
 @NodeDataclass
