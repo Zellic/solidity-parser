@@ -1019,9 +1019,13 @@ class Builder:
         # we can't/don't handle myVar.MyX.xyz() where myVar is an expr and MyX is a type
         #
         # Symbols are matches by name only
-        callees: List[Builder.FunctionCallee] = self.refine_expr(callee, is_function_callee=True)
-
+        callees: Union[List[Builder.FunctionCallee], solnodes2.Expr] = self.refine_expr(callee, is_function_callee=True)
         option_args = create_option_args()
+
+        # Function pointer call, e.g. <myExpr>(...);
+        if isinstance(callees, solnodes2.Expr):
+            new_args = create_new_args()
+            return solnodes2.FunctionPointerCall(option_args, new_args, callees)
 
         if any([isinstance(c, Builder.PartialFunctionCallee) for c in callees]):
             self.error_handler.assert_error('Ambiguous partial function callee', len(callees) == 1)
@@ -1599,7 +1603,7 @@ class Builder:
 
             base_type: solnodes2.Type = self.type_helper.get_expr_type(expr.obj_base)
 
-            if not isinstance(base_type, solnodes2.FunctionType):
+            if not isinstance(base_type, solnodes2.FunctionType) or is_function_callee:
                 find_direct_scope = isinstance(base, (solnodes1.BytesType, solnodes1.StringType))
                 base_scopes = self.type_helper.scopes_for_type(base, base_type, use_encoded_type_key=not find_direct_scope)
 
@@ -1628,18 +1632,18 @@ class Builder:
                     # Create callee objects
                     # return [Builder.FunctionCallee(bucket_base, bucket) for bucket in member_symbols]
                     return callees
-                elif is_argument:
-                    # this is the first param in abi.encodeCall(A.f, ...)
-                    # TODO: can this be ambiguous or does the reference always select a single function
-                    if len(member_symbols) == 1:
-                        symbol_sources = [self.get_declaring_contract_scope_in_scope(d) for d in member_symbols[0]]
-                        are_sub_contracts = all(
-                            [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
-                        self.error_handler.assert_error(f'{expr} has too many target definitions ({len(member_symbols[0])})',
-                                           are_sub_contracts)
-                        func_sym = member_symbols[0][0]
-                        if isinstance(func_sym.value, solnodes1.FunctionDefinition):
-                            return solnodes2.GetFunctionPointer(solnodes2.Ref(func_sym.value.ast2_node))
+                # elif is_argument:
+                # TODO: can this be ambiguous or does the reference always select a single function
+                if len(member_symbols) == 1:
+                    # Func pointer load e.g. this is the first param in abi.encodeCall(A.f, ...)
+                    symbol_sources = [self.get_declaring_contract_scope_in_scope(d) for d in member_symbols[0]]
+                    are_sub_contracts = all(
+                        [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                    self.error_handler.assert_error(f'{expr} has too many target definitions ({len(member_symbols[0])})',
+                                       are_sub_contracts)
+                    func_sym = member_symbols[0][0]
+                    if isinstance(func_sym.value, solnodes1.FunctionDefinition):
+                        return solnodes2.GetFunctionPointer(solnodes2.Ref(func_sym.value.ast2_node))
 
                 # if sum(len(xs) for xs in member_symbols) > 1:
                 #     logging.getLogger('AST2').info(
@@ -1660,6 +1664,8 @@ class Builder:
                         # e.g. myarray.length, 'length' is builtin to the array type(i.e. not a concrete field)
                         new_base = self.refine_expr(base)
                         return solnodes2.DynamicBuiltInValue(mname, self.type_helper.map_type(sym.ttype), new_base)
+                elif isinstance(sym, symtab.BuiltinFunction):
+                    return
                 else:
                     referenced_member = sym.value
                     new_base = self.refine_expr(base, allow_type=True)
@@ -1695,25 +1701,33 @@ class Builder:
 
                 callee = callees[0]
 
+                directly_referenced_callables = []
                 for callee_symbol in callee.symbols:
                     callee_value = callee_symbol.res_syms_single().value
                     is_valid_type = isinstance(callee_value, (solnodes1.FunctionDefinition, solnodes1.EventDefinition))
-                    self.error_handler.error(f'Must be a function or event, was: {type(callee_value)}', is_valid_type)
+                    directly_referenced_callables.append(is_valid_type)
+                self.error_handler.error(f'Incongruent callables: {callee.symbols}', self.type_helper.any_or_all(directly_referenced_callables))
 
-                symbol_sources = [self.get_declaring_contract_scope_in_scope(s) for s in callee.symbols]
-                are_sub_contracts = all(
-                    [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
-                self.error_handler.assert_error(f'Too many target definitions ({len(callee.symbols)})', are_sub_contracts)
+                if directly_referenced_callables[0]:
+                    # check that functions are part of a chain
+                    symbol_sources = [self.get_declaring_contract_scope_in_scope(s) for s in callee.symbols]
+                    are_sub_contracts = all(
+                        [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                    self.error_handler.assert_error(f'Too many target definitions ({len(callee.symbols)})', are_sub_contracts)
 
-                member_symbol = callee.symbols[0]
-                possible_base = callee.base
-
-                # TODO: make this work without explicit check
-                if mname == 'selector':
-                    return solnodes2.ABISelector(solnodes2.Ref(member_symbol.value.ast2_node))
+                    member_symbol = callee.symbols[0]
+                    possible_base = callee.base
+                    # TODO: make this work without explicit check
+                    if mname == 'selector':
+                        return solnodes2.ABISelector(solnodes2.Ref(member_symbol.value.ast2_node))
+                    else:
+                        # the named arg value comes as the argument of the parent call function expr
+                        return [Builder.PartialFunctionCallee(possible_base, [member_symbol], { mname: None })]
                 else:
-                    # the named arg value comes as the argument of the parent call function expr
-                    return [Builder.PartialFunctionCallee(possible_base, [member_symbol], { mname: None })]
+                    self.error_handler.assert_error(f'Too many callees: {callees}', len(callees) == 1)
+                    self.error_handler.assert_error(f'Expected selector: got {expr}.{mname}', mname == 'selector')
+                    refined_base = self.refine_expr(base)
+                    return solnodes2.ABISelector(refined_base)
             self.error_handler.todo(expr)
         elif isinstance(expr, solnodes1.Literal):
             if isinstance(expr.value, tuple):
@@ -1755,6 +1769,10 @@ class Builder:
                 explicit_ttype = self.type_helper.get_expr_type(expr, bound_integers=not is_assign_rhs)
                 return solnodes2.Literal(expr.value, explicit_ttype, expr.unit)
         elif isinstance(expr, solnodes1.GetArrayValue):
+            if allow_type:
+                possible_type = self.type_helper.map_as_type_arg(expr)
+                if possible_type and isinstance(possible_type, solnodes2.Type):
+                    return possible_type
             return solnodes2.ArrayLoad(self.refine_expr(expr.array_base), self.refine_expr(expr.index))
         elif isinstance(expr, solnodes1.GetArraySlice):
             return solnodes2.ArraySliceLoad(self.refine_expr(expr.array_base), self.refine_expr(expr.start_index),
@@ -1860,7 +1878,7 @@ class Builder:
                         [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
                     self.error_handler.assert_error(f'{node.name.text} has too many target definitions ({len(mod_defs)})', are_sub_contracts)
 
-                target = solnodes2.Ref(mod_defs[0].value)
+                target = self.load_non_top_level_if_required(mod_defs[0].value)
                 node_klass = solnodes2.FunctionInvocationModifier
             else:
                 self.error_handler.todo(node)
