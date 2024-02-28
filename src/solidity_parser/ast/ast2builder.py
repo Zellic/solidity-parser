@@ -1677,7 +1677,10 @@ class Builder:
                         new_base = self.refine_expr(base)
                         return solnodes2.DynamicBuiltInValue(mname, self.type_helper.map_type(sym.ttype), new_base)
                 elif isinstance(sym, symtab.BuiltinFunction):
-                    return
+                    input_params = [solnodes2.Parameter(solnodes2.Var(None, self.type_helper.map_type(t), None)) for t in (sym.input_types or [])]
+                    output_params = [solnodes2.Parameter(solnodes2.Var(None, self.type_helper.map_type(t), None)) for t in (sym.output_types or [])]
+                    builtin_f = solnodes2.BuiltinFunction(sym.aliases[0], input_params, output_params)
+                    return solnodes2.GetFunctionPointer(solnodes2.Ref(builtin_f))
                 else:
                     referenced_member = sym.value
                     new_base = self.refine_expr(base, allow_type=True)

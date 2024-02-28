@@ -1194,6 +1194,13 @@ class FunctionDefinition(ContractPart):
     def __str__(self):
         return self.descriptor()
 
+
+@NodeDataclass
+class BuiltinFunction(Node):
+    name: Ident
+    inputs: List[Parameter]
+    outputs: List[Parameter]
+
 @NodeDataclass
 class ModifierDefinition(ContractPart):
     name: Ident
@@ -1876,7 +1883,7 @@ class GetType(Expr):
 
 @NodeDataclass
 class GetFunctionPointer(Expr):
-    func: Ref[FunctionDefinition]
+    func: Ref[Union[FunctionDefinition, 'BuiltinFunction']]
 
     def type_of(self) -> Type:
         def ts(params):
