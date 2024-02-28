@@ -82,7 +82,16 @@ class TypeHelper:
     @staticmethod
     def any_or_all(args):
         return (len(args) == 0) or (any(args) == all(args))
-
+    
+    def create_filter_using_scope(self, base_type: solnodes2.Type):
+        def test_predicate(s: symtab.Symbol):
+            if isinstance(s, symtab.UsingFunctionSymbol):
+                override_type = self.get_expr_type(s.override_type)
+                return base_type.can_implicitly_cast_from(override_type)
+            else:
+                return True
+        return test_predicate
+            
     def get_current_contract_type(self, node) -> solnodes2.ResolvedUserType:
         return self.get_contract_type(self.builder.get_declaring_contract_scope(node))
 
@@ -121,7 +130,7 @@ class TypeHelper:
 
             if allow_multiple:
                 for s in scopes:
-                    symbols = s.find(member)
+                    symbols = s.find(member, predicate=self.create_filter_using_scope(base_type))
                     if symbols:
                         return [self.symbol_to_ast2_type(s) for s in symbols]
             else:
@@ -1147,7 +1156,9 @@ class Builder:
                 # B is A { f() } A { f() }
                 # So we resolve to B.f
                 symbol_sources = [self.get_declaring_contract_scope_in_scope(candidate[0]) for candidate in bucket_candidates]
-                are_sub_contracts = all([self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                # if symbol_sources[0] == source, we matched multiple symbols in the same bucket that aren't in an
+                # override chain, e.g. multiple matches in the same contract
+                are_sub_contracts = all([self.is_subcontract(symbol_sources[0], source) and not symbol_sources[0] == source for source in symbol_sources[1:]])
                 if are_sub_contracts:
                     aliases = ', '.join([s.aliases[0] for s in symbol_sources])
                     logging.getLogger('AST2').debug(f'Base chain: {aliases} @ {expr.location}')
@@ -1607,7 +1618,8 @@ class Builder:
                 find_direct_scope = isinstance(base, (solnodes1.BytesType, solnodes1.StringType))
                 base_scopes = self.type_helper.scopes_for_type(base, base_type, use_encoded_type_key=not find_direct_scope)
 
-                member_symbols = [scope_symbols for s in base_scopes if (scope_symbols := s.find(mname))]
+                using_predicate = self.type_helper.create_filter_using_scope(base_type)
+                member_symbols = [scope_symbols for s in base_scopes if (scope_symbols := s.find(mname, predicate=using_predicate))]
 
                 assert len(member_symbols) > 0, f'No matches to call {str(base)}.{mname}'
 
