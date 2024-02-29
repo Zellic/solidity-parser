@@ -1,5 +1,5 @@
-==== ExternalSource: _stringutils/stringutils.sol ====
-==== Source: strings.sol ====
+//==== ExternalSource: _stringutils/stringutils.sol ====
+//==== Source: strings.sol ====
 pragma abicoder v2;
 import "_stringutils/stringutils.sol";
 
