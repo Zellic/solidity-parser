@@ -1264,7 +1264,8 @@ class Builder2:
         else:
             scope_to_add_to = self.get_proxy_scope_for_type(cur_scope, target_type, target_scope_name, target_type_scope, None)
 
-        using_symbols = []
+        operator_symbols = []
+        function_symbols = {}
 
         for attachment in node.attachments_or_bindings:
             # attachment, e.g. using { myF, ... } for MyType ;
@@ -1273,16 +1274,30 @@ class Builder2:
             if not symbol:
                 raise ValueError(f'No symbol found in using directive: {str(attachment.member_name)}')
 
-            if hasattr(attachment, 'operator'):
+            is_operator = hasattr(attachment, 'operator')
+
+            if is_operator:
                 operator = attachment.operator
             else:
                 operator = None
 
-            using_symbols.append(self.get_using_function_symbol_for_func(target_type, target_type_scope, symbol, operator))
+            using_symbol = self.get_using_function_symbol_for_func(target_type, target_type_scope, symbol, operator)
 
-        for s in using_symbols:
-            if s:
-                self.add_to_scope(scope_to_add_to, s)
+            if using_symbol:
+                if is_operator:
+                    operator_symbols.append(using_symbol)
+                else:
+                    # use a table here so statemnets like
+                    # using {id, zero, zero, id} for uint;
+                    # dont register 'id' twice
+                    function_symbols[using_symbol.aliases[0]] = using_symbol
+
+
+        for s in operator_symbols:
+            self.add_to_scope(scope_to_add_to, s)
+
+        for s in function_symbols.values():
+            self.add_to_scope(scope_to_add_to, s)
 
     def process_using_directive(self, node: solnodes.UsingDirective, context: Context):
         if isinstance(node.override_type, solnodes.AnyType):
