@@ -30,7 +30,7 @@ analysis.
 
 ### Requirements
 
-  - Python 3.10+ is required
+  - Python 3.11+ is required
   - Java 8+ (for antlr grammar stub generation)
 
 ### Setup
