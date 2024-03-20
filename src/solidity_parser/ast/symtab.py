@@ -154,8 +154,14 @@ class Scopeable:
     def _check_single_symbol(self, name, results, default):
         if len(results) == 1:
             return results[0]
+
         if len(results) > 1:
-            raise ValueError(f'Expected 1 but got {len(results)} symbols for "{name}" in scope {self.aliases[0]}')
+            all_the_same = all([results[0] == s for s in results[1:]])
+            if not all_the_same:
+                raise ValueError(f'Expected 1 but got {len(results)} symbols for "{name}" in scope {self.aliases[0]}')
+            else:
+                return results[0]
+
         return default
 
 
@@ -225,9 +231,8 @@ class Scope(Scopeable):
     def get_all_functions(self):
         # common case for some operators: get child functions
         collect = lambda s: isinstance(s.value, solnodes.FunctionDefinition)
-        # have to explore into using directive scopes as if the contract has one of these, the functions in the contract
-        # end up being scoped as children of the using directive
-        explore = lambda s: isinstance(s.value, (solnodes.UsingDirective, solnodes.SourceUnit))
+        # don't explore into UsingDirectives, don't want to collect UsingFunctionSymbols for the caller
+        explore = lambda s: isinstance(s.value, solnodes.SourceUnit)
         return self.get_all_children(collect, explore)
 
     def import_symbols_from_scope(self, other_scope: 'Scope'):
@@ -306,10 +311,17 @@ class Scope(Scopeable):
         results = self.find(name, find_base_symbol=find_base_symbol, predicate=predicate)
         return self._check_single_symbol(name, results, default)
 
-    def find_user_type_scope(self, name, find_base_symbol: bool = False, default=None, predicate=None):
+    def find_user_type_scope(self, name, find_base_symbol: bool = False, default=None, predicate=None) -> 'Scope' | List['Scope']:
+        if not default and not find_base_symbol:
+            default = []
+        # find_base_symbol causes this function to return the single base scope(i.e. a Contract/Lib/etc Scope)
+        # instead of a Proxy or Using scope that shadows the base scope.
+        # If this parameter isn't supplied, you might get multiple scopes (including Proxy/Using scopes) that all
+        # represent this name
+
         if '.' in name:
             qualifier, search_str = name.rsplit('.', 1)
-            scope_to_search_in = self.find_user_type_scope(qualifier, predicate=predicate)
+            scope_to_search_in = self.find_user_type_scope(qualifier, find_base_symbol=True, predicate=predicate)
         else:
             scope_to_search_in, search_str = self, name
 
@@ -321,15 +333,40 @@ class Scope(Scopeable):
         if predicate:
             pred_fs.append(predicate)
 
-        total_pred = lambda s: all([p(s) for p in pred_fs])
-        results = scope_to_search_in.find(search_str, predicate=total_pred, dealias=False)
+        def total_pred(preds):
+            def accept(symbol):
+                return all([p(symbol) for p in preds])
+            return accept
 
-        # the only proxy scope allowed in the results is the one created in the current contract
-        if len(results) > 1:
-            if is_using_directive_scope(results[0]):
-                return results[0]
+        def only_using_scopes(symbol):
+            return isinstance(symbol, ProxyScope) and isinstance(symbol.created_by, UsingDirectiveScope)
 
-        result = scope_to_search_in._check_single_symbol(search_str, results, default)
+        def do_search(using_mode):
+            if using_mode:
+                search_pred = total_pred(pred_fs + [only_using_scopes])
+            else:
+                search_pred = total_pred(pred_fs)
+            results = scope_to_search_in.find(search_str, predicate=search_pred, dealias=False)
+
+            if not find_base_symbol:
+                return results
+
+            # the only proxy scope allowed in the results is the one created in the current contract
+            if len(results) > 1:
+                if is_using_directive_scope(results[0]):
+                    return results[0]
+
+            return scope_to_search_in._check_single_symbol(search_str, results, default)
+
+        # This double search, first to find using scopes only and then to find non using scopes is to fix the case in
+        # testcases/using_directives/DefinedInSameScope.sol
+        result = do_search(True)
+
+        if not result:
+            result = do_search(False)
+
+        if not result:
+            result = default
 
         return result.res_syms_single() if find_base_symbol else result
 
@@ -1073,7 +1110,7 @@ class Builder2:
         # MyT or could be qualified as A.B.MyT where B is in the scope of A and MyT is in the scope of B (etc)
         if isinstance(target_type, solnodes.UserType):
             raw_name = target_type.name.text
-            target_type_scope = current_scope.find_user_type_scope(raw_name)
+            target_type_scope = current_scope.find_user_type_scope(raw_name, find_base_symbol=True)
 
             # NOTE: with find_user_type_scope now, this shouldn't happen
             # target_type_scope = current_scope.find_multi_part_symbol(raw_name, predicate=ACCEPT_NO_INHERITED_USINGS(current_scope))
@@ -1335,7 +1372,20 @@ class Builder2:
                 self.process_using_directive(node, context)
                 return None
             elif isinstance(node, solnodes.SymbolImportDirective):
-                return [AliasImportSymbol(node, i) for i in range(0, len(node.aliases))]
+                new_symbols = []
+                for idx, symbol_alias in enumerate(node.aliases):
+                    if symbol_alias.alias.text in node.scope.symbols:
+                        existing_symbols = node.scope.symbols[symbol_alias.alias.text]
+                        for sym in existing_symbols:
+                            if isinstance(sym, AliasImportSymbol):
+                                existing_import_alias = sym.value
+                                existing_symbol_alias = existing_import_alias.aliases[sym.alias_index]
+                                if existing_symbol_alias.symbol.text == symbol_alias.symbol.text and existing_import_alias.path == node.path:
+                                    # shallow check for duplicated symbol import statements
+                                    # TODO: proper error (and proper check?)
+                                    continue  # don't double add
+                    new_symbols.append(AliasImportSymbol(node, idx))
+                return new_symbols
             elif isinstance(node, solnodes.UnitImportDirective):
                 # wrap this in a list as UnitImportSymbol is a scope and symbol and the caller will
                 # scope the next nodes as children of this which breaks some resolution stuff in ast2

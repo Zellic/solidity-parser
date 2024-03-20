@@ -1276,6 +1276,8 @@ class UnaryOp(Expr):
         expr_ttype = self.expr.type_of()
         if self.op == solnodes1.UnaryOpCode.BOOL_NEG:
             assert expr_ttype.is_bool()
+        elif self.op == solnodes1.UnaryOpCode.BIT_NEG:
+            assert is_byte_array(expr_ttype) or expr_ttype.is_int()
         elif self.op != solnodes1.UnaryOpCode.DELETE:
             assert expr_ttype.is_int()
         return expr_ttype
