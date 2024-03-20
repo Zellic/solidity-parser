@@ -49,6 +49,8 @@ class LibSolidityTestBase(unittest.TestCase):
         self.vfs = filesys.VirtualFileSystem(self.base_path, compiler_version=Version(0, 8, 22))
         self.symtab_builder = symtab.Builder2(self.vfs)
         self.ast2_builder = ast2builder.Builder()
+        self.error_handler = self.ast2_builder.error_handler
+        self.error_handler.quiet_errors = False
 
     def _load(self, *files, check_errors=True):
         # try:
@@ -57,7 +59,7 @@ class LibSolidityTestBase(unittest.TestCase):
         self.ast2_builder.process_all()
 
         if check_errors:
-            self.assertEqual([], self.ast2_builder.code_errors)
+            self.assertEqual([], self.error_handler.caught_errors)
         # except:
         #     with open('C:/Users/Bibl/Desktop/err2.txt', 'a') as f:
         #         for x in files:
@@ -81,7 +83,7 @@ class LibSolidityTestBase(unittest.TestCase):
         self.ast2_builder.enqueue_files(fs)
         self.ast2_builder.process_all()
 
-        self.assertEqual([], self.ast2_builder.code_errors)
+        self.assertEqual([], self.error_handler.caught_errors)
 
 
 class TestASTJSONCases(LibSolidityTestBase, SnapshotTestCase):
@@ -108,13 +110,11 @@ class TestASTJSONCases(LibSolidityTestBase, SnapshotTestCase):
     def test_success_path(self, file):
         self._load(str(file.absolute().relative_to(Path(self.vfs.base_path).absolute())), check_errors=True)
 
-        if not self.ast2_builder.code_errors:
+        if not self.error_handler.caught_errors:
             units = self.ast2_builder.get_top_level_units()
             self.assertMatchSnapshot(units)
 
-    @unittest.skip("FIXME")
     def test_ast_internal_function_different_ids_export(self):
-        # TODO: actual broken test
         self._load_separated_file('ast_internal_function_different_ids_export.sol')
 
 
@@ -332,14 +332,14 @@ class TestSemanticTestCases(LibSolidityTestBase, SnapshotTestCase):
     def test_success_path(self, file):
         self._load(str(file.absolute().relative_to(Path(self.vfs.base_path).absolute())), check_errors=True)
 
-        if not self.ast2_builder.code_errors:
+        if not self.error_handler.caught_errors:
             units = self.ast2_builder.get_top_level_units()
             self.assertMatchSnapshot(units)
 
     # def test_debug(self):
     #     register_solnodes2_formatter()
-    #     self._load('underscore/as_function.sol')
+    #     self._load('variables/public_state_overridding.sol')
     #     units = self.ast2_builder.get_top_level_units()
     #     self.assertMatchSnapshot(units)
-    # 
+    #
     #     print("x")

@@ -16,6 +16,8 @@ class TestUsingDirectives(unittest.TestCase):
         self.ast2_builder.enqueue_files(fs)
         self.ast2_builder.process_all()
 
+        self.assertEqual([], self.ast2_builder.error_handler.caught_errors)
+
     def test_basic_using_directive(self):
         self._load('./UsingDirectiveNormal.sol')
 
@@ -60,3 +62,18 @@ class TestUsingDirectives(unittest.TestCase):
 
     def test_no_inherited_using_scope(self):
         self._load('./NoInheritedUsing.sol')
+
+    def test_defined_in_same_scope(self):
+        self._load('./DefinedInSameScope.sol')
+
+        my_lib = [u for u in self.ast2_builder.get_top_level_units() if isinstance(u, solnodes2.LibraryDefinition)][0]
+
+    def test_different_type(self):
+        self._load('./OverrideTypeDifferent.sol')
+
+        my_lib = [u for u in self.ast2_builder.get_top_level_units() if isinstance(u, solnodes2.LibraryDefinition)][0]
+
+    def test_overloads(self):
+        self._load('./OverloadedFunctions.sol')
+
+        my_lib = [u for u in self.ast2_builder.get_top_level_units() if isinstance(u, solnodes2.LibraryDefinition)][0]

@@ -67,7 +67,7 @@ class TestUDVT(unittest.TestCase):
         # tests that the 'add' function wasn't attached to the Int scope, it was only bound to the + operator
         self._load('./OperatorAttachAndBindFailureCase.sol')
 
-        msg = str(self.ast2_builder.code_errors[0])
+        msg = str(self.ast2_builder.error_handler.caught_errors[0])
 
         self.assertTrue('Can\'t resolve call' in msg, msg)
 
@@ -83,7 +83,7 @@ class TestUDVT(unittest.TestCase):
     def test_neg_too_many_args(self):
         self._load('./NegOperatorNotEnoughArgs.sol')
 
-        msg = str(self.ast2_builder.code_errors[0])
+        msg = str(self.ast2_builder.error_handler.caught_errors[0])
 
         self.assertTrue('No bound functions for - operator' in msg, msg)
 

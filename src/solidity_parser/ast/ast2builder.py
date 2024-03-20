@@ -1,3 +1,4 @@
+import typing
 from dataclasses import dataclass, replace as copy_dataclass
 from typing import List, Union, Dict, Deque
 from collections import deque, defaultdict
@@ -10,7 +11,7 @@ import logging
 import functools
 
 from solidity_parser.ast.mro_helper import c3_linearise
-from solidity_parser.errors import CodeProcessingError
+from solidity_parser import errors
 
 
 # This is not a real type, hence why it's not defined in the AST2 nodes file, but the solidity
@@ -21,9 +22,23 @@ class FloatType(solnodes2.Type):
 
 
 class ErrorHandler:
-    def __init__(self, create_state):
+    def __init__(self, create_state, quiet_errors=True):
+        self.quiet_errors = quiet_errors
         self.state = None
         self.create_state = create_state
+        self.caught_errors = []
+
+    def handle_processing_error(self, error: errors.CodeProcessingError):
+        if self.quiet_errors:
+            logging.getLogger('AST2').error(f'Processing error: {error.args[0]}')
+            self.caught_errors.append(error)
+        else:
+            raise error
+
+    @staticmethod
+    def make_processing_error_args(message: str, node: solnodes1.Node) -> errors.CPEArgs:
+        file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
+        return message, file_scope.source_unit_name, node.linenumber(), node.offset()
 
     def with_error_context(self, func):
         @functools.wraps(func)
@@ -35,12 +50,11 @@ class ErrorHandler:
             self.state = state
             try:
                 result = func(node, *args, **kwargs)
-            except CodeProcessingError:
+            except errors.CodeProcessingError:
                 raise
             except Exception as e:
-                node = state.current_node
-                file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
-                raise CodeProcessingError(e.args[0] if e.args else f'{type(e)}', file_scope.source_unit_name, node.linenumber(), node.offset())
+                error_args = self.make_processing_error_args(e.args[0] if e.args else f'{type(e)}', state.current_node)
+                raise errors.UnexpectedCodeProcessingError(*error_args, e) from e
             finally:
                 # Restore state after call
                 self.state = prev_state
@@ -65,8 +79,7 @@ class ErrorHandler:
         # i.e. one failed. If there were no predicates supplied, it's a guaranteed failure
         if failure:
             node = self.state.current_node
-            file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
-            raise CodeProcessingError(msg, file_scope.source_unit_name, node.linenumber(), node.offset())
+            raise errors.CodeProcessingError(*self.make_processing_error_args(msg, node))
         return True
 
     def _assert_error(self, msg, *predicates):
@@ -87,7 +100,7 @@ class TypeHelper:
         def test_predicate(s: symtab.Symbol):
             if isinstance(s, symtab.UsingFunctionSymbol):
                 override_type = self.get_expr_type(s.override_type)
-                return base_type.can_implicitly_cast_from(override_type)
+                return override_type.can_implicitly_cast_from(base_type)
             else:
                 return True
         return test_predicate
@@ -111,16 +124,22 @@ class TypeHelper:
                     return [self.symbol_to_ast2_type(s) for s in expr.scope.find(text)]
                 else:
                     inheritable_predicate = symtab.ACCEPT_INHERITABLE(expr.scope)
-                    pred1 = symtab.ACCEPT_ALL(symtab.ACCEPT_NOT(symtab.ACCEPT_CALLABLES), inheritable_predicate)
-                    ident_symbol = expr.scope.find_single(expr.text, predicate=pred1)
-                    if not ident_symbol:
-                        pred2 = symtab.ACCEPT_ALL(symtab.ACCEPT_CALLABLES, inheritable_predicate)
-                        ident_symbol = expr.scope.find_single(expr.text, predicate=pred2)
+                    symbols = expr.scope.find(expr.text, predicate=inheritable_predicate)
 
-                    if not ident_symbol:
-                        return self.error_handler.error(f'Unresolved reference to {expr.text}')
+                    if not symbols:
+                        self.error_handler.error(f'Unresolved reference to {expr.text}')
+                        assert False  # unreachable
 
-                    return self.symbol_to_ast2_type(ident_symbol)
+                    if len(symbols) == 1:
+                        return self.symbol_to_ast2_type(symbols[0])
+
+                    # for now check they're all the same, this might be wrong and we might have to find the highest type
+                    # in the lattice
+                    possible_types = [self.symbol_to_ast2_type(s) for s in symbols]
+                    types_the_same = [possible_types[0] == t for t in possible_types[1:]]
+                    self.error_handler.error(f'Need the same types: {types_the_same}', types_the_same)
+
+                    return possible_types[0]
         elif isinstance(expr, solnodes1.GetMember):
             base_type = self.get_expr_type(expr.obj_base)
             member = expr.name.text
@@ -446,6 +465,7 @@ class TypeHelper:
                 self.error_handler.todo(ttype)
 
         if len(candidates) != 1:
+            callable_ttypes = self.get_expr_type(callee, allow_multiple=True)
             self.error_handler.error(f'Can\'t resolve call')
 
         output_types = candidates[0]
@@ -594,29 +614,34 @@ class TypeHelper:
                 assert isinstance(scope, symtab.FileScope)
                 return [scope]
             
-            scope = node.scope.find_user_type_scope(ttype.value.x.name.text)
+            user_scopes = node.scope.find_user_type_scope(ttype.value.x.name.text)
 
-            if scope is not None and scope.value != ttype.scope.value:
-                if scope.res_syms_single() != ttype.scope.res_syms_single():
-                    logging.getLogger('AST2').warning(f'Type {ttype.value.x.descriptor()} is used at {node.source_location()} but looking up {ttype.value.x.name.text} in this scope results in a different type!')
-                    scope = ttype.scope
-                # else:
-                #     self.error_handler.assert_error('Wtf?')
+            filtered_scopes = []
 
-            if scope is None:
+            for s in user_scopes:
+                if s is not None and s.value != ttype.scope.value:
+                    if s.res_syms_single() != ttype.scope.res_syms_single():
+                        logging.getLogger('AST2').warning(f'Type {ttype.value.x.descriptor()} is used at {node.source_location()} but looking up {ttype.value.x.name.text} in this scope results in a different type!')
+                        filtered_scopes.append(ttype.scope)
+                        continue
+                filtered_scopes.append(s)
+
+            user_scopes = filtered_scopes
+
+            if not user_scopes:
                 # Weird situation where an object of type T is used in a contract during an intermediate computation but
                 # T isn't imported. E.g. (x.y).z = f() where x.y is of type T and f returns an object of type S but
                 # T isn't imported in the contract. This is the AddressSlot case in ERC1967Upgrade
-                scope = ttype.scope
-
+                scopes = [ttype.scope]
+            else:
+                scopes = user_scopes
             # "Prior to version 0.5.0, Solidity allowed address members to be accessed by a contract instance, for
             # example this.balance. This is now forbidden and an explicit conversion to address must be done:
             # address(this).balance"
-
-            scopes = [scope]
             # TODO: add versioncheck
             # if ttype.value.x.is_contract():
             #     scopes.append(scope.find_type(solnodes1.AddressType(False)))
+
             return scopes
         elif isinstance(ttype, solnodes2.BuiltinType):
             scope = node.scope.find_single(ttype.name)
@@ -716,7 +741,7 @@ class TypeHelper:
 
     def get_user_type(self, ttype: solnodes1.UserType):
         """Maps an AST1 UserType to AST2 ResolvedUserType in the scope of the AST1 node that references the type"""
-        s = ttype.scope.find_user_type_scope(ttype.name.text)
+        s = ttype.scope.find_user_type_scope(ttype.name.text, find_base_symbol=True)
         if not s:
             raise ValueError(f"Can't resolve {ttype}")
         return self.get_contract_type(s)
@@ -730,7 +755,6 @@ class Builder:
 
     def __init__(self):
         error_handler = ErrorHandler(create_state=Builder.State)
-        self.code_errors = []
 
         self.refine_stmt = error_handler.with_error_context(self.refine_stmt)
         self.refine_expr = error_handler.with_error_context(self.refine_expr)
@@ -1164,6 +1188,8 @@ class Builder:
                     logging.getLogger('AST2').debug(f'Base chain: {aliases} @ {expr.location}')
                     candidates.append((c.base, *bucket_candidates[0]))
                 else:
+                    callees: Union[List[Builder.FunctionCallee], solnodes2.Expr] = self.refine_expr(callee,
+                                                                                                    is_function_callee=True)
                     return self.error_handler.assert_error(f'Resolved to too many different bases: {bucket_candidates}, args={arg_types}')
             elif len(bucket_candidates) == 1:
                 candidates.append((c.base, *bucket_candidates[0]))
@@ -1376,7 +1402,8 @@ class Builder:
                               inputs: List[solnodes2.Expr]):
         input_types = [a.type_of() for a in inputs]
         function_symbol = self.find_bound_operator_symbol(expr, input_types)
-        binding_f: solnodes2.FunctionDefinition = function_symbol.value.ast2_node
+        ast1_function = function_symbol.value
+        binding_f: solnodes2.FunctionDefinition = self.load_non_top_level_if_required(ast1_function)
         arg_types = [p.var.ttype for p in binding_f.inputs]
         # currently only matching types are allowed (no implicit casts)
         self.error_handler.assert_error(f'Mismatched arg types: {arg_types} vs {input_types}', arg_types == input_types)
@@ -1537,28 +1564,35 @@ class Builder:
                     bucket = expr.scope.find(expr.text)
                     return self.get_function_callee_buckets(bucket)
 
-            # Really yucky behaviour here:
-            #  Contract B extends Interface A
-            #  A has a function f() returns (uint) that has no definition
-            #  B has a public state variable f of type uint
-            # An implicit getter is generated for f in B which fulfils the implementation of f() for A
-            # ACCEPT_INHERITABLE filter gives us both A.f and B.f but we only want one here
-            # We can't change the behaviour of symtab find for this because there are cases when looking up functions
-            # that we need to load all of the name matching functions in B and A when doing function call lookup
-            # (we could change that but it's tricky: requires test cases before we do)
-            # But we can't exclude functions here because we might be looking at a function pointer reference.
-            # So instead first look for non callables(i.e. functions) then if that fails find callables
             inheritable_predicate = symtab.ACCEPT_INHERITABLE(expr.scope)
-            pred1 = symtab.ACCEPT_ALL(symtab.ACCEPT_NOT(symtab.ACCEPT_CALLABLES), inheritable_predicate)
-            ident_symbol = expr.scope.find_single(expr.text, predicate=pred1)
-            if not ident_symbol:
-                pred2 = symtab.ACCEPT_ALL(symtab.ACCEPT_CALLABLES, inheritable_predicate)
-                ident_symbol = expr.scope.find_single(expr.text, predicate=pred2)
+            symbols = expr.scope.find(expr.text, predicate=inheritable_predicate)
 
-            if not ident_symbol:
-                return self.error_handler.error(f'Unresolved reference to {expr.text}')
+            if not symbols:
+                self.error_handler.error(f'Unresolved reference to {expr.text}')
+                assert False  # unreachable
 
-            ident_symbol = ident_symbol.res_syms_single()
+            # symtab can return multiple symbols for types, e.g. Ident('MyC') can return a ContractOrInterfaceScope and
+            # a ProxyScope created from a Using directive. Both of these are searchable scopes for 'MyC' but here we
+            # don't need them for searching, we just want to figure out why it's loaded by Identifier (direct type load)
+            # Solution is to just choose 1 but do a sanity check to make sure all the symbols represent the same base
+            # type
+            top_levels = [self.is_top_level(s.value) for s in symbols]
+            self.error_handler.error('Expected all or none to be top levels',
+                                     TypeHelper.any_or_all(top_levels))
+
+            if top_levels[0]:
+                all_the_same = [symbols[0].value == s.value for s in symbols]
+                self.error_handler.error(f'Type lookup: {expr.text} returned too many types: {symbols}',
+                                         all_the_same)
+                ident_symbol = symbols[0].res_syms_single()
+            else:
+                if len(symbols) > 1:
+                    # this happens in the public_state_overridding.sol case, symbols = X.test and A.test
+                    sources = [self.get_declaring_contract_scope_in_scope(s) for s in symbols]
+                    contract_chain = all([self.is_subcontract(sources[0], source) for source in sources[1:]])
+                    self.error_handler.error(f'{expr.text} matches too many symbols: {symbols}', contract_chain)
+
+                ident_symbol = symbols[0].res_syms_single()
 
             if isinstance(ident_symbol, symtab.BuiltinValue):
                 base_scope = ident_symbol.parent_scope
@@ -1566,7 +1600,7 @@ class Builder:
                 return solnodes2.GlobalValue(f'{base_scope.aliases[0]}.{ident_symbol.aliases[0]}', self.type_helper.map_type(ident_symbol.ttype))
 
             ident_target = ident_symbol.value  # the AST1 node that this Ident is referring to
-            
+
             if isinstance(ident_target, solnodes1.FunctionDefinition):
                 # TODO: can this be ambiguous or does the reference always select a single function
                 return solnodes2.GetFunctionPointer(solnodes2.Ref(ident_target.ast2_node))
@@ -1621,6 +1655,9 @@ class Builder:
                 using_predicate = self.type_helper.create_filter_using_scope(base_type)
                 member_symbols = [scope_symbols for s in base_scopes if (scope_symbols := s.find(mname, predicate=using_predicate))]
 
+                if len(member_symbols) == 0:
+                    base_scopes = self.type_helper.scopes_for_type(base, base_type,
+                                                                   use_encoded_type_key=not find_direct_scope)
                 assert len(member_symbols) > 0, f'No matches to call {str(base)}.{mname}'
 
                 if is_function_callee:
@@ -1905,9 +1942,8 @@ class Builder:
         try:
             result_code = self.block(node)
             return result_code
-        except CodeProcessingError as e:
-            self.code_errors.append(e)
-            logging.getLogger('AST2').error(f'Processing error: {e.args[0]}')
+        except errors.CodeProcessingError as e:
+            self.error_handler.handle_processing_error(e)
             return solnodes2.UnprocessedCode(e)
 
     def block(self, node: solnodes1.Block):
