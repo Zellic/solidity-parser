@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.15] - 2024-03-20
+ - Cleaned up AST2 ErrorHandler
+   - Removed code_errors from AST2Builder, moved to ErrorHandler.caught_errors
+ - Added errors.UnexpectedProcessingErrors for wrapping python errors in AST2Builder
+ - Fixed Ident and Using directive and import resolution issues
+
 ### [0.1.14] - 2024-02-05
  - Fixed AST1 parser line number tracking
  - Updated AST2 error handling
