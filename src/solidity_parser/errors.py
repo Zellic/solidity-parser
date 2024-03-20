@@ -14,7 +14,7 @@ class AntlrParsingError(Exception):
         self.details = [AntlrParsingError.Detail(*d) for d in details]
 
 
-CPEArgs = tuple[str, str, int, int]
+CPEArgs: typing.TypeAlias = tuple[str, str, int, int]
 "message, source_unit_name, line_number, line_offset"
 
 
