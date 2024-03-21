@@ -299,6 +299,12 @@ class Type(Node, ABC):
     def is_array(self) -> bool:
         return False
 
+    def is_byte_array(self) -> bool:
+        return is_byte_array(self)
+
+    def is_byte_array_underlying(self) -> bool:
+        return self.is_byte_array() or self.is_string()
+
     def is_string(self) -> bool:
         return False
 
@@ -635,6 +641,14 @@ class ByteType(Type):
 class BytesType(ArrayType):
     """ bytes type only (similar but not equal to byte[]/bytes1[]) """
     base_type: Type = field(default_factory=lambda: Bytes(1), init=False)
+
+    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
+        # don't have anything in AST1 to mark whether the literal is a hex or dec int so we do the
+        # conversion regardless
+        # e.g. bytes public c = hex"11"; is allowed but bytes public c = 0x11; is NOT
+        if actual_type.is_literal_type() and actual_type.is_int():
+            return True
+        return super().can_implicitly_cast_from(actual_type)
 
     def __str__(self):
         return self.code_str()
@@ -1531,7 +1545,7 @@ class ArrayLoad(Expr):
             assert self.index.type_of().is_int()
             return base_type.base_type
         else:
-            raise ValueError(f'unknown base type: f{base_type}')
+            raise ValueError(f'unknown base type: {base_type}')
 
     def code_str(self):
         return f'{self.base.code_str()}[{self.index.code_str()}]'
