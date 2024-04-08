@@ -117,6 +117,12 @@ class TestASTJSONCases(LibSolidityTestBase, SnapshotTestCase):
     def test_ast_internal_function_different_ids_export(self):
         self._load_separated_file('ast_internal_function_different_ids_export.sol')
 
+    # def test_debug(self):
+    #     self._load('using_for_directive.sol')
+    #     units = self.ast2_builder.get_top_level_units()
+    #     self.assertMatchSnapshot(units)
+    # 
+    #     print("x")
 
 class TestSemanticTestCases(LibSolidityTestBase, SnapshotTestCase):
     SRC_DIR = 'testcases/libsolidity/semanticTests'
@@ -336,10 +342,10 @@ class TestSemanticTestCases(LibSolidityTestBase, SnapshotTestCase):
             units = self.ast2_builder.get_top_level_units()
             self.assertMatchSnapshot(units)
 
-    # def test_debug(self):
-    #     register_solnodes2_formatter()
-    #     self._load('variables/public_state_overridding.sol')
-    #     units = self.ast2_builder.get_top_level_units()
-    #     self.assertMatchSnapshot(units)
-    #
-    #     print("x")
+    def test_debug(self):
+        register_solnodes2_formatter()
+        self._load('libraries/internal_library_function_attached_to_array_named_pop_push.sol')
+        units = self.ast2_builder.get_top_level_units()
+        self.assertMatchSnapshot(units)
+
+        print("x")
