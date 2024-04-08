@@ -1,13 +1,11 @@
-from dataclasses import dataclass, field
-from typing import Union, List, Dict, Optional, Type, Tuple, Set, Collection, Callable
+from typing import Union, List, Dict, Optional, Type, Tuple, Set, Collection
 from collections import defaultdict
 from enum import Enum
 
-from solidity_parser.ast import solnodes
+from solidity_parser.ast import solnodes, types as soltypes, nodebase
 from solidity_parser.filesys import LoadedSource, VirtualFileSystem
 
 from solidity_parser.ast.mro_helper import c3_linearise
-import solidity_parser.errors as errors
 import logging
 
 import solidity_parser.util.version_util as version_util
@@ -17,11 +15,11 @@ Aliases = Union[str, List[str]]
 
 
 def bytes():
-    return solnodes.BytesType()
+    return soltypes.BytesType()
 
 
 def bytesn(n):
-    return solnodes.FixedLengthArrayType(solnodes.ByteType(), n)
+    return soltypes.FixedLengthArrayType(soltypes.ByteType(), n)
 
 
 def bytes32():
@@ -29,7 +27,7 @@ def bytes32():
 
 
 def uint(size=256):
-    return solnodes.IntType(False, size)
+    return soltypes.IntType(False, size)
 
 
 def ACCEPT(x):
@@ -53,7 +51,7 @@ def ACCEPT_INHERITABLE(base_scope):
     return do_test
 
 
-def is_top_level(node: solnodes.Node):
+def is_top_level(node: nodebase.Node):
     # Error and FunctionDefinitions are set as SourceUnits in AST1 but not in AST2
     return isinstance(node, (solnodes.ContractDefinition, solnodes.InterfaceDefinition, solnodes.LibraryDefinition,
                              solnodes.EnumDefinition, solnodes.UserValueType, solnodes.StructDefinition))
@@ -391,7 +389,7 @@ class Scope(Scopeable):
             # We add them all regardless of the storage type and will let code later on handle the rules for
             # allowing calls to arrays with the wrong storage location.
 
-            values = [('length', solnodes.IntType(False, 256))]
+            values = [('length', soltypes.IntType(False, 256))]
             # These are not available for String (which is a subclass of Array)
             methods = [
                 # TODO: should these be copied?
@@ -408,14 +406,14 @@ class Scope(Scopeable):
             methods = []
             if ttype.is_function():
                 # Function selector, specific to the function type itself
-                fields.append(('selector', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+                fields.append(('selector', soltypes.FixedLengthArrayType(soltypes.ByteType(), 4)))
                 # before solidity 0.7 instead of f{gas: x, value: y)(args), f.gas(x).value(y)(args) was the way
                 # options were passed
                 # To simulate this, we stub value and gas as functions that have the function type itself as the
                 # return type
                 methods = [
-                    ('value', [solnodes.IntType(False, 256)], [ttype]),
-                    ('gas', [solnodes.IntType(False, 256)], [ttype]),
+                    ('value', [soltypes.IntType(False, 256)], [ttype]),
+                    ('gas', [soltypes.IntType(False, 256)], [ttype]),
                 ]
             scope = create_builtin_scope(key, ttype, values=fields, functions=methods)
         self.add_global_symbol(scope)
@@ -433,7 +431,7 @@ class Scope(Scopeable):
             # Create a meta type entry in the symbol table
             # Fields from https://docs.soliditylang.org/en/latest/units-and-global-variables.html#type-information
             members = [
-                ('name', solnodes.StringType()), ('creationCode', bytes()),
+                ('name', soltypes.StringType()), ('creationCode', bytes()),
                 ('runtimeCode', bytes())
             ]
 
@@ -446,7 +444,7 @@ class Scope(Scopeable):
 
             # Interfaces have interfaceId (bytes4)
             # if is_interface:
-            members.append(('interfaceId', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+            members.append(('interfaceId', soltypes.FixedLengthArrayType(soltypes.ByteType(), 4)))
 
             # Create the scope based on the above selected members
             self.add_global_symbol(scope := create_builtin_scope(key, ttype, values=members))
@@ -496,14 +494,14 @@ class BuiltinObject(ScopeAndSymbol):
 
 
 class BuiltinFunction(Symbol):
-    def __init__(self, name: str, input_types: List[solnodes.Type], output_types: List[solnodes.Type]):
+    def __init__(self, name: str, input_types: list[soltypes.Type] | None, output_types: list[soltypes.Type] | None):
         ScopeAndSymbol.__init__(self, name, None)
         self.input_types = input_types
         self.output_types = output_types
 
 
 class BuiltinValue(Symbol):
-    def __init__(self, name: str, ttype: solnodes.Type):
+    def __init__(self, name: str, ttype: soltypes.Type):
         ScopeAndSymbol.__init__(self, name, None)
         self.ttype = ttype
 
@@ -537,20 +535,20 @@ class RootScope(Scope):
         self.compiler_version = None
 
         msg_object = BuiltinObject('msg')
-        msg_object.add(BuiltinValue('value', solnodes.IntType(False, 256)))
+        msg_object.add(BuiltinValue('value', soltypes.IntType(False, 256)))
         # The function gasleft was previously known as msg.gas, which was deprecated in version 0.4.21 and removed in
         # version 0.5.0
-        msg_object.add(BuiltinValue('gas', solnodes.IntType(False, 256)))
+        msg_object.add(BuiltinValue('gas', soltypes.IntType(False, 256)))
         # Sender is actually not payable as per 0.8 breaking changes, but if we make it not payable it breaks
         #  some pre 0.8 contracts, need a way to version symtab behaviour in AST2
         if parser_version:
-            sender_type = solnodes.AddressType(parser_version.minor < 8)
+            sender_type = soltypes.AddressType(parser_version.minor < 8)
         else:
             # default to not payable as the majority of stuff now is >0.8
-            sender_type = solnodes.AddressType(False)
+            sender_type = soltypes.AddressType(False)
         msg_object.add(BuiltinValue('sender', sender_type))
         msg_object.add(BuiltinValue('data', bytes()))
-        msg_object.add(BuiltinValue('sig', solnodes.FixedLengthArrayType(solnodes.ByteType(), 4)))
+        msg_object.add(BuiltinValue('sig', soltypes.FixedLengthArrayType(soltypes.ByteType(), 4)))
 
         self.add(msg_object)
 
@@ -576,7 +574,7 @@ class RootScope(Scope):
         block_object = BuiltinObject('block')
         block_object.add(BuiltinValue('basefee', uint()))
         block_object.add(BuiltinValue('chainid', uint()))
-        block_object.add(BuiltinValue('coinbase', solnodes.AddressType(True)))
+        block_object.add(BuiltinValue('coinbase', soltypes.AddressType(True)))
         block_object.add(BuiltinValue('difficulty', uint()))
         block_object.add(BuiltinValue('gaslimit', uint()))
         block_object.add(BuiltinValue('number', uint()))
@@ -587,7 +585,7 @@ class RootScope(Scope):
 
         tx_object = BuiltinObject('tx')
         tx_object.add(BuiltinValue('gasprice', uint()))
-        tx_object.add(BuiltinValue('origin', solnodes.AddressType(False)))
+        tx_object.add(BuiltinValue('origin', soltypes.AddressType(False)))
         self.add(tx_object)
 
         bytes_object = BuiltinObject('bytes')
@@ -595,13 +593,13 @@ class RootScope(Scope):
         self.add(bytes_object)
 
         string_object = BuiltinObject('string')
-        string_object.add(BuiltinFunction('concat', None, [solnodes.StringType()]))
+        string_object.add(BuiltinFunction('concat', None, [soltypes.StringType()]))
         self.add(string_object)
 
         # https://docs.soliditylang.org/en/latest/units-and-global-variables.html#members-of-address-types
         def address_object(payable):
             # key is <type: address> or <type: address payable>
-            t = solnodes.AddressType(payable)
+            t = soltypes.AddressType(payable)
             scope = BuiltinObject(type_key(t), t)
             scope.add(BuiltinValue('balance', uint()))
             scope.add(BuiltinValue('code', bytes()))
@@ -611,13 +609,13 @@ class RootScope(Scope):
             # enforced in the compiler...
             # if payable:
             scope.add(BuiltinFunction('transfer', [uint()], []))
-            scope.add(BuiltinFunction('send', [uint()], [solnodes.BoolType()]))
+            scope.add(BuiltinFunction('send', [uint()], [soltypes.BoolType()]))
 
-            scope.add(BuiltinFunction('call', None, [solnodes.BoolType(), bytes()]))
+            scope.add(BuiltinFunction('call', None, [soltypes.BoolType(), bytes()]))
             # scope.add(BuiltinFunction('call', [bytes()], [solnodes.BoolType(), bytes()]))
             # scope.add(BuiltinFunction('call', [], [solnodes.BoolType(), bytes()]))
-            scope.add(BuiltinFunction('delegatecall', [bytes()], [solnodes.BoolType(), bytes()]))
-            scope.add(BuiltinFunction('staticcall', [bytes()], [solnodes.BoolType(), bytes()]))
+            scope.add(BuiltinFunction('delegatecall', [bytes()], [soltypes.BoolType(), bytes()]))
+            scope.add(BuiltinFunction('staticcall', [bytes()], [soltypes.BoolType(), bytes()]))
 
             return scope
 
@@ -634,22 +632,22 @@ class RootScope(Scope):
         self.add(BuiltinFunction('mulmod', [uint(), uint(), uint()], [uint()]))
 
         self.add(BuiltinFunction('ecrecover', [bytes32(), uint(8), bytes32(), bytes32()], [
-            solnodes.AddressType(False)]))
+            soltypes.AddressType(False)]))
 
         self.add(BuiltinFunction('gasleft', [], [uint()]))
 
         self.add(BuiltinFunction('blobhash', [uint()], [bytes32()]))
         self.add(BuiltinFunction('blockhash', [uint()], [bytes32()]))
 
-        self.add(BuiltinFunction('require', [solnodes.BoolType(), solnodes.StringType()], []))
-        self.add(BuiltinFunction('require', [solnodes.BoolType()], []))
+        self.add(BuiltinFunction('require', [soltypes.BoolType(), soltypes.StringType()], []))
+        self.add(BuiltinFunction('require', [soltypes.BoolType()], []))
 
-        self.add(BuiltinFunction('assert', [solnodes.BoolType()], []))
+        self.add(BuiltinFunction('assert', [soltypes.BoolType()], []))
 
-        self.add(BuiltinFunction('revert', [solnodes.StringType()], []))
+        self.add(BuiltinFunction('revert', [soltypes.StringType()], []))
         self.add(BuiltinFunction('revert', [], []))
 
-        self.add(BuiltinFunction('selfdestruct', [solnodes.AddressType(is_payable=False)], []))
+        self.add(BuiltinFunction('selfdestruct', [soltypes.AddressType(is_payable=False)], []))
 
 
 class FileScope(ScopeAndSymbol):
@@ -766,7 +764,7 @@ class ImportSymbol(ScopeAndSymbol):
     def find(self, name: str, find_base_symbol: bool = False, predicate=None, dealias: bool = True) -> Optional[List[Symbol]]:
         return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find(name, find_base_symbol, predicate, dealias)]
 
-    def find_type(self, ttype) -> Scope:
+    def find_type(self, ttype, predicate=None, as_single=False) -> Scope:
         raise NotImplemented
 
     def find_metatype(self, ttype, is_interface, is_enum) -> Scope:
@@ -828,6 +826,7 @@ class ProxyScope(ScopeAndSymbol):
         if base_scope:
             self.import_symbols_from_scope(base_scope)
         self.base_scope = base_scope
+        self.created_by = None
 
     def res_syms(self) -> List['Symbol']:
         if self.base_scope:
@@ -842,7 +841,7 @@ class UsingDirectiveScope(ScopeAndSymbol):
 
 
 class UsingFunctionSymbol(Symbol):
-    def __init__(self, target: ModFunErrEvtScope, override_type: solnodes.Type):
+    def __init__(self, target: ModFunErrEvtScope, override_type: soltypes.Type):
         assert isinstance(target.value, solnodes.FunctionDefinition)
         Symbol.__init__(self, target.aliases, target.value)
         self.target = target
@@ -853,7 +852,7 @@ class UsingFunctionSymbol(Symbol):
 
 
 class UsingOperatorSymbol(Symbol):
-    def __init__(self, target: ModFunErrEvtScope, override_type: solnodes.Type, operator: Union[solnodes.UnaryOpCode, solnodes.BinaryOpCode]):
+    def __init__(self, target: ModFunErrEvtScope, override_type: soltypes.Type, operator: Union[solnodes.UnaryOpCode, solnodes.BinaryOpCode]):
         assert isinstance(target.value, solnodes.FunctionDefinition)
         Symbol.__init__(self, f'{str(operator.value)}', target.value)
         self.target = target
@@ -944,7 +943,7 @@ class Builder2:
         assert parent_scope is not None, 'No parent scope'
 
         if build_skeletons:
-            assert not hasattr(node, 'scope')
+            assert not node.scope
             # the nodes scope is the scope it was created in always
             node.scope = parent_scope
 
@@ -1086,12 +1085,12 @@ class Builder2:
             for child in children:
                 parent.add(child)
 
-    def make_scope(self, node: solnodes.Node, name=None):
+    def make_scope(self, node: nodebase.Node, name=None):
         if name is None:
             name = node.name.text
         return ScopeAndSymbol(name, node)
 
-    def make_symbol(self, node: solnodes.Node, sym_type=Symbol, name=None):
+    def make_symbol(self, node: nodebase.Node, sym_type=Symbol, name=None):
         if name is None:
             name = node.name.text
         return sym_type(name, node)
@@ -1099,7 +1098,7 @@ class Builder2:
     def scope_name(self, base_name, node):
         return f'<{base_name}>@{node.location}'
 
-    def find_using_target_scope_and_name(self, current_scope, target_type: solnodes.Type):
+    def find_using_target_scope_and_name(self, current_scope, target_type: soltypes.Type):
         # TODO: Not sure if this is possible and I don't want to handle it(yet), just want to handle Types
         #  for target_type
         if isinstance(target_type, solnodes.Ident):
@@ -1108,17 +1107,9 @@ class Builder2:
         # Need to get the symbol name/alias/key for the target type, for primitives this is easy: just encode it
         # as a type key. For user reference types, it depends on how it's referenced, e.g. it could be just
         # MyT or could be qualified as A.B.MyT where B is in the scope of A and MyT is in the scope of B (etc)
-        if isinstance(target_type, solnodes.UserType):
+        if isinstance(target_type, soltypes.UserType):
             raw_name = target_type.name.text
             target_type_scope = current_scope.find_user_type_scope(raw_name, find_base_symbol=True)
-
-            # NOTE: with find_user_type_scope now, this shouldn't happen
-            # target_type_scope = current_scope.find_multi_part_symbol(raw_name, predicate=ACCEPT_NO_INHERITED_USINGS(current_scope))
-            # if not target_type_scope:
-            #     # happened in a case where a contract imported a Type 'Delay' from 'Time' and used Time.Delay in the
-            #     # contract, but in the 'Time' library the type was referenced as 'Delay' => 'Delay' wasn't defined in
-            #     # the current contract but was defined in the library.
-            #     target_type_scope = target_type.scope.find_multi_part_symbol(raw_name, predicate=ACCEPT_NO_INHERITED_USINGS(current_scope))
 
             # Resolve the name used here to the actual contract/struct/etc (symbol)
             # Use the name as defined by the actual symbol itself so that we can do consistent checks against
@@ -1337,7 +1328,7 @@ class Builder2:
             self.add_to_scope(scope_to_add_to, s)
 
     def process_using_directive(self, node: solnodes.UsingDirective, context: Context):
-        if isinstance(node.override_type, solnodes.AnyType):
+        if isinstance(node.override_type, soltypes.AnyType):
             if node.is_global:
                 raise ValueError(f'Using @{node.location} can\'t be global')
             self.process_using_any_type(context, node)
@@ -1404,7 +1395,7 @@ class Builder2:
                 node.owning_scope.import_symbols_from_scope(target_scope)
                 # also add the builtin helper methods
 
-                udvt_type = solnodes.UserType(solnodes.Ident(node.name.text))
+                udvt_type = soltypes.UserType(solnodes.Ident(node.name.text))
                 # set the scope of this node: when it's looked up later, it needs a scope
                 udvt_type.scope = node.owning_scope
 

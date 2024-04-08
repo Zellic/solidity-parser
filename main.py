@@ -1,3 +1,4 @@
+import pathlib
 import traceback
 
 from antlr4 import InputStream, CommonTokenStream
@@ -17,14 +18,14 @@ from solidity_parser.grammar.v088.SolidityParser import SolidityParser as Solidi
 
 from solidity_parser.collectors.collector import get_minor_ver
 # from solidity_parser.ast.nodes import Contract, ContractType
-import prettyprinter as pp
+# import prettyprinter as pp
 
 from solidity_parser.ast.parsers.parsers060 import Parser060
 from solidity_parser.ast.parsers.parsers070 import Parser070
 from solidity_parser.ast.parsers.parsers080 import Parser080
 from solidity_parser.ast.parsers.parsers088 import Parser088
 
-from solidity_parser.ast import solnodes, solnodes2
+from solidity_parser.ast import solnodes, solnodes2, ast2builder
 from solidity_parser.ast import symtab
 
 import os
@@ -170,7 +171,34 @@ from solidity_parser.collectors import collector
 version_pattern = pattern = re.compile(r"v(\d)\.(\d)\.[0-9]+", re.IGNORECASE)
 
 if __name__ == '__main__':
-    pp.install_extras()
+    p = pathlib.Path('C:/Users/Admin/Documents/Zellic/Gitea/Maia-DAO-ulysses-layer-zero')
+    sp = p / 'src'
+    lp = p / 'lib'
+    # setup VirtualFileSystem using path
+    vfs = VirtualFileSystem(p, None, [sp, lp])
+    vfs.parse_import_remappings(p / 'asi_remappings.txt')
+
+    # read all file names from sp recursively relative to sp
+    all_files = glob(f'{sp}/**/*.sol', recursive=True)
+    # replace all backslashes with forward slashes in all_files and remove prefix of p
+    all_files = [os.path.relpath(x, p) for x in all_files]
+
+    # create symtab.Builder2 from vfs
+    symtab_builder = symtab.Builder2(vfs)
+    symtab_file_scopes = [symtab_builder.process_or_find_from_base_dir(str(p)) for p in all_files]
+    # symtab_file_scopes = [symtab_builder.process_or_find_from_base_dir('src\\ArbitrumBaseBranchRouter.sol')]
+    ast2_builder = ast2builder.Builder()
+    ast2_builder.error_handler.quiet_errors = False
+    ast2_builder.enqueue_files(symtab_file_scopes)
+    ast2_builder.process_all()
+
+    ast2_units = ast2_builder.get_top_level_units()
+
+    print("done")
+
+
+if __name__ == '__main__1':
+    # pp.install_extras()
     logging.basicConfig( level=logging.CRITICAL)
 
     base_dir = 'F:/downloads/Contracts/00/00'
@@ -266,7 +294,7 @@ if __name__ == '__main__':
 
 
 if __name__ == '__main__1':
-    pp.install_extras()
+    # pp.install_extras()
     logging.basicConfig( level=logging.DEBUG)
     # p = Path('../example/TestInput.json').resolve()
     # with p.open(mode='r', encoding='utf-8') as f:
@@ -472,7 +500,7 @@ if __name__ == '__main__1':
 if __name__ == "__main__1":
     # c = Contract('weth9', ContractType.CONTRACT, False, [])
     # print(c)
-    pp.install_extras()
+    # pp.install_extras()
     input_src = open(
         # sys.argv[1],
         'example/cryptokitties.sol',

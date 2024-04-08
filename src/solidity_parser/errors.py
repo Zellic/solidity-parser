@@ -1,5 +1,4 @@
 import typing
-from typing import List
 from collections import namedtuple
 
 from solidity_parser.util.version_util import Version
