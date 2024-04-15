@@ -1,4 +1,4 @@
-from typing import Union, List, Dict, Optional, Type, Tuple, Set, Collection
+from typing import Union, Dict, Optional, Type, Tuple, Set, Collection, TypeAlias, Callable, TypeVar, cast, overload, Literal
 from collections import defaultdict
 from enum import Enum
 
@@ -11,15 +11,15 @@ import logging
 import solidity_parser.util.version_util as version_util
 
 
-Aliases = Union[str, List[str]]
+Aliases: TypeAlias = str | list[str]
 
 
 def bytes():
-    return soltypes.BytesType()
+    return soltypes.Bytes()
 
 
 def bytesn(n):
-    return soltypes.FixedLengthArrayType(soltypes.ByteType(), n)
+    return soltypes.Bytes(n)
 
 
 def bytes32():
@@ -27,7 +27,7 @@ def bytes32():
 
 
 def uint(size=256):
-    return soltypes.IntType(False, size)
+    return soltypes.UIntType(size)
 
 
 def ACCEPT(x):
@@ -109,7 +109,7 @@ def test_predicate(xs, predicate=None):
     return [x for x in xs if predicate(x)]
 
 
-def _add_to_results(possible_symbols: Collection, results: List, found_already: Set):
+def _add_to_results(possible_symbols: Collection, results: list, found_already: Set):
     for s in possible_symbols:
         res_syms = s.get_as_dealiased_symbols()
         for base_s in res_syms:
@@ -130,23 +130,42 @@ class Scopeable:
         elif not isinstance(aliases, list):
             aliases = [aliases]
 
-        self.aliases: List[str] = aliases
+        self.aliases: list[str] = aliases
 
     def set_parent_scope(self, parent_scope: 'Scope'):
+        """ Sets the parent scope of this element, subclasses can check the type of the parent for sanity checks """
         assert self.parent_scope is None, 'Element is already scoped'
         self.parent_scope = parent_scope
 
-    def find_first_ancestor(self, predicate, get_parent=None):
-        """Walks up the symbol tree and finds the first element that satisfies the given predicate"""
+    _T = TypeVar('_T', bound='Scopeable')
+
+    def find_first_ancestor(self, predicate: Callable[['Scopeable'], bool], get_parent: Optional[Callable[['Scopeable'], 'Scope']] = None) -> Optional[_T]:
+        """
+        Walks up the symbol tree and finds the first element that satisfies the given predicate
+
+        :param predicate: a function that takes a Scopeable and returns a bool to determine if it matches
+        :param get_parent: a function that takes a Scopeable and returns its parent, defaults to the parent_scope of a
+                           Scopeable
+        :return: the first Scopeable that satisfies the predicate
+        """
         if get_parent is None:
             get_parent = lambda x: x.parent_scope
 
+        # current can be a non Scope Scopeable, e.g. a Symbol only and depending on the predicate it can return a Symbol
+        # insted of Scope, however, usually the predicate is checking for something that is a Scope and a Symbol at the
+        # same time
         current = self
         while current and not predicate(current):
             current = get_parent(current)
         return current
 
-    def find_first_ancestor_of(self, ttype: Union[Type, Tuple[Type]]):
+    def find_first_ancestor_of(self, ttype: Type[_T]) -> Optional[_T]:
+        """
+        Find the first ancestor that is of the given type, note: these are python types and not solc types.
+
+        :param ttype: e.g. ContractOrInterfaceScope
+        :return: the first ancestor that is of the given type
+        """
         return self.find_first_ancestor(lambda x: isinstance(x, ttype))
 
     def _check_single_symbol(self, name, results, default):
@@ -170,10 +189,10 @@ class Symbol(Scopeable):
         self.value = value
         self.order = -1
 
-    def get_as_dealiased_symbols(self) -> List['Symbol']:
+    def get_as_dealiased_symbols(self) -> list['Symbol']:
         return [self]
 
-    def res_syms(self) -> List['Symbol']:
+    def res_syms(self) -> list['Symbol']:
         # Return the symbols this symbol points to, if any exist.
         return [self]
 
@@ -197,10 +216,10 @@ class CrossScopeSymbolAlias(Symbol):
         Symbol.__init__(self, aliases, other_symbol.value)
         self.other_symbol = other_symbol
 
-    def res_syms(self) -> List['Symbol']:
+    def res_syms(self) -> list['Symbol']:
         return self.other_symbol.res_syms()
 
-    def get_as_dealiased_symbols(self) -> List[Symbol]:
+    def get_as_dealiased_symbols(self) -> list[Symbol]:
         return self.other_symbol.get_as_dealiased_symbols()
 
 
@@ -208,17 +227,30 @@ class Scope(Scopeable):
     def __init__(self, aliases: Optional[Aliases]):
         Scopeable.__init__(self, aliases)
         # collection of known mappings that can be looked up quickly
-        self.symbols: Dict[str, List[Symbol]] = defaultdict(list)
-        self.imported_scopes: List[Scope] = []
+        self.symbols: Dict[str, list[Symbol]] = defaultdict(list)
+
+        # list of imported scopes, this is done lazily instead of precomputing a list of symbols and adding it to a
+        # local cache as searches in the symbol tree can be complex and the structure may change after an import is done
+        # By delaying it, we don't have to worry about when import_symbols_from_scope is called
+        self.imported_scopes: list[Scope] = []
 
     def is_defined(self, name: str) -> bool:
-        # check if the name exists in the table and it contains something
+        """
+        Check if the name exists in the current scopes local table, i.e. whether it was declared in the current scope
+        """
+        # TODO: rename function to is_declared
         return name in self.symbols and bool(self.symbols[name])
 
     def get_direct_children(self) -> Collection[Symbol]:
+        """
+        Get all children declared directly in this scope
+        """
         return set([item for sublist in self.symbols.values() for item in sublist])
 
     def get_all_children(self, collect_predicate, explore_branch_predicate):
+        """
+        Tree explorer for all DECLARED children and grandchildren, i.e. doesn't look at imports
+        """
         for direct_child in self.get_direct_children():
             if collect_predicate(direct_child):
                 yield direct_child
@@ -226,7 +258,10 @@ class Scope(Scopeable):
             if isinstance(direct_child, Scope) and explore_branch_predicate(direct_child):
                 yield from direct_child.get_all_children(collect_predicate, explore_branch_predicate)
 
-    def get_all_functions(self):
+    def get_all_functions(self) -> list['ModFunErrEvtScope']:
+        """
+        Gets all DECLARED functions in the current scope/descendant scopes
+        """
         # common case for some operators: get child functions
         collect = lambda s: isinstance(s.value, solnodes.FunctionDefinition)
         # don't explore into UsingDirectives, don't want to collect UsingFunctionSymbols for the caller
@@ -234,31 +269,56 @@ class Scope(Scopeable):
         return self.get_all_children(collect, explore)
 
     def import_symbols_from_scope(self, other_scope: 'Scope'):
+        """
+        Links the symbols in another scope to the current scope, i.e. makes the imported symbols visible in the current
+        scope
+
+        :param other_scope: The scope whose symbols should be imported
+        """
         self.imported_scopes.append(other_scope)
 
     def add_global_symbol(self, symbol: Symbol):
+        """
+        Helper function to add a symbol to the global scope(RootScope)
+        """
         root_scope = self.find_first_ancestor_of(RootScope)
         root_scope.add(symbol)
 
     def add(self, symbol: Symbol):
+        """
+        Adds a symbol to the current scope and set its parent scope to this scope
+        """
         symbol.set_parent_scope(self)
 
         for name in symbol.aliases:
             self.symbols[name].append(symbol)
 
-    def find_current_level(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
+    def find_current_level(self, name: str, predicate=None, visited_scopes: Set['Scope'] = None) -> list[Symbol]:
+        """
+        Finds symbols in this scope or any imported scopes at the current "level". A level is roughly the scopes that
+        are visible by an expression in the current scope.
+        """
+
+        # to avoid infinite recursion with imports
         if visited_scopes is not None:
             if self in visited_scopes:
                 return []
             visited_scopes.add(self)
 
+        # first check the local table for the symbol
         found_symbols = test_predicate(self.find_local(name), predicate)
 
+        # then check the imported scopes
         if not found_symbols:
             found_symbols = self.find_imported(name, predicate, visited_scopes)
         return found_symbols
 
-    def find_imported(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
+    def find_imported(self, name: str, predicate=None, visited_scopes: Set = None) -> list[Symbol]:
+        """
+        Finds the given name in all the imported scopes that are linked to the current scope. This can match many
+        valid symbols so it is up to the caller to choose the right one, however, the results are deduplicated by
+        checking that two symbols dealias to the same symbol.
+        """
         found_already = set()
         results = []
         for scope in self.imported_scopes:
@@ -266,16 +326,19 @@ class Scope(Scopeable):
             _add_to_results(syms, results, found_already)
         return results
 
-    def find_local(self, name: str) -> Optional[List[Symbol]]:
-        """Finds a mapped symbol in this scope only"""
+    def find_local(self, name: str) -> list[Symbol]:
+        """Finds symbols in this scope's symbol table only"""
         if name in self.symbols:
             return list(self.symbols[name])
         return []
 
-    def find_from_parent(self, name: str, predicate=None) -> List[Symbol]:
+    def find_from_parent(self, name: str, predicate=None) -> list[Symbol]:
         return self.parent_scope.find(name, predicate=predicate) if self.parent_scope else []
 
-    def find_multi_part_symbol(self, name, find_base_symbol: bool = False, predicate=None):
+    def find_multi_part_symbol(self, name: str, find_base_symbol: bool = False, predicate=None):
+        """
+        Finds a potentially multi-part/qualified symbol (e.g. a.b.c)
+        """
         if '.' in name:
             parts = name.split('.')
             s = self
@@ -285,7 +348,19 @@ class Scope(Scopeable):
         else:
             return self.find_single(name, find_base_symbol=find_base_symbol, predicate=predicate)
 
-    def find(self, name: str, find_base_symbol: bool = False, predicate=None, dealias: bool = True) -> Optional[List[Symbol]]:
+    def find(self, name: str, find_base_symbol: bool = False, predicate=None, dealias: bool = True) -> list[Symbol]:
+        """
+        Entry point for the symbol finder. Finds the given name in this scope and any imported scopes
+
+        Parameters:
+            name (str): The name to search for.
+            find_base_symbol (bool): Whether to find base symbols.
+            predicate (function): A function to filter symbols.
+            dealias (bool): Whether to dealias symbols.
+
+        Returns:
+            list[Symbol]: A list of symbols that match the search criteria.
+        """
         visited_scopes = set()
         # check this scope first
         found_symbols = self.find_current_level(name, predicate, visited_scopes)
@@ -309,7 +384,17 @@ class Scope(Scopeable):
         results = self.find(name, find_base_symbol=find_base_symbol, predicate=predicate)
         return self._check_single_symbol(name, results, default)
 
-    def find_user_type_scope(self, name, find_base_symbol: bool = False, default=None, predicate=None) -> 'Scope' | List['Scope']:
+    def find_user_type_scope(self, name, find_base_symbol: bool = False, default=None, predicate=None) -> Union['Scope', list['Scope']]:
+        """
+        Finds the scope of a user-defined type based on the given name.
+        :param name: The name of the type
+        :param find_base_symbol: Whether to find the base symbol or whether using scopes are acceptable results
+        :param default: The default value to return if no matches are found
+        :param predicate: Optional function to filter during the search
+
+        :return: A single scope if find_base_symbol is True, or a list of scopes if find_base_symbol is False
+        """
+
         if not default and not find_base_symbol:
             default = []
         # find_base_symbol causes this function to return the single base scope(i.e. a Contract/Lib/etc Scope)
@@ -318,28 +403,37 @@ class Scope(Scopeable):
         # represent this name
 
         if '.' in name:
+            # if it's qualified, recurse to find any possible base. I don't think it matters which we find if there are
+            # multiple(e.g. a LibraryScope and a ProxyScope of that LibraryScope) but this might need to be tested
             qualifier, search_str = name.rsplit('.', 1)
+            # find_base_symbol for the reason above
             scope_to_search_in = self.find_user_type_scope(qualifier, find_base_symbol=True, predicate=predicate)
         else:
             scope_to_search_in, search_str = self, name
 
+        # base predicates: only care about top level units for user types (e.g. Contract, Library, Enum etc) and don't
+        # include any using scopes inherited from base contracts(as they aren't inheritable in Solidity)
         pred_fs = [
             predicate_ignore_inherited_usings(scope_to_search_in),
             predicate_accept_top_levels
         ]
 
+        # add our own predicate if we have one
         if predicate:
             pred_fs.append(predicate)
 
+        # helper to combine our predicates, returns a predicate
         def total_pred(preds):
             def accept(symbol):
                 return all([p(symbol) for p in preds])
             return accept
 
+        # predicate to only return using scopes
         def only_using_scopes(symbol):
             return isinstance(symbol, ProxyScope) and isinstance(symbol.created_by, UsingDirectiveScope)
 
         def do_search(using_mode):
+            # search function depending on whether we're looking for using scopes or not
             if using_mode:
                 search_pred = total_pred(pred_fs + [only_using_scopes])
             else:
@@ -347,6 +441,7 @@ class Scope(Scopeable):
             results = scope_to_search_in.find(search_str, predicate=search_pred, dealias=False)
 
             if not find_base_symbol:
+                # if we don't have to determine which one is the base symbol, return them all
                 return results
 
             # the only proxy scope allowed in the results is the one created in the current contract
@@ -357,7 +452,9 @@ class Scope(Scopeable):
             return scope_to_search_in._check_single_symbol(search_str, results, default)
 
         # This double search, first to find using scopes only and then to find non using scopes is to fix the case in
-        # testcases/using_directives/DefinedInSameScope.sol
+        # testcases/using_directives/DefinedInSameScope.sol, i.e. prioritise using scopes over non using scopes.
+        # We don't have to do this for find_type for primitive/function/etc types because these types can't be declared
+        # so there won't be a conflict between a base scope(i.e. one that declares the type) and a using scope
         result = do_search(True)
 
         if not result:
@@ -368,17 +465,39 @@ class Scope(Scopeable):
 
         return result.res_syms_single() if find_base_symbol else result
 
-    def find_type(self, ttype, predicate=None, as_single=False) -> 'Scope':
+    # These don't work because Pycharm is broken: See PY-42137
+    # @overload
+    # def find_type(self, ttype, predicate=None, as_single: Literal[True] = True) -> 'Scope':
+    #     ...
+    #
+    # @overload
+    # def find_type(self, ttype, predicate=None, as_single: Literal[False] = False) -> list['Scope']:
+    #     ...
+
+    def find_type(self, ttype, predicate=None, as_single=False) -> Optional['Scope'] | list['Scope']:
+        """
+        Finds the scope for the given type in the current scope. The type scope might be different to the scope of the
+        type where the type was defined because of using statements.
+        A scope is created if one isn't visible in the current scope.
+
+        :param ttype: The type to search for, CANNOT be a user type, use `find_user_type_scope` for that case
+        :param predicate: Optional function to filter during the search
+        :param as_single: Whether to return a single scope or a list of scopes
+
+        :return: The scope if as_single is True or a list of scopes if as_single is False
+        """
+
+        # this key looks like <type:...> so it can't ever clash with any user defined symbols
         key = type_key(ttype)
 
         if as_single:
             possible_scope = self.find_single(key, predicate=predicate)
             if possible_scope:
-                return possible_scope
+                return cast(Scope, possible_scope)
         else:
             possible_scopes = self.find(key, predicate=predicate)
             if possible_scopes:
-                return possible_scopes
+                return cast(list[Scope], possible_scopes)
 
         if ttype.is_array():
             # Arrays are also kind of meta types but the key is formed as a normal type key instead of a metatype
@@ -457,6 +576,7 @@ class Scope(Scopeable):
             assert False, 'Can\'t base metatype scope on another scope'
 
     def str__symbols(self, level=0):
+        """ Returns a string representation of all symbols in this scope and its children with indentation """
         indent = '  ' * level
         indent1 = '  ' + indent
 
@@ -655,7 +775,7 @@ class FileScope(ScopeAndSymbol):
     def alias(source_unit_name: str):
         return f'<source_unit:{source_unit_name}>'
 
-    def __init__(self, builder: 'Builder2', vfs: VirtualFileSystem, source_unit_name: str, ast1_units: List[solnodes.SourceUnit]):
+    def __init__(self, builder: 'Builder2', vfs: VirtualFileSystem, source_unit_name: str, ast1_units: list[solnodes.SourceUnit]):
         ScopeAndSymbol.__init__(self, self.alias(source_unit_name), ast1_units)
         self.builder = builder
         self.vfs = vfs
@@ -680,7 +800,7 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
     def __init__(self, ast_node: Union[solnodes.ContractDefinition, solnodes.InterfaceDefinition]):
         ScopeAndSymbol.__init__(self, ast_node.name.text, ast_node)
 
-    def find_current_level(self, name: str, predicate=None, visited_scopes: Set = None, check_hierarchy=True) -> Optional[List[Symbol]]:
+    def find_current_level(self, name: str, predicate=None, visited_scopes: Set = None, check_hierarchy=True) -> Optional[list[Symbol]]:
         found_already = set()
         results = []
 
@@ -699,9 +819,9 @@ class ContractOrInterfaceScope(ScopeAndSymbol):
                 ss.extend(syms)
         return ss
 
-    def get_supers(self) -> List['ContractOrInterfaceScope']:
+    def get_supers(self) -> list['ContractOrInterfaceScope']:
         klass_file_scope: FileScope = self.parent_scope
-        superklasses: List[ContractOrInterfaceScope] = []
+        superklasses: list[ContractOrInterfaceScope] = []
         for inherit_specifier in self.value.inherits:
             # inherit specifier => name type => name ident => text str
             name = inherit_specifier.name.name.text
@@ -744,7 +864,7 @@ class ImportSymbol(ScopeAndSymbol):
     def __init__(self, aliases: Optional[Aliases], ast_node: solnodes.ImportDirective):
         ScopeAndSymbol.__init__(self, aliases, ast_node)
 
-    def get_as_dealiased_symbols(self) -> List['Symbol']:
+    def get_as_dealiased_symbols(self) -> list['Symbol']:
         return [dea_sym for i_s in self._get_imported_symbols() for dea_sym in i_s.get_as_dealiased_symbols()]
 
     def get_imported_scope(self) -> Optional[FileScope]:
@@ -752,25 +872,25 @@ class ImportSymbol(ScopeAndSymbol):
         import_path = self.value.path
         return source_unit.get_imported_source_unit(import_path)
 
-    def _get_imported_symbols(self) -> List[Symbol]:
+    def _get_imported_symbols(self) -> list[Symbol]:
         pass
 
-    def res_syms(self) -> List['Symbol']:
+    def res_syms(self) -> list['Symbol']:
         return [res_sym for i_s in self._get_imported_symbols() for res_sym in i_s.res_syms()]
     
     def get_direct_children(self) -> Collection[Symbol]:
         return [direct_child for i_s in self._get_imported_symbols() for direct_child in i_s.get_direct_children()]
 
-    def find(self, name: str, find_base_symbol: bool = False, predicate=None, dealias: bool = True) -> Optional[List[Symbol]]:
+    def find(self, name: str, find_base_symbol: bool = False, predicate=None, dealias: bool = True) -> Optional[list[Symbol]]:
         return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find(name, find_base_symbol, predicate, dealias)]
 
-    def find_type(self, ttype, predicate=None, as_single=False) -> Scope:
-        raise NotImplemented
+    # def find_type(self, ttype, predicate=None, as_single=False) -> Scope:
+    #     raise NotImplemented
 
     def find_metatype(self, ttype, is_interface, is_enum) -> Scope:
         raise NotImplemented
 
-    def find_local(self, name: str) -> Optional[List[Symbol]]:
+    def find_local(self, name: str) -> Optional[list[Symbol]]:
         return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find_local(name)]
 
     def find_first_ancestor(self, predicate, get_parent=None):
@@ -779,10 +899,10 @@ class ImportSymbol(ScopeAndSymbol):
     def find_first_ancestor_of(self, ttype: Union[Type, Tuple[Type]]):
         return NotImplemented
 
-    def find_imported(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
+    def find_imported(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[list[Symbol]]:
         return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find_imported(name, predicate, visited_scopes)]
 
-    def find_current_level(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[List[Symbol]]:
+    def find_current_level(self, name: str, predicate=None, visited_scopes: Set = None) -> Optional[list[Symbol]]:
         return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find_current_level(name, predicate, visited_scopes)]
 
     def find_single(self, name: str, find_base_symbol: bool = False, default=None, predicate=None) -> Optional[Symbol]:
@@ -790,7 +910,7 @@ class ImportSymbol(ScopeAndSymbol):
         results = [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find_single(name, find_base_symbol, [], predicate)]
         return self._check_single_symbol(name, results, default)
 
-    def find_from_parent(self, name: str, predicate=None) -> List[Symbol]:
+    def find_from_parent(self, name: str, predicate=None) -> list[Symbol]:
         return [f_s for i_s in self._get_imported_symbols() for f_s in i_s.find_from_parent(name, predicate)]
 
 
@@ -803,7 +923,7 @@ class AliasImportSymbol(ImportSymbol):
         self.alias_index = alias_index
         ImportSymbol.__init__(self, ast_node.aliases[alias_index].alias.text, ast_node)
 
-    def _get_imported_symbols(self) -> List['Symbol']:
+    def _get_imported_symbols(self) -> list['Symbol']:
         alias: solnodes.SymbolAlias = self.value.aliases[self.alias_index]
         symbol_name = alias.symbol.text
         imported_scope = self.get_imported_scope()
@@ -816,7 +936,7 @@ class UnitImportSymbol(ImportSymbol):
     def __init__(self, ast_node: solnodes.UnitImportDirective):
         ImportSymbol.__init__(self, ast_node.alias.text, ast_node)
 
-    def _get_imported_symbols(self) -> List['Symbol']:
+    def _get_imported_symbols(self) -> list['Symbol']:
         return self.get_imported_scope().res_syms()
 
 
@@ -828,7 +948,7 @@ class ProxyScope(ScopeAndSymbol):
         self.base_scope = base_scope
         self.created_by = None
 
-    def res_syms(self) -> List['Symbol']:
+    def res_syms(self) -> list['Symbol']:
         if self.base_scope:
             return self.base_scope.res_syms()
         else:
@@ -841,25 +961,44 @@ class UsingDirectiveScope(ScopeAndSymbol):
 
 
 class UsingFunctionSymbol(Symbol):
+    """
+    Symbol for a function that was added to the current scope by a Solidity using statement. Solidity docs state that
+    all functions, even those that don't match the type specifier in the using statement have to be added to the scope
+    the using statement is declared in. This symbol type is required instead of the usual ModFunErrEvtSymbol as we need
+    to be able to associate the bound type from the using statement and the first parameter type of the "value" of this
+    symbol(i.e. the FunctionDefinition) may or may not be the same as the specified one.
+    """
     def __init__(self, target: ModFunErrEvtScope, override_type: soltypes.Type):
+        """
+        :param target: Symbol that represents the real definition of the function that this symbol represents
+        :param override_type: The type declared in the using statement
+        """
+
+        # the value of this symbol is still the real function definition and the aliases are also the same so that
+        # lookups in the symtab can find it
         assert isinstance(target.value, solnodes.FunctionDefinition)
         Symbol.__init__(self, target.aliases, target.value)
         self.target = target
         self.override_type = override_type
 
-    def res_syms(self) -> List['Symbol']:
+    def res_syms(self) -> list['Symbol']:
         return self.target.res_syms()
 
 
 class UsingOperatorSymbol(Symbol):
+    """
+    Similar to UsingFunctionSymbol except for operator overloads
+    """
     def __init__(self, target: ModFunErrEvtScope, override_type: soltypes.Type, operator: Union[solnodes.UnaryOpCode, solnodes.BinaryOpCode]):
         assert isinstance(target.value, solnodes.FunctionDefinition)
+        # the alias of the symbol is the __str__ function of the operator, this should just be the same as the Solidity
+        # operator text
         Symbol.__init__(self, f'{str(operator.value)}', target.value)
         self.target = target
         self.override_type = override_type
         self.operator = operator
 
-    def res_syms(self) -> List['Symbol']:
+    def res_syms(self) -> list['Symbol']:
         return self.target.res_syms()
 
 
@@ -896,7 +1035,7 @@ class Builder2:
             return fs
         return self.process_file(source_unit_name)
 
-    def process_file(self, source_unit_name: str, source_units: List[solnodes.SourceUnit] = None):
+    def process_file(self, source_unit_name: str, source_units: list[solnodes.SourceUnit] = None):
         if source_units is None:
             source = self.vfs.lookup_import_path(source_unit_name, '')
             source_units = source.ast

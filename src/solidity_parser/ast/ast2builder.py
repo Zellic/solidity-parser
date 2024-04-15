@@ -1,5 +1,5 @@
 import typing
-from dataclasses import dataclass, replace as copy_dataclass
+from dataclasses import dataclass
 from typing import List, Union, Dict, Deque, cast, Optional
 from collections import deque, defaultdict
 from copy import deepcopy
@@ -25,13 +25,35 @@ T = typing.TypeVar('T')
 
 
 class ErrorHandler:
+    """
+    Keeps track of what AST2Builder is doing and captures the line tracking information when errors happen. Also wraps
+    Python errors in our own errors types if required and provides assertion failure checking.
+
+    The general idea of this class is to make sure AST2Builder operations return consistent error types by wrapping
+    them in CodeProcessingErrors so that the client can catch and decide what to do with them.
+    """
+
     def __init__(self, create_state, quiet_errors=True):
+        """
+        :param create_state: A function used to compute the state of the builder for a node when an error context
+                             wrapped function is called
+        :param quiet_errors: Whether to throw an error immediately or store it in the caught_errors list
+        """
+
+        # whether to throw a caught error immediately or store it in the caught_errors list for a client to consume
+        # later, this is used for testing where fast errors can be caught and fail the test quickly
         self.quiet_errors = quiet_errors
-        self.state = None
-        self.create_state = create_state
         self.caught_errors = []
+        # current state of the builder
+        self.state = None
+        # state creator function, takes a node, returns a state
+        self.create_state = create_state
 
     def handle_processing_error(self, error: errors.CodeProcessingError):
+        """
+        Error callback handler for AST2Builder functions to call when a CodeProcessingError (only) occurs.
+        """
+        # reraise if not quiet
         if self.quiet_errors:
             logging.getLogger('AST2').error(f'Processing error: {error.args[0]}')
             self.caught_errors.append(error)
@@ -40,22 +62,31 @@ class ErrorHandler:
 
     @staticmethod
     def make_processing_error_args(message: str, node: solnodes1.AST1Node) -> errors.CPEArgs:
+        """ Helper to make the input args tuple for a CodeProcessingError from a message and AST1 node """
         file_scope = node.scope.find_first_ancestor_of(symtab.FileScope)
         return message, file_scope.source_unit_name, node.linenumber(), node.offset()
 
     def with_error_context(self, func):
+        """
+        Decorator that takes a function, f, and wraps it in a function that captures the current state of the builder
+        before executing f and restores the state afterwards. If any errors occur in the process, a CodeProcessingError
+        (specifically an UnexpectedCodeProcessingError) is raised, which should be allowed to propagate to the client of
+        the builder.
+        """
         @functools.wraps(func)
         def wrapped_function(node, *args, **kwargs):
             # Store current state
             prev_state = self.state
-            # Update current state
+            # Create a new state for the node
             state = self.create_state(node)
             self.state = state
             try:
                 result = func(node, *args, **kwargs)
             except errors.CodeProcessingError:
+                # CPE, reraise
                 raise
             except Exception as e:
+                # Non CPE, wrap in CPE
                 error_args = self.make_processing_error_args(e.args[0] if e.args else f'{type(e)}', state.current_node)
                 raise errors.UnexpectedCodeProcessingError(*error_args, e) from e
             finally:
@@ -64,13 +95,27 @@ class ErrorHandler:
             return result
         return wrapped_function
 
-    def todo(self, node):
+    def todo(self, node) -> T:
+        """
+        Forces an error if the node is not supported by the builder. Since it always raises, the return type is fully
+        polymorphic and can be used by the builder to do anything.
+        E.g. a common pattern is to return the result of this function to mark the end of control flow in the builder
+        code return self.error_handler.todo(node)
+        """
         return self._todo(node)
 
     def error(self, msg, *predicates):
+        """
+        Raises an error with the given message if any of the predicates fail. This is used for user level errors, i.e.
+        the input code is invalid
+        """
         return self._error(msg, *predicates)
 
     def assert_error(self, msg, *predicates):
+        """
+        Raises an assertion error with the given message if any of the predicates fail, very similar to error but used
+        for 'internal' errors, i.e. compiler assumptions that must pass
+        """
         return self._assert_error(msg, *predicates)
 
     def _todo(self, node) -> T:
@@ -93,17 +138,27 @@ class ErrorHandler:
 
 
 class TypeHelper:
-    def __init__(self, builder, error_handler: ErrorHandler):
+    """
+    Helper class for computing AST2 types from AST1 nodes. This is required because AST1 nodes are not linked and do not
+    have type information associated with some nodes, i.e. the node trees aren't able to compute types on their own.
+    """
+    def __init__(self, builder: 'Builder', error_handler: ErrorHandler):
         self.builder = builder
         self.error_handler = error_handler
 
     @staticmethod
     def any_or_all(args):
+        """ Returns True if any or all args are True """
         return (len(args) == 0) or (any(args) == all(args))
     
     def create_filter_using_scope(self, base_type: soltypes.Type):
+        # creates a filter for searching in the symtab. This is required because when a using statement is seen, all of
+        # the functions from the library are imported into the current scope, even if they don't match the type
+        # specified in the using statement. This filter checks if the type in the using statement matches the given
+        # base_type
         def test_predicate(s: symtab.Symbol):
             if isinstance(s, symtab.UsingFunctionSymbol):
+                # override type is the type specified in the using statement
                 override_type = self.get_expr_type(s.override_type)
                 return override_type.can_implicitly_cast_from(base_type)
             else:
@@ -111,21 +166,43 @@ class TypeHelper:
         return test_predicate
             
     def get_current_contract_type(self, node) -> solnodes2.ResolvedUserType:
+        """ Returns the ResolvedUserType the given node is declared in """
         return self.get_contract_type(self.builder.get_declaring_contract_scope(node))
 
     def get_expr_type(self, expr: solnodes1.Expr | soltypes.Type, allow_multiple=False, force_tuple=False, function_callee=False) -> typing.Union[solnodes2.Types, list[solnodes2.Types]]:
+        """
+        Main helper function that computes the AST2 type of the given AST1 expression
+
+        :param expr: The AST1 expression to type, may be a Type also as types are part of both the AST1 and AST2 nodeset
+        :param allow_multiple: Changes the return of this function to a list of types instead of a single type. This is
+                               required for expressions that may need extra contextual information to return a single
+                               resolved Type, e.g. the callee of a function call without its arguments may resolve to
+                               multiple callsites and if this is set to True, the return type will be a list of function
+                               types
+        :param force_tuple: Forces the return type to be a TupleType instead of a single type in cases where it's
+                            ambiguous, e.g. the expression (x) can be either a bracket expression or a tuple expression
+        :param function_callee: Whether the expression is the callee of a function call, required to compute the type of
+                                state variable lookups as Solidity generates getter functions if the variable is used as
+                                a function callee
+        :return: The AST2 type of the expression or a list of types if allow_multiple is True
+        """
+
         if isinstance(expr, soltypes.Type):
+            # already have a type, either return it or resolve it to make sure it's AST2 and not AST1 only
             return self.map_type(expr)
         elif isinstance(expr, solnodes1.Ident):
             text = expr.text
             if text == 'this':
                 return self.get_current_contract_type(expr)
             elif text == 'super':
-                # RTU.value is a Ref[Contract/InterfaceDef] which is what SuperType takes
+                # contract_type.value is a Ref[Contract/InterfaceDef] which is what SuperType takes
                 contract_type = self.get_current_contract_type(expr)
                 return solnodes2.SuperType(contract_type.value)
             else:
+                # lookup a single unqualified Ident in the current scope(expr.scope). Note this path ISN'T taken for
+                # qualified lookups (e.g. x.y)
                 if allow_multiple:
+                    # return all matching symbol types, TODO: should use ACCEPT_INHERITABLE here also?
                     return [self.symbol_to_ast2_type(s, function_callee=function_callee) for s in expr.scope.find(text)]
                 else:
                     inheritable_predicate = symtab.ACCEPT_INHERITABLE(expr.scope)
@@ -133,31 +210,40 @@ class TypeHelper:
 
                     if not symbols:
                         self.error_handler.error(f'Unresolved reference to {expr.text}')
-                        assert False  # unreachable
+                        assert False  # unreachable as the above error is always raised
 
                     if len(symbols) == 1:
                         return self.symbol_to_ast2_type(symbols[0], function_callee=function_callee)
 
-                    # for now check they're all the same, this might be wrong and we might have to find the highest type
+                    # we only care about the type here and not the symbols, so if all the types are the same, just
+                    # return the type of the first: this might be wrong and we might have to find the highest type
                     # in the lattice
                     possible_types = [self.symbol_to_ast2_type(s, function_callee=function_callee) for s in symbols]
                     types_the_same = [possible_types[0] == t for t in possible_types[1:]]
-                    self.error_handler.error(f'Need the same types: {types_the_same}', types_the_same)
-
+                    self.error_handler.error(f'Need the same types: {possible_types}', types_the_same)
                     return possible_types[0]
         elif isinstance(expr, solnodes1.GetMember):
+            # similar to the Ident case, but we have to resolve the base type first to get the scope in which we will
+            # look up the member name
             base_type = self.get_expr_type(expr.obj_base)
             member = expr.name.text
 
+            # Solidity has bytes.concat and string.concat, when this happens the obj_base is bytes or string (subclass
+            # of Type, not Ident) and the member is concat. In that case the typekey used for the base type is different
+            # so that the builtin object with the concat function can be found
             find_direct_scope = isinstance(expr.obj_base, (soltypes.BytesType, soltypes.StringType))
             scopes = self.scopes_for_type(expr, base_type, use_encoded_type_key=not find_direct_scope)
 
             if allow_multiple:
                 for s in scopes:
+                    # search with the using filter here as qualified lookups can resolve to functions introduced by the
+                    # using statement
                     symbols = s.find(member, predicate=self.create_filter_using_scope(base_type))
                     if symbols:
                         return [self.symbol_to_ast2_type(s, function_callee=function_callee) for s in symbols]
+                return []
             else:
+                # TODO: do we need the using filter here as well?
                 for s in scopes:
                     symbols = s.find(member)
                     if symbols:
@@ -166,6 +252,8 @@ class TypeHelper:
                         all_same_types = [symbol_types[0] == s_t for s_t in symbol_types]
                         self.error_handler.error('Multiple symbols matched with different types', all_same_types)
                         return symbol_types[0]
+
+            # TODO: change this to error_handler.todo call
             return []
         elif isinstance(expr, solnodes1.Literal):
             value = expr.value
@@ -212,6 +300,7 @@ class TypeHelper:
                 # TODO: maybe need to revise to a different len calculation based on the docs
                 return soltypes.PreciseStringType(real_size=len(value))
             elif isinstance(value, tuple):
+                # this is for bracketed expressions, may or may not be a tuple expression
                 type_args = [self.map_as_type_arg(arg) for arg in value]
                 are_type_args = [isinstance(arg, soltypes.Type) for arg in type_args]
 
@@ -497,12 +586,21 @@ class TypeHelper:
                 return soltypes.TupleType(output_types)
 
     def map_as_type_arg(self, arg):
-        # grammar shenanigans again...
+        """
+        This function tries to force the given expr argument into a type if it looks like a type
+
+        The supplied grammar is ambiguous and sometimes parses types as expression e.g. byte[100] would end up as an
+        array access instead of a fixed length byte array. I've only really seen this happen for arguments of function
+        calls, i.e. in abi.decode hence the name of the function. Should probably see if this happens in other places in
+        the grammar too...
+        """
+
         # sometimes stuff like uint[] gets parsed as GetArrayValue(array_base=IntType(...), index=None))
         if isinstance(arg, soltypes.Type):
-            # simple case
+            # "base case", it's a Type already so it's definitely a type :)
             return self.map_type(arg)
         elif isinstance(arg, solnodes1.Ident):
+            # TODO: this can be improved: better lookup functions now exist compared to find
             # lookup the ident in the current scope and if it's a top level type, it's a type
             symbols = arg.scope.find(arg.text)
             if len(symbols) == 1:
@@ -514,6 +612,9 @@ class TypeHelper:
                 if self.builder.is_top_level(resolved_sym.value):
                     return self.symbol_to_ast2_type(resolved_sym)
         elif isinstance(arg, solnodes1.GetMember):
+            # Happens with qualified types, e.g. MyC.MyB
+            # FIXME: want to get rid of the refine_expr call here and use a pure AST1 solution as refine_expr has side
+            # effects on the arg
             possible_type = self.builder.refine_expr(arg)
             if isinstance(possible_type, soltypes.Type):
                 return possible_type
@@ -539,24 +640,37 @@ class TypeHelper:
         return arg
 
     def param_types(self, ps):
+        """ Returns the types of the given parameters """
         if not ps:
             return []
         return [self.map_type(p.var_type) for p in ps]
 
-    def symbol_to_ast2_type(self, symbol, function_callee=False) -> soltypes.Type:
+    def symbol_to_ast2_type(self, symbol, function_callee=False) -> solnodes2.Types:
+        """
+        Computes the AST2 type of the given symtab Symbol
+        """
+
         if isinstance(symbol, symtab.FileScope):
-            # apparently you can prefix with a file name now? e.g. MyErrors.ErrorX() where MyErrors is the imported 'MyErrors.sol' file and
-            # 'ErrorX' is a free function/error in that file
+            # apparently you can prefix with a file name now? e.g. MyErrors.ErrorX() where MyErrors is the imported
+            # 'MyErrors.sol' file and'ErrorX' is a free function/error in that file
             return self.get_contract_type(symbol)
         elif isinstance(symbol, symtab.UsingFunctionSymbol):
+            # need an unresolved symbol for this as called res_syms_single on a UsingFunctionSymbol gives the base
+            # ModFunErrEvt symbol
+
+            # cast for type checker, could be further refined as just FunctionDefinition
             value = cast(solnodes1.ModFunErrEvt, symbol.value)
             # X.abc(), remove the type of X to the start of the input types
-            return soltypes.FunctionType(self.param_types(value.parameters)[1:], self.param_types(value.returns), self.builder.modifiers(value))
+            return soltypes.FunctionType(self.param_types(value.parameters)[1:],
+                                         self.param_types(value.returns),
+                                         self.builder.modifiers(value))
 
+        # can resolve now
         symbol = symbol.res_syms_single()
+
         if isinstance(symbol, symtab.BuiltinObject):
             if v := symbol.value:
-                # if this builtin object was created to scope a type, e.g. an byte[] or int256, etc, just
+                # if this builtin object was created to scope a type, e.g. a byte[] or int256, etc, just
                 # resolve to the type directly instead of shadowing it as a builtin type
                 self.error_handler.assert_error(f'Builtin symbol must be type: {type(v)}',
                                                 isinstance(v, soltypes.Type))
@@ -1562,7 +1676,8 @@ class Builder:
             if is_function_callee:
                 # E.g. calls that look like T(x) (Casts)
                 # Type as expr has no base (direct reference)
-                return [Builder.FunctionCallee(None, expr.scope.find_type(expr, as_single=False))]
+                zs = expr.scope.find_type(expr, as_single=False)
+                return [Builder.FunctionCallee(None, zs)]
             elif is_argument:
                 # for arguments, types can sometimes be passed, e.g. abi.decode(x, bool)
                 return solnodes2.TypeLiteral(self.type_helper.map_type(expr))

@@ -1,4 +1,4 @@
-from typing import List
+from typing import TypeVar, Callable
 
 
 def _merge(*sequences):
@@ -27,15 +27,27 @@ def _merge(*sequences):
                 del seq[0]
 
 
-def c3_linearise(klass, get_supers=None):
+T = TypeVar('T')
+
+
+def c3_linearise(klass: T, get_supers: Callable[[T], list[T]] = None) -> list[T]:
+    """
+    A function to linearise the class hierarchy using the C3 linearisation algorithm.
+
+    :param klass: The class to linearise.
+    :param get_supers: A function to get the superclasses of a given class, must return a list of classes with the same
+                       type as the input
+    :return: A linearised list of classes following the C3 algorithm.
+    """
+
     if get_supers is not None:
-        superklasses = get_supers(klass)
+        superclasses = get_supers(klass)
     else:
-        superklasses = klass.get_supers()
+        superclasses = klass.get_supers()
 
     # In solidity this is reversed for some reason
-    superklasses = list(reversed(superklasses))
-    if not superklasses:
+    superclasses = list(reversed(superclasses))
+    if not superclasses:
         return [klass]
     else:
-        return [klass] + _merge(*[c3_linearise(k, get_supers) for k in superklasses], superklasses)
+        return [klass] + _merge(*[c3_linearise(k, get_supers) for k in superclasses], superclasses)

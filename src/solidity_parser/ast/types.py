@@ -3,13 +3,13 @@ from dataclasses import field
 from solidity_parser.ast.nodebase import NodeDataclass, Node
 
 
-def raiseNotPrintable():
-    raise ValueError('Not a real Solidity element')
-
-
 @NodeDataclass
 class Type(Node, ABC):
     scope: 'Scope' = field(default=None, init=False, repr=False, compare=False, hash=False)
+    """
+    Shim for symbol table scoping. The scope field is also defined in solnodes1 Node but since this base  class is 
+    defined in this file, it must be defined here as well
+    """
 
     @staticmethod
     def are_matching_types(target_param_types, actual_param_types):
@@ -25,15 +25,18 @@ class Type(Node, ABC):
         return self == actual_type
 
     def is_builtin(self) -> bool:
+        """ Check if the type is a Solidity builtin type, e.g. primitives, message object, abi object, etc """
         return False
 
     def is_array(self) -> bool:
         return False
 
     def is_byte_array(self) -> bool:
+        """ Check if the type is any type of byte array, e.g. bytes, bytes1, bytes32 """
         return (isinstance(self, ArrayType) and isinstance(self.base_type, ByteType)) or isinstance(self, BytesType)
 
     def is_byte_array_underlying(self) -> bool:
+        """ Check if this type is logically an array of bytes, e.g. bytes, bytes1, bytes32 and string """
         return self.is_byte_array() or self.is_string()
 
     def is_string(self) -> bool:
@@ -49,6 +52,7 @@ class Type(Node, ABC):
         return False
 
     def is_user_type(self) -> bool:
+        """ Check if the type is a user defined type, e.g. struct, enum, contract, etc """
         return False
 
     def is_address(self) -> bool:
@@ -58,27 +62,35 @@ class Type(Node, ABC):
         return False
 
     def is_byte(self) -> bool:
+        """ Check if the type is a single "byte" """
         return False
 
     def is_tuple(self) -> bool:
+        """ Check if the type is a tuple. These are synthetic types in Solidity but can be used in ASTs """
         return False
 
     def is_literal_type(self) -> bool:
+        """ Check if the type is a literal type, i.e. an inferred type from a constant number or string expression.
+            These are not real types in Solidity but are used in solc to aid type inference and optimization rules
+        """
         return False
 
     def is_void(self) -> bool:
+        """ Check if the type represents a void return type. This isn't part of Solidity directly but is represented
+            when a function doesn't define any return types
+        """
         return False
 
     def type_key(self):
-        # TYPEFIX
-        return self.code_str() #2
-        # return str(self) #1
+        """ Returns a unique key for the type that can be used to cache types in the symbol table """
+        return self.code_str()
 
     @abstractmethod
     def __str__(self):
         pass
 
     def code_str(self):
+        """ Returns the string representation of the type in Solidity syntax"""
         pass
 
 
@@ -99,8 +111,7 @@ class VoidType(Type):
 
 @NodeDataclass
 class ArrayType(Type):
-    """ Single dimension array type with no size attributes
-    """
+    """ Single dimension array type with no size attributes"""
     base_type: Type
 
     def __str__(self): return f"{self.base_type}[]"
@@ -259,8 +270,6 @@ def Bytes(size=None):
 class BytesType(ArrayType):
     """ bytes type only (similar but not equal to byte[]/bytes1[]) """
     base_type: Type = field(default_factory=lambda: Bytes(1), init=False)
-    # TYPEFIX
-    # base_type: Type = field(default_factory=ByteType, init=False) #1
 
     def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
         # don't have anything in AST1 to mark whether the literal is a hex or dec int so we do the
@@ -319,7 +328,7 @@ class PreciseIntType(IntType):
     def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}({self.real_bit_length})"
 
     def code_str(self):
-        return raiseNotPrintable()
+        return str(self)
 
 
 class BoolType(Type):
@@ -374,7 +383,7 @@ class PreciseStringType(StringType):
     def __str__(self): return f"string({self.real_size})"
 
     def code_str(self):
-        return raiseNotPrintable()
+        return str(self)
 
 
 @NodeDataclass
@@ -418,7 +427,11 @@ class MappingType(Type):
 
 @NodeDataclass
 class UserType(Type):
-    """ Type invoked using a valid Solidity reference, e.g. a class, contract, library, enum, etc name"""
+    """
+    Type invoked using a valid Solidity reference, e.g. a class, contract, library, enum, etc name.
+    This is an "unlinked" type, e.g. it has no underlying AST node backing it and has no corresponding context other
+    than the scope it was declared in. For AST2 use solnodes2.ResolvedUserType instead.
+    """
     name: 'Ident'
 
     def __str__(self): return str(self.name)
@@ -426,6 +439,10 @@ class UserType(Type):
 
 @NodeDataclass
 class BuiltinType(Type):
+    """
+    Type representing types of Solidity builtin objects, e.g. the type of the 'msg' or 'abi' objects in the expressions
+    `msg.sender` or `abi.decode(...)`
+    """
     name: str
 
     def __str__(self):
@@ -493,6 +510,10 @@ class FunctionType(Type):
 
 @NodeDataclass
 class TupleType(Type):
+    """
+    Type of a tuple of elements. This is not a real Solidity type but is used to represent the type of tuple expressions
+     (e.g. desugaring) in the AST
+    """
     ttypes: list[Type]
 
     def is_builtin(self) -> bool:
@@ -510,11 +531,14 @@ class TupleType(Type):
 
 @NodeDataclass
 class MetaTypeType(Type):
-    # type of a Solidity type, i.e. the type of type(X). This type has a few builtin fields such as min, max, name,
-    # creationCode, runtimeCode and interfaceId
+    """
+    Metatype Solidity type, i.e. type(X). This type has a few builtin fields such as min, max, name, creationCode,
+    runtimeCode and interfaceId
+    """
     ttype: Type
 
     def is_builtin(self) -> bool:
+        # TODO: are these all builtin types irregardless?
         return self.ttype.is_builtin()
 
     def code_str(self):

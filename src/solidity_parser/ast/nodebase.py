@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import TypeVar, NamedTuple, Optional, Generic
+from typing import TypeVar, NamedTuple, Optional, Generic, Callable, Generator
 from copy import deepcopy
 
 
@@ -51,6 +51,10 @@ __REASON_INIT__ = '__init__'
 
 
 def NodeDataclass(cls, *args, **kwargs):
+    """
+    AST node decorator to add an updatable and cachable element based hash to the dataclass
+    """
+
     # Add a hash based on the elements that make up this node. This is required because dataclass doesn't generate a
     # hash for us unless we pass in unsafe_hash=True on the decorator for every node subclass and even if we do that
     # it can't hash lists. Since get_all_children returns a generator of nodes (i.e. no lists), we can hash it as a
@@ -118,6 +122,7 @@ T = TypeVar('T')
 
 @NodeDataclass
 class NodeList(list[T]):
+    # Note: this class is marked as a NodeDataclass and has _set_dirty defined by the decorator. Ignore IDE warnings
     def __init__(self, parent: T, seq=()):
         super().__init__(seq)
         self.parent = parent
@@ -188,7 +193,15 @@ class NodeList(list[T]):
 
 @dataclass
 class Ref(Generic[T]):
+    """
+    A weak AST reference to another Node. This is needed when we want to associate a Node with another Node but don't
+    want it to be marked as a child of the other Node. This is useful if we want to create circular or back references
+    to help the client use the AST more naturally, e.g. ResolvedUserTypes have a reference to the actual TopLevelUnit
+    they reference.
+    """
+
     x: T
+    "The item being referenced"
 
     def __repr__(self):
         # this is needed for snapshot testing, GenericRepr uses repr to built the snapshot
@@ -210,6 +223,11 @@ class Ref(Generic[T]):
 
 @NodeDataclass
 class Node:
+    """
+    Base class for all AST nodes. Includes source location information, code comments and a parenting mechanism so that
+    clients can traverse all child and parent nodes.
+    """
+
     id_location: str = field(init=False, repr=False, hash=False, compare=False, default=None)
     "LineNumber:LinePosition, this is set dynamically in common.make"
     start_location: SourceLocation = field(init=False, repr=False, hash=False, compare=False, default=None)
@@ -245,7 +263,7 @@ class Node:
     def offset(self) -> int:
         return int(self.location.split(":")[1])
 
-    def get_children(self, predicate=None):
+    def get_children(self, predicate: Callable[['Node'], bool] = None) -> Generator['Node', None, None]:
         if not predicate:
             predicate = lambda _: True
         # get the dataclass fields instead of vars() here: two benefits:
@@ -266,7 +284,7 @@ class Node:
             elif isinstance(val, (list, tuple)):
                 yield from [v for v in val if isinstance(v, Node) and predicate(v)]
 
-    def get_all_children(self, predicate=None):
+    def get_all_children(self, predicate: Callable[['Node'], bool] = None) -> Generator['Node', None, None]:
         for direct_child in self.get_children():
             yield direct_child
             yield from direct_child.get_all_children(predicate)
