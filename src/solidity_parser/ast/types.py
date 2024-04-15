@@ -75,6 +75,10 @@ class Type(Node, ABC):
         """
         return False
 
+    def is_float(self) -> bool:
+        """ Check whether this type is a compile time float"""
+        return False
+
     def is_void(self) -> bool:
         """ Check if the type represents a void return type. This isn't part of Solidity directly but is represented
             when a function doesn't define any return types
@@ -92,6 +96,31 @@ class Type(Node, ABC):
     def code_str(self):
         """ Returns the string representation of the type in Solidity syntax"""
         pass
+
+
+@NodeDataclass
+class FloatType(Type):
+    """
+    This is not a real type in valid Solidity code but the Solidity compiler allows compile time expression evaluation
+    of floats
+    """
+
+    value: float
+    """ Since the value is always known at compile time, we have it here """
+
+    def is_float(self) -> bool:
+        return True
+
+    def __str__(self):
+        return 'float'
+
+    def code_str(self):
+        return str(self)
+
+    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
+        if super().can_implicitly_cast_from(actual_type):
+            return True
+        return actual_type.is_float()
 
 
 @NodeDataclass

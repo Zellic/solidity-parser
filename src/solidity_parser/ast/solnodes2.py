@@ -103,6 +103,7 @@ class SuperType(soltypes.Type):
     def __str__(self):
         return f'super({str(self.declarer.x.name)})'
 
+
 @nodebase.NodeDataclass
 class VisibilityModifier(Modifier):
     kind: solnodes1.VisibilityModifierKind
@@ -1318,4 +1319,4 @@ Types: TypeAlias = (soltypes.VariableLengthArrayType | soltypes.VoidType | solty
                     | soltypes.AnyType | soltypes.MappingType | soltypes.StringType | soltypes.AddressType
                     | soltypes.FixedLengthArrayType | soltypes.ByteType | soltypes.MetaTypeType
                     | soltypes.TupleType | soltypes.PreciseIntType | soltypes.PreciseIntType
-                    | soltypes.BuiltinType | ResolvedUserType | SuperType)
+                    | soltypes.BuiltinType | ResolvedUserType | SuperType | soltypes.FloatType)

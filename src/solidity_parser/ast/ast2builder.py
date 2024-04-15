@@ -14,11 +14,6 @@ from solidity_parser.ast.mro_helper import c3_linearise
 from solidity_parser import errors
 
 
-# This is not a real type, hence why it's not defined in the AST2 nodes file, but the solidity
-# compiler allows for
-@dataclass
-class FloatType(soltypes.Type):
-    value: float
 
 
 T = typing.TypeVar('T')
@@ -269,7 +264,7 @@ class TypeHelper:
                         # This can happen because compiletime floats are allowed in solidity for expressions
                         # that are evaluated at compiletime. E.g. instead of 0.01 ether which would give full_value
                         # an integer value, we could have 0.01 * 1 ether as a binary expr
-                        return FloatType(full_value)
+                        return soltypes.FloatType(full_value)
                     full_value = int(full_value)
                 else:
                     full_value = value
