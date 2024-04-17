@@ -6,9 +6,9 @@ VERSION_PATTERN = re.compile(r"(\d+)\.(\d+)(\.\d+)?", re.VERBOSE)
 
 @dataclass
 class Version:
-    major: int
-    minor: int
-    patch: int
+    major: int  # e.g. 0
+    minor: int  # e.g. 8
+    patch: int  # e.g. 20
 
     def is_enforced_in(self, testing_version: 'Version') -> bool:
         """Tests whether a feature that was introduced in the given testing_version is enforced in the current version
@@ -22,6 +22,10 @@ class Version:
 
 
 def extract_version_from_src_input(txt: str) -> Version:
+    """
+    Extracts the solidity version from the input source code
+    :param txt: the entire source file
+    """
     ind = txt.find('pragma solidity')
     if ind == -1:
         raise ValueError('No \'pragma solidity\' found in file')
@@ -33,11 +37,13 @@ def extract_version_from_src_input(txt: str) -> Version:
 
 
 def parse_version(ver_text: str) -> Version:
+    """
+    Parses a solidity version string into a Version object
+    :param ver_text: the version string only, e.g. "0.6.12"
+    """
     results = VERSION_PATTERN.search(ver_text)
     if not results:
         raise ValueError(f'No version match in {ver_text}')
-    # elif len(results) > 1:
-    #     raise ValueError(f'{len(results)} version matches in {ver_text}')
 
     groups = results.groups()
 

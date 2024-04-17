@@ -6,7 +6,7 @@ from solidity_parser.ast import solnodes, types as soltypes, nodebase
 from solidity_parser.filesys import LoadedSource, VirtualFileSystem
 
 from solidity_parser.ast.mro_helper import c3_linearise
-import logging
+import logging, pathlib
 
 import solidity_parser.util.version_util as version_util
 
@@ -1010,6 +1010,10 @@ class Builder2:
             self.unit_scope = unit_scope
 
     def __init__(self, vfs: VirtualFileSystem, parser_version: version_util.Version = None):
+        if parser_version is None:
+            # may still be None
+            parser_version = vfs.compiler_version
+
         self.root_scope = RootScope(parser_version)
         self.vfs = vfs
         self.parser_version = parser_version
@@ -1025,7 +1029,10 @@ class Builder2:
 
         return found_fs
 
-    def process_or_find_from_base_dir(self, relative_source_unit_name: str):
+    def process_or_find_from_base_dir(self, relative_source_unit_name: str | pathlib.Path):
+        if isinstance(relative_source_unit_name, pathlib.Path):
+            relative_source_unit_name = str(relative_source_unit_name)
+
         # sanitise inputs if windows paths are given
         relative_source_unit_name = relative_source_unit_name.replace('\\', '/')
 
