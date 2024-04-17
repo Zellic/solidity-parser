@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.16] - 2024-04-16
+ - Created nodebase.py for all Node base type for AST1 and AST2 nodes
+   - NodeDataclass/NodeList parenting mechanism added to AST1
+ - Created types.py for shared AST1 and AST2 types
+
 ### [0.1.15] - 2024-03-20
  - Cleaned up AST2 ErrorHandler
    - Removed code_errors from AST2Builder, moved to ErrorHandler.caught_errors

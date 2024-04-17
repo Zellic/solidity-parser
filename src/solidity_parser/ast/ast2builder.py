@@ -320,10 +320,12 @@ class TypeHelper:
                         # Bracketed expressions, not tuples, e.g. (x).y() , (x) isn't a tuple so unpack here
                         return self.get_expr_type(value[0])
                 else:
+                    # multiple expressions, definitely a tuple
                     return soltypes.TupleType([self.get_expr_type(e) for e in value])
             else:
                 return self.error_handler.todo(value)
         elif isinstance(expr, solnodes1.GetArrayValue):
+            # array index lookups can be either a mapping or an array lookup
             base_type = self.get_expr_type(expr.array_base)
             if base_type.is_mapping():
                 return cast(soltypes.MappingType, base_type).dst
