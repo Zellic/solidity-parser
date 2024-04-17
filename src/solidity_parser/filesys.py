@@ -14,6 +14,8 @@ from functools import partial
 
 @dataclass
 class Source:
+    """ Structure of a source unit defined in the standard JSON input """
+
     # keccak256: Optional[str]
     urls: Optional[List[str]]
     content: str
@@ -21,6 +23,11 @@ class Source:
 
 @dataclass
 class StandardJsonInput:
+    """
+    Solidity standard JSON input see:
+    https://docs.soliditylang.org/en/v0.8.25/using-the-compiler.html#compiler-api
+    """
+
     # language: str # 'Solidity'
     sources: Dict[str, Source]  # source unit name -> source
     # settings, not required for now
@@ -28,14 +35,22 @@ class StandardJsonInput:
 
 @dataclass
 class LoadedSource:
+    """
+    Source unit loaded inside the virtual filesystem
+    """
+
     source_unit_name: str
+    """ The computed source unit name, see the solidity docs for how this is computed """
     contents: str
+    """ Source code """
     origin: Optional[Path]
+    """ Path to the source unit on disk, if it was loaded from disk """
     ast_creator_callback: Optional[Callable[[str], List[solnodes.SourceUnit]]]
+    """ Optional function for changing the AST creation method, e.g. for testing and forcing the parser version """
 
     @property
     def ast(self) -> List[solnodes.SourceUnit]:
-        # Mechanism for creating the AST on demand and caching it
+        """ Property for getting the AST from the source code lazily """
         if not hasattr(self, '_ast'):
             logging.getLogger('VFS').debug(f'Parsing {self.source_unit_name}')
             creator = self.ast_creator_callback
@@ -44,10 +59,28 @@ class LoadedSource:
 
 
 ImportMapping = namedtuple('ImportMapping', ['context', 'prefix', 'target'])
+""" An import remapping for changing the source unit name before the import is resolved """
 
 
 class VirtualFileSystem:
-    def __init__(self, base_path: str, cwd: str = None, include_paths: List[str] = None, compiler_version: Version = None):
+    """
+    This is the "virtual file system" defined in the Solidity docs and implemented in solc. The idea is to abstract
+    away the specifics of how the sources are stored, such as on disk or in memory and the paths used in the source
+    files to resolve imports. The code is not ideal but it emulates the behaviour of the c++ code of solc.
+
+    https://docs.soliditylang.org/en/v0.8.17/path-resolution.html
+    """
+
+    def __init__(self, base_path: str | Path,
+                 cwd: str | Path = None,
+                 include_paths: List[str | Path] = None,
+                 compiler_version: Version = None):
+        """
+        :param base_path: Project base path (e.g. the directory containing all project files)
+        :param cwd: Current working directory(e.g. invocation directory of solc)
+        :param include_paths: List of paths of libraries and source folders
+        :param compiler_version: Version of the parser to use, if not specified, the version in source files will be used
+        """
         if cwd is None:
             cwd = os.getcwd()
         self.cwd = cwd
