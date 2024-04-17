@@ -5,7 +5,7 @@ from .helper import register_solnodes2_formatter
 
 from solidity_parser.filesys import VirtualFileSystem
 from solidity_parser.ast.symtab import Builder2 as SymtabBuilder
-from solidity_parser.ast import solnodes as solnodes1, solnodes2, helper
+from solidity_parser.ast import solnodes as solnodes1, solnodes2, helper, types as soltypes, nodebase
 from solidity_parser.ast.ast2builder import Builder as AST2Builder, TypeHelper, ErrorHandler
 
 from snapshottest import TestCase as SnapshotTestCase
@@ -107,7 +107,7 @@ class TestSolidityAnalyzer(TestCase):
 
     def test_get_expr_type_ast1_type(self):
         with patch.object(self.type_helper, 'map_type') as mock_map_type:
-            expr = Mock(spec=solnodes1.Type)
+            expr = Mock(spec=soltypes.Type)
 
             self.type_helper.get_expr_type(expr)
 
@@ -131,7 +131,7 @@ class TestSolidityAnalyzer(TestCase):
 
         with patch.object(self.type_helper, 'get_current_contract_type') as mock_get_current_contract_type:
             resolved_type_mock = Mock(spec=solnodes2.ResolvedUserType)
-            resolved_type_mock.value = solnodes2.Ref(sentinel.current_contract)
+            resolved_type_mock.value = nodebase.Ref(sentinel.current_contract)
             mock_get_current_contract_type.return_value = resolved_type_mock
 
             result = self.type_helper.get_expr_type(expr)

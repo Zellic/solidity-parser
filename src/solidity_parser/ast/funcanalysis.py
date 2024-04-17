@@ -3,8 +3,9 @@ from typing import List, Union
 from enum import Enum
 
 from solidity_parser.ast.solnodes2 import (FunctionCall, DirectCall, ResolvedUserType, TopLevelUnit, FunctionDefinition,
-                                           Type, SuperType, Node, SuperObject, SelfObject, UnprocessedCode, Stmt,
+                                           SuperType, AST2Node, SuperObject, SelfObject, UnprocessedCode, Stmt,
                                            Assembly)
+from solidity_parser.ast.types import Type
 from solidity_parser.ast.mro_helper import c3_linearise
 from solidity_parser.ast.solnodes import VisibilityModifierKind, MutabilityModifierKind
 

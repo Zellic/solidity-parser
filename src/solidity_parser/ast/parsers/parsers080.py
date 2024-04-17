@@ -3,7 +3,7 @@ from solidity_parser.ast.parsers.common import ParserBase, get_subparsers_from_m
 from solidity_parser.ast.parsers.errors import assert_invalid_path, unsupported_feature
 import solidity_parser.ast.parsers.parsers060 as parsers060
 from solidity_parser.grammar.v080.SolidityParser import SolidityParser
-from solidity_parser.ast import solnodes
+from solidity_parser.ast import solnodes, types as soltypes
 
 
 class Parser080(ParserBase):
@@ -140,7 +140,7 @@ def _library_definition(parser, library_definition: SolidityParser.LibraryDefini
 def _inheritance_specifier(parser, inheritance_specifier: SolidityParser.InheritanceSpecifierContext):
     type_name = parser.make(inheritance_specifier.identifierPath())
     return solnodes.InheritSpecifier(
-        parser.wrap_node(inheritance_specifier.identifierPath(), solnodes.UserType(type_name)),
+        parser.wrap_node(inheritance_specifier.identifierPath(), soltypes.UserType(type_name)),
         parser.make(inheritance_specifier.callArgumentList(), default=[])
     )
 
@@ -342,7 +342,7 @@ def _error_parameter(parser, error_parameter: SolidityParser.ErrorParameterConte
 
 def _using_directive(parser, using_directive: SolidityParser.UsingDirectiveContext):
     if using_directive.Mul():
-        override_type = solnodes.AnyType()
+        override_type = soltypes.AnyType()
     else:
         override_type = parser.make(using_directive.typeName())
 
@@ -356,7 +356,7 @@ def _override_specifier(parser, override_specific: SolidityParser.OverrideSpecif
     overrides = parser.make_all_rules(override_specific.identifierPath())
 
     return solnodes.OverrideSpecifier(
-        map_helper(lambda override: parser.copy_source_data(override, solnodes.UserType(override)), overrides)
+        map_helper(lambda override: parser.copy_source_data(override, soltypes.UserType(override)), overrides)
     )
 
 
@@ -459,15 +459,6 @@ def _expr_stmt(parser, stmt: SolidityParser.ExpressionStatementContext):
     )
 
 
-def _try(parser, stmt: SolidityParser.TryStatementContext):
-    return solnodes.Try(
-        parser.make(stmt.expression()),
-        parser.make(stmt.parameterList(), default=[]),
-        parser.make(stmt.block()),
-        parser.make_all_rules(stmt.catchClause())
-    )
-
-
 def _catch_clause(parser, catch_clause: SolidityParser.CatchClauseContext):
     return solnodes.Catch(
         parser.make(catch_clause.identifier()),
@@ -545,25 +536,25 @@ def _meta_type(parser, meta_type: SolidityParser.MetaTypeContext):
 def _type_name(parser, type_name: SolidityParser.TypeNameContext):
     if type_name.typeName():
         if type_name.expression():
-            return solnodes.VariableLengthArrayType(
+            return soltypes.VariableLengthArrayType(
                 parser.make(type_name.typeName()),
                 parser.make(type_name.expression())
             )
         else:
-            return solnodes.ArrayType(
+            return soltypes.ArrayType(
                 parser.make(type_name.typeName())
             )
     elif type_name.identifierPath():
-        return solnodes.UserType(parser.make_first(type_name))
+        return soltypes.UserType(parser.make_first(type_name))
     else:
         return parser.make_first(type_name)
 
 
 def _function_type_name(parser, function_type: SolidityParser.FunctionTypeNameContext):
-    return solnodes.FunctionType(
-        parser.make(function_type.arguments),
-        parser.make_all_rules(function_type.visibility()) + parser.make_all_rules(function_type.stateMutability()),
-        parser.make(function_type.returnParameters)
+    return soltypes.FunctionType(
+        parsers060.params_to_types(parser.make(function_type.arguments, default=[])),
+        parsers060.params_to_types(parser.make(function_type.returnParameters, default=[])),
+        parser.make_all_rules(function_type.visibility()) + parser.make_all_rules(function_type.stateMutability())
     )
 
 
@@ -571,8 +562,8 @@ def _mapping_type(parser, mapping: SolidityParser.MappingTypeContext):
     key = parser.make(mapping.key)
     # Previous grammars had the key as a type, 0.8 grammar defined is as a raw ident path, so wrap it here
     if isinstance(key, solnodes.Ident):
-        key = parser.wrap_node(mapping.key, solnodes.UserType(key))
-    return solnodes.MappingType(
+        key = parser.wrap_node(mapping.key, soltypes.UserType(key))
+    return soltypes.MappingType(
         key,
         parser.make(mapping.value)
     )
@@ -693,25 +684,25 @@ def _unicode_string_literal(parser, literal: SolidityParser.UnicodeStringLiteral
 def _elementary_type_name(parser, name: SolidityParser.ElementaryTypeNameContext):
     if name.Address():
         payable = name.Payable() is not None
-        return solnodes.AddressType(payable)
+        return soltypes.AddressType(payable)
     elif name.Bool():
-        return solnodes.BoolType()
+        return soltypes.BoolType()
     elif name.String():
-        return solnodes.StringType()
+        return soltypes.StringType()
     elif name.Bytes():
-        return solnodes.BytesType()
+        return soltypes.BytesType()
     elif name.SignedIntegerType():
         size_str = name.SignedIntegerType().getText()[3:]
         size = int(size_str) if size_str else 256
-        return solnodes.IntType(True, size)
+        return soltypes.IntType(True, size)
     elif name.UnsignedIntegerType():
         size_str = name.UnsignedIntegerType().getText()[4:]
         size = int(size_str) if size_str else 256
-        return solnodes.IntType(False, size)
+        return soltypes.IntType(False, size)
     elif name.FixedBytes():
         size_str = name.FixedBytes().getText()[5:]
         size = int(size_str)
-        return solnodes.FixedLengthArrayType(solnodes.ByteType(), size)
+        return soltypes.FixedLengthArrayType(soltypes.ByteType(), size)
     elif name.Fixed() or name.Ufixed():
         return unsupported_feature('fixed/unfixed type')
     else:
