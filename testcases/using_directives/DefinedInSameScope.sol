@@ -13,6 +13,7 @@ library MyLib {
     }
 
     function testIt(MyStruct memory s, MyStruct memory s2) public returns (uint) {
+        // needs to find the using scope instead of the base scope for `struct MyStruct` to resolve `add`
         return s.add(s2.x);
     }
 }

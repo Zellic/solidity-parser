@@ -1,16 +1,13 @@
 from abc import ABC
-from dataclasses import dataclass, field
+from dataclasses import field
 from enum import Enum
-from typing import List, Any, Union, TypeVar, Generic, Optional
-from copy import deepcopy
+from typing import Any, TypeVar, Union as U, TypeAlias
 from collections import deque
 
-from solidity_parser.ast import solnodes as solnodes1
-
+from solidity_parser.ast import solnodes as solnodes1, types as soltypes, nodebase
 from solidity_parser.ast.mro_helper import c3_linearise
 
 from textwrap import indent
-import inspect
 
 T = TypeVar('T')
 
@@ -29,214 +26,7 @@ def param_def_str(ps):
     return '(' + ', '.join([param_out(p) for p in ps]) + ')'
 
 
-def UIntType(size=256):
-    return IntType(False, size)
-
-
-def Bytes(size=None):
-    if size is not None:
-        if isinstance(size, int):
-            return FixedLengthArrayType(ByteType(), size)
-        elif isinstance(size, Expr):
-            return VariableLengthArrayType(ByteType(), size)
-        else:
-            raise NotImplementedError(f'{type(size)}')
-    else:
-        return BytesType()
-
-
-def is_byte_array(ttype: 'Type') -> bool:
-    return (isinstance(ttype, ArrayType) and isinstance(ttype.base_type, ByteType)) or isinstance(ttype, BytesType)
-
-
-__REASON_CHILD__ = '__child__'
-__FIELD_PARENT__ = 'parent'
-__REASON_INIT__ = '__init__'
-
-
-def NodeDataclass(cls, *args, **kwargs):
-    # Add a hash based on the elements that make up this node. This is required because dataclass doesn't generate a
-    # hash for us unless we pass in unsafe_hash=True on the decorator for every node subclass and even if we do that
-    # it can't hash lists. Since get_all_children returns a generator of nodes (i.e. no lists), we can hash it as a
-    # tuple, i.e. a "snapshot hash"
-    def compute_node_hash(self):
-        return hash(tuple(self.get_all_children()))
-
-    def __hash__(self):
-        if not self._cached_hash:
-            # this hash can be computed many times if the dataclass field that made this instance dirty is not a real
-            # child, i.e. doesn't get returned in get_children() because its not a Node(e.g. the field is a List[str])
-            # For now just allow this because we'd have to recurse on the object to see if it really makes a difference
-            # to the hash, and it's not worth it
-            self._cached_hash = self.compute_node_hash()
-        return self._cached_hash
-
-    actual_dataclass = dataclass(*[cls, *args], **kwargs)
-
-    actual_init = actual_dataclass.__init__
-    actual_setattr = actual_dataclass.__setattr__
-
-    def __setattr__(self, name, value):
-        # wrap lists as they are mutable in our own list type that can notify when elements are changed
-        # since NodeList is also a list, this will take the existing nodelist and wrap it
-        if isinstance(value, list):
-            value = NodeList(self, value)
-
-        actual_setattr(self, name, value)
-        # if this attribute was declared as a dataclass field, the state of this node is dirty as the
-        # contents changed
-        if name in actual_dataclass.__dataclass_fields__:
-            self._set_dirty(name, value)
-
-    def _set_dirty(self, name, value):
-        # in the case of lists, name can be an int or slice
-
-        # a node is considered hash dirty if its direct children or grandchildren attributes are changed
-        #  - if the parent of a node is changed, the node does not become hash dirty
-        # __FIELD_PARENT__ is triggered when the parent is changed
-        # __REASON_CHILD__ is not a real attribute, it's triggered to alert the parent of this node that the child was
-        #                  made hash dirty(e.g. because of a grandchild becoming hash dirty)
-        # final case is for real attributes in this node that were just changed
-        if name != __FIELD_PARENT__ or name == __REASON_CHILD__:
-            # print("HashDirty: " + str(id(self))[9:] +"  because of " + str(name))
-            self._cached_hash = None
-        if self.parent:
-            # parent is recursively dirty
-            self.parent._set_dirty(__REASON_CHILD__, self)
-
-    def __init__(self, *args, **kwargs):
-        actual_init(self, *args, **kwargs)
-        self._cached_hash = None
-
-    actual_dataclass.__hash__ = __hash__
-    actual_dataclass.compute_node_hash = compute_node_hash
-    actual_dataclass.__setattr__ = __setattr__
-    actual_dataclass.__init__ = __init__
-    actual_dataclass._set_dirty = _set_dirty
-
-    return actual_dataclass
-
-
-@NodeDataclass
-class NodeList(list):
-    def __init__(self, parent: 'Node', seq=()):
-        super().__init__(seq)
-        self.parent = parent
-
-    def __str__(self):
-        return list.__str__(self)
-
-    def __repr__(self):
-        return list.__repr__(self)
-
-    def __setitem__(self, key, value):
-        # seems to get called with slices too, that's why __setslice__ is stubbed with TODO
-        super().__setitem__(key, value)
-        self._set_dirty(key, value)
-
-    def __delitem__(self, key):
-        super().__delitem__(key)
-        self._set_dirty(key, None)
-
-    def __setslice__(self, i, j, sequence):
-        raise NotImplemented
-
-    def __eq__(self, other):
-        if isinstance(other, list):
-            return super().__eq__(other)
-        raise NotImplemented
-
-    def append(self, __object):
-        ret = super().append(__object)
-        self._set_dirty('__append__', __object)
-        return ret
-
-    def clear(self):
-        ret = super().clear()
-        self._set_dirty('__clear__', None)
-        return ret
-
-    def extend(self, __iterable):
-        ret = super().extend(__iterable)
-        self._set_dirty('__extend__', None)
-        return ret
-
-    def insert(self, __index, __object):
-        ret = super().insert(__index, __object)
-        self._set_dirty('__insert__', __object)
-        return ret
-
-    def pop(self, __index):
-        ret = super().pop(__index)
-        self._set_dirty('__pop__', None)
-        return ret
-
-    def remove(self, __value):
-        ret = super().remove(__value)
-        self._set_dirty('__remove__', None)
-        return ret
-
-    def reverse(self):
-        ret = super().reverse()
-        self._set_dirty('__reverse__', None)
-        return ret
-
-    def sort(self, *args, **kwargs):
-        ret = super().sort(*args, **kwargs)
-        self._set_dirty('__sort__', None)
-        return ret
-
-
-@dataclass
-class Ref(Generic[T]):
-    x: T
-
-    def __repr__(self):
-        # this is needed for snapshot testing, GenericRepr uses repr to built the snapshot
-        ref_target = '?'
-        if hasattr(self.x, 'descriptor'):
-            ref_target = self.x.descriptor()
-        else:
-            par = self.x.parent
-            if hasattr(self.x, 'name'):
-                par_d = ''
-                if hasattr(par, 'descriptor'):
-                    par_d = par.descriptor() + '.'
-                elif hasattr(par, 'name'):
-                    par_d = par.name + '.'
-                ref_target = f'{par_d}{self.x.name}'
-
-        return f'<REF({ref_target})>'
-
-
-@NodeDataclass
-class Node:
-    parent: Optional['Node'] = field(init=False, repr=False, hash=False, compare=False, default=None)
-    comments: Optional[List[str]] = field(init=False, repr=False, hash=False, compare=False, default_factory=list)
-
-    def get_children(self, predicate=None):
-        if not predicate:
-            predicate = lambda _: True
-        # get the dataclass fields instead of vars() here: two benefits:
-        #  we loop fewer times as there are less things
-        #  we include only the explicit fields of each dataclass so won't pick up accidental recursions
-        for k in self.__dataclass_fields__.keys():
-            val = getattr(self, k)
-            # Don't include parent or Refs
-            #  or NodeLists (done implicitly by generator)
-            if val is self.parent:
-                continue
-
-            if isinstance(val, Node) and predicate(val):
-                yield val
-            elif isinstance(val, (list, tuple)):
-                yield from [v for v in val if isinstance(v, Node) and predicate(v)]
-
-    def get_all_children(self, predicate=None):
-        for direct_child in self.get_children():
-            yield direct_child
-            yield from direct_child.get_all_children(predicate)
-
+class AST2Node(nodebase.Node):
     def get_top_level_unit(self) -> 'TopLevelUnit':
         parent = self
         while parent:
@@ -245,132 +35,76 @@ class Node:
             parent = parent.parent
         raise ValueError('Node has no top level unit')
 
-    def __post_init__(self):
-        self._set_child_parents()
-        # self.created_in = inspect.stack()
 
-    def _set_child_parents(self):
-        for child in self.get_children():
-            child.parent = self
-
-    def __deepcopy__(self, memodict):
-        new_fields = {}
-        for name, dfield in self.__dataclass_fields__.items():
-            if name == 'parent':
-                # don't climb up the tree/copy the parent
-                continue
-            # just confirm it needs to be passed to the constructor
-            if not dfield.init:
-                continue
-
-            current_value = getattr(self, name)
-            if isinstance(current_value, (Node, list, tuple)) and not isinstance(current_value, Ref):
-                new_fields[name] = deepcopy(current_value, memodict)
-            else:
-                # copy stuff like str, int
-                new_fields[name] = current_value
-        klass = self.__class__
-        # create the copy by instantiating it like a normal Node, i.e. the parent of the children are set here
-        new_obj = klass(**new_fields)
-        return new_obj
-
-    def code_str(self):
-        raise NotImplementedError()
-
-
-@NodeDataclass
-class Type(Node, ABC):
-    @staticmethod
-    def are_matching_types(target_param_types, actual_param_types):
-        if not len(target_param_types) == len(actual_param_types):
-            return False
-
-        # check if the actual args types are passable to the target types
-        return all([a.can_implicitly_cast_from(b) for a,b in zip(target_param_types, actual_param_types)])
-
-    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
-        # Check whether actual_type can be converted to this type implicitly
-        # Default case is if the types are equal
-        return self == actual_type
-
-    def is_builtin(self) -> bool:
-        return False
-
-    def is_array(self) -> bool:
-        return False
-
-    def is_byte_array(self) -> bool:
-        return is_byte_array(self)
-
-    def is_byte_array_underlying(self) -> bool:
-        return self.is_byte_array() or self.is_string()
-
-    def is_string(self) -> bool:
-        return False
-
-    def is_function(self) -> bool:
-        return False
-
-    def is_int(self) -> bool:
-        return False
-
-    def is_bool(self) -> bool:
-        return False
-
-    def is_user_type(self) -> bool:
-        return False
-
-    def is_address(self) -> bool:
-        return False
-
-    def is_mapping(self) -> bool:
-        return False
-
-    def is_byte(self) -> bool:
-        return False
-
-    def is_tuple(self) -> bool:
-        return False
-
-    def is_literal_type(self) -> bool:
-        return False
-
-    def is_void(self) -> bool:
-        return False
-
-    def type_key(self):
-        return self.code_str()
-
-
-@NodeDataclass
-class VoidType(Type):
-    def is_void(self) -> bool:
-        return True
-
-    def is_builtin(self) -> bool:
-        return True
-
-    def code_str(self):
-        return raiseNotPrintable()
-
-
-@NodeDataclass
-class Stmt(Node, ABC):
+class Stmt(AST2Node, ABC):
     pass
 
 
-@NodeDataclass
-class Expr(Node, ABC):
-    def type_of(self) -> Type:
+class Expr(AST2Node, ABC):
+    def type_of(self) -> soltypes.Type:
         raise NotImplementedError(f'{type(self)}')
 
 
-@NodeDataclass
-class Modifier(Node, ABC):
+class Modifier(AST2Node, ABC):
     pass
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
+class ResolvedUserType(soltypes.Type):
+    scope: 'Scope' = field(default=None, init=False, repr=False, compare=False, hash=False)
+    # Ref so that we don't set the parent of the TopLevelUnit to this type instance
+    value: nodebase.Ref['TopLevelUnit'] = field(repr=False)
+
+    # FIXME: The name of the unit isn't showing in pretty prints for some reason, just outputs ResolvedUserType()
+
+    def __str__(self):
+        return f'ResolvedUserType({self.value.x.name.text})'
+
+    def __repr__(self):
+        return self.__str__()
+
+    def is_builtin(self) -> bool:
+        return False
+
+    def is_user_type(self) -> bool:
+        return True
+
+    def can_implicitly_cast_from(self, actual_type: soltypes.Type) -> bool:
+        if super().can_implicitly_cast_from(actual_type):
+            return True
+
+        if actual_type.is_user_type():
+            return actual_type.value.x.is_subttype_of(self.value.x)
+
+        return False
+
+    def get_types_for_declared_type(self) -> list['TopLevelUnit']:
+        return [self.value.x] + self.value.x.get_subtypes()
+
+    def code_str(self):
+        return self.value.x.name.text
+
+
+@nodebase.NodeDataclass
+class SuperType(soltypes.Type):
+
+    declarer: nodebase.Ref[U['ContractDefinition', 'InterfaceDefinition']] = field(repr=False)
+
+    def is_builtin(self) -> bool:
+        return False
+
+    def get_types_for_declared_type(self) -> list['TopLevelUnit']:
+        # FIXME: return bases
+        return self.declarer.x.get_supers()
+
+    def code_str(self):
+        return str(self)
+
+    def __str__(self):
+        return f'super({str(self.declarer.x.name)})'
+
+
+@nodebase.NodeDataclass
 class VisibilityModifier(Modifier):
     kind: solnodes1.VisibilityModifierKind
 
@@ -378,7 +112,7 @@ class VisibilityModifier(Modifier):
         return str(self.kind.value)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class MutabilityModifier(Modifier):
     kind: solnodes1.MutabilityModifierKind
 
@@ -386,34 +120,34 @@ class MutabilityModifier(Modifier):
         return str(self.kind.value)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class OverrideSpecifier(Modifier):
-    bases: List['ResolvedUserType']
+    bases: list[ResolvedUserType]
 
     def code_str(self):
         return f'override' + f'({", ".join(b.code_str() for b in self.bases)})' if self.bases else ''
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class SuperConstructorInvocationModifier(Modifier):
-    base_ttype: 'ResolvedUserType'
-    inputs: List[Expr]
+    base_ttype: ResolvedUserType
+    inputs: list[Expr]
 
     def code_str(self):
         return f'{self.base_ttype.code_str()}({", ".join(e.code_str() for e in self.inputs)})'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class FunctionInvocationModifier(Modifier):
-    modifier: Ref['ModifierDefinition']
-    inputs: List[Expr]
+    modifier: nodebase.Ref['ModifierDefinition']
+    inputs: list[Expr]
 
     def code_str(self):
         return f'{self.modifier.x.name.code_str()}({", ".join(e.code_str() for e in self.inputs)})'
 
 
-@NodeDataclass
-class Ident(Node):
+@nodebase.NodeDataclass
+class Ident(AST2Node):
     text: str
 
     def code_str(self):
@@ -423,8 +157,8 @@ class Ident(Node):
         return self.text
 
 
-@NodeDataclass
-class NamedArgument(Node):
+@nodebase.NodeDataclass
+class NamedArgument(AST2Node):
     name: Ident
     expr: Expr
 
@@ -432,8 +166,8 @@ class NamedArgument(Node):
         return f'{self.name.code_str()}: {self.expr.code_str()}'
 
 
-@NodeDataclass
-class TopLevelUnit(Node, ABC):
+@nodebase.NodeDataclass
+class TopLevelUnit(AST2Node, ABC):
     source_unit_name: str
     name: Ident
 
@@ -452,14 +186,14 @@ class TopLevelUnit(Node, ABC):
         return False
 
     def as_type(self):
-        return ResolvedUserType(Ref(self))
+        return ResolvedUserType(nodebase.Ref(self))
 
-    def get_supers(self) -> List[Union['ContractDefinition', 'InterfaceDefinition']]:
+    def get_supers(self) -> list[U['ContractDefinition', 'InterfaceDefinition']]:
         # c.inherits are the InheritSpecifics
         # s.name is the ResolvedUserType => .value.x is the Contract/InterfaceDefinition
         return [s.name.value.x for s in self.inherits] if hasattr(self, 'inherits') else []
 
-    def get_subtypes(self) -> List[Union['ContractDefinition', 'InterfaceDefinition']]:
+    def get_subtypes(self) -> list[U['ContractDefinition', 'InterfaceDefinition']]:
         return [s.x for s in self._subtypes] if hasattr(self, '_subtypes') else []
 
     def is_enum(self) -> bool:
@@ -477,9 +211,6 @@ class TopLevelUnit(Node, ABC):
     def is_udvt(self) -> bool:
         return isinstance(self, UserDefinedValueTypeDefinition)
 
-    def is_enum(self) -> bool:
-        return isinstance(self, EnumDefinition)
-
     def find_named_parts(self, name: str, explore_mro: bool, matching_types):
         results = []
         for p in self.parts:
@@ -495,510 +226,126 @@ class TopLevelUnit(Node, ABC):
         return results
 
 
-@NodeDataclass
-class ArrayType(Type):
-    """ Single dimension array type with no size attributes
-    This is most often used for 'bytes' which is a array of bytes of unknown/variable length
-    """
-    base_type: Type
-
-    def __str__(self): return f"{self.base_type}[]"
-
-    def is_builtin(self) -> bool:
-        # e.g. byte[] is builtin, string[] is builtin, MyContract[] is not
-        return self.base_type.is_builtin()
-
-    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
-        if super().can_implicitly_cast_from(actual_type):
-            return True
-        if not self.has_size() and actual_type.is_array() and actual_type.has_size():
-            # i.e. FixedLengthArrayType/VariableLengthArrayType can cast to the base ArrayType (but not each other)
-            # e.g. byte[4] casts to byte[] but not the other way around
-            return self.base_type.can_implicitly_cast_from(actual_type.base_type)
-        if self.base_type.is_byte() and not self.has_size() and actual_type.is_literal_type():
-            if self.is_string() == actual_type.is_string():
-                return True
-            if self.is_int() == actual_type.is_int():
-                return True
-
-        return False
-
-    def has_size(self) -> bool:
-        return hasattr(self, 'size')
-
-    def is_fixed_size(self) -> bool:
-        return False
-
-    def is_array(self) -> bool:
-        return True
-
-    def code_str(self):
-        return f'{self.base_type.code_str()}[]'
-
-
-@NodeDataclass
-class FixedLengthArrayType(ArrayType):
-    """ Array type with a known length that is determined at compile time """
-    size: int
-
-    def __str__(self): return f"{self.base_type}[{self.size}]"
-
-    def is_fixed_size(self) -> bool:
-        return True
-
-    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
-        if super().can_implicitly_cast_from(actual_type):
-            return True
-        if not self.is_string() and self.base_type.is_byte() and actual_type.is_int() and actual_type.is_literal_type():
-            # Decimal number literals cannot be implicitly converted to fixed-size byte arrays. Hexadecimal number literals
-            # can be, but only if the number of hex digits exactly fits the size of the bytes type. As an exception both
-            # decimal and hexadecimal literals which have a value of zero can be converted to any fixed-size bytes type:
-            return self.size >= (actual_type.size / 8)
-        if self.base_type.is_byte() and actual_type.is_string() and actual_type.is_literal_type():
-            # e.g. bytes32 samevar = "stringliteral"
-            return self.size >= actual_type.real_size
-
-        return False
-
-    def code_str(self):
-        return f'{self.base_type.code_str()}[{str(self.size)}]'
-
-
-@NodeDataclass
-class VariableLengthArrayType(ArrayType):
-    """ Array type with a length that is determined at runtime"""
-    size: Expr
-
-    def __str__(self): return f"{self.base_type}[{self.size}]"
-
-    def code_str(self):
-        return f'{self.base_type.code_str()}[{self.size.code_str()}]'
-
-
-@NodeDataclass
-class AddressType(Type):
-    """ Solidity address/address payable type, functionally this is a uint160"""
-    is_payable: bool
-
-    def __str__(self): return f"address{' payable' if self.is_payable else ''}"
-
-    def can_implicitly_cast_from(self, actual_type: Type) -> bool:
-        # address_payable(actual_type) can be cast to address implicitly
-        if actual_type.is_address():
-            # Matrix:
-            #  self <= actual_type = can_implicitly_cast_from
-            #  AP <= AP = true
-            #  AP <= A = false
-            #  A <= A = true
-            #  A <= AP = true
-            return not(self.is_payable and not actual_type.is_payable)
-        # contracts can get cast to address (at least in solidity 0.4.23)
-        if actual_type.is_user_type():
-            definition = actual_type.value.x
-            if definition.is_contract() or definition.is_interface():
-                return True
-        # uint160 can cast to address, I've seen this in a contract but AfterObol.sol:
-        # _mint(0x0CA5cD5790695055F0a01F73A47160C35f9d3A46, 100000000 * 10 ** decimals());
-        # but not sure how this is allowed exactly
-        # UPDATE:
-        # "Hexadecimal literals that pass the address checksum test, for example
-        # 0xdCad3a6d3569DF655070DEd06cb7A1b2Ccd1D3AF are of address type. Hexadecimal literals that are between 39 and
-        # 41 digits long and do not pass the checksum test produce an error. You can prepend (for integer types) or
-        # append (for bytesNN types) zeros to remove the error."
-        # We can't do a check for hex literals (without changing some parsing code) just do it for any int
-        if not self.is_payable and actual_type.is_int() and not actual_type.is_signed and actual_type.size == 160:
-            return True
-
-        return False
-
-    def is_builtin(self) -> bool:
-        return True
-
-    def is_address(self) -> bool:
-        return True
-
-    def code_str(self):
-        return 'address' + (' payable' if self.is_payable else '')
-
-
-@NodeDataclass
-class ByteType(Type):
-    """ Single 8bit byte type """
-
-    def __str__(self): return "byte"
-
-    def is_builtin(self) -> bool:
-        return True
-
-    def is_byte(self) -> bool:
-        return True
-
-    def code_str(self):
-        return 'byte'
-
-
-@NodeDataclass
-class BytesType(ArrayType):
-    """ bytes type only (similar but not equal to byte[]/bytes1[]) """
-    base_type: Type = field(default_factory=lambda: Bytes(1), init=False)
-
-    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
-        # don't have anything in AST1 to mark whether the literal is a hex or dec int so we do the
-        # conversion regardless
-        # e.g. bytes public c = hex"11"; is allowed but bytes public c = 0x11; is NOT
-        if actual_type.is_literal_type() and actual_type.is_int():
-            return True
-        return super().can_implicitly_cast_from(actual_type)
-
-    def __str__(self):
-        return self.code_str()
-
-    def code_str(self):
-        return 'bytes'
-
-
-@NodeDataclass
-class IntType(Type):
-    """ Solidity native integer type of various bit length and signedness"""
-
-    is_signed: bool
-    """ Whether the type is a signed int or unsigned int """
-    size: int
-    """ Size of the type in bits """
-
-    def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}"
-
-    def can_implicitly_cast_from(self, actual_type: Type) -> bool:
-        if actual_type.is_int():
-            # inty(actual_type) to intx(self) if y <= x, same for uint, but not both at the same time
-            if actual_type.is_signed == self.is_signed and actual_type.size <= self.size:
-                return True
-
-            if actual_type.is_int() and actual_type.is_literal_type() and not actual_type.is_signed:
-                # e.g. calling f(1 :: uint8) where f(x: int256)
-                return actual_type.real_bit_length < self.size
-        return False
-
-    def is_builtin(self) -> bool:
-        return True
-
-    def is_int(self) -> bool:
-        return True
-
-    def code_str(self):
-        return ('u' if not self.is_signed else '') + 'int' + str(self.size)
-
-
-@NodeDataclass
-class PreciseIntType(IntType):
-    real_bit_length: int
-
-    def is_literal_type(self) -> bool:
-        return True
-
-    def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}({self.real_bit_length})"
-
-    def code_str(self):
-        return raiseNotPrintable()
-
-
-class BoolType(Type):
-    """ Solidity native boolean type"""
-
-    def __str__(self): return "bool"
-
-    def is_builtin(self) -> bool:
-        return True
-
-    def is_bool(self) -> bool:
-        return True
-
-    def code_str(self):
-        return 'bool'
-
-
-@NodeDataclass
-class StringType(ArrayType):
-    """ Solidity native string type"""
-
-    # makes this an Array[Byte] (as Solidity uses UTF8 for strings?)
-    base_type: Type = field(default_factory=lambda: Bytes(1), init=False)
-
-    def __str__(self): return "string"
-
-    def is_builtin(self) -> bool:
-        return True
-
-    def is_string(self) -> bool:
-        return True
-
-    def code_str(self):
-        return 'string'
-
-
-@NodeDataclass
-class PreciseStringType(StringType):
-    """String literal type that has a known length at compile time"""
-
-    real_size: int
-
-    def is_literal_type(self) -> bool:
-        return True
-
-    def has_size(self) -> bool:
-        # ArrayType.has_size() checks if we have a 'size' attribute, but we don't: it's called
-        # real_size(), so this shim fixes that.
-        # This allows e.g. PreciseStringType of length 1 to be implicitly castable to the base StringType
-        return True
-
-    def __str__(self): return f"string({self.real_size})"
-
-    def code_str(self):
-        return raiseNotPrintable()
-
-
-@NodeDataclass
-class MappingType(Type):
-    """ Type that represents a function mapping definition
-
-    For example in the mapping '(uint => Campaign)', src would be 'unit' and the dst would be 'Campaign'
-    """
-    src: Type
-    dst: Type
-
-    def __str__(self): return f"({self.src} => {self.dst})"
-
-    def is_builtin(self) -> bool:
-        return False
-
-    def is_mapping(self) -> bool:
-        return True
-
-    def flatten(self) -> List[Type]:
-        # get a nested mapping types elements in a list
-        # e.g. (x => (y => z)) would return [x,y,z]
-        result = [self.src]
-        next_link = self.dst
-        while next_link:
-            if next_link.is_mapping():
-                result.append(next_link.src)
-                next_link = next_link.dst
-            else:
-                # base case, we hit the end of the chain
-                result.append(next_link)
-                next_link = None
-        return result
-
-    def code_str(self):
-        return f"({self.src} => {self.dst})"
-
-
-@NodeDataclass
-class ResolvedUserType(Type):
-    # Ref so that we don't set the parent of the TopLevelUnit to this type instance
-    value: Ref[TopLevelUnit] = field(repr=False)
-
-    # FIXME: The name of the unit isn't showing in pretty prints for some reason, just outputs ResolvedUserType()
-
-    def __str__(self):
-        return f'ResolvedUserType({self.value.x.name.text})'
-
-    def __repr__(self):
-        return self.__str__()
-
-    def is_builtin(self) -> bool:
-        return False
-
-    def is_user_type(self) -> bool:
-        return True
-
-    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
-        if super().can_implicitly_cast_from(actual_type):
-            return True
-
-        if actual_type.is_user_type():
-            return actual_type.value.x.is_subttype_of(self.value.x)
-
-        return False
-
-    def get_types_for_declared_type(self) -> List[TopLevelUnit]:
-        return [self.value.x] + self.value.x.get_subtypes()
-
-    def code_str(self):
-        return self.value.x.name.text
-
-
-@NodeDataclass
-class BuiltinType(Type):
-    name: str
-
-    def __str__(self):
-        return f'Builtin<{self.name}>'
-
-    def is_builtin(self) -> bool:
-        return True
-
-    def code_str(self):
-        return self.name
-
-
-def ABIType() -> BuiltinType:
-    return BuiltinType('abi')
-
-
-@NodeDataclass
-class FunctionType(Type):
-    inputs: List[Type]
-    outputs: List[Type]
-
-    def is_builtin(self) -> bool:
-        return False
-
-    def is_function(self) -> bool:
-        return True
-
-    def code_str(self):
-        # function (<parameter types>) {internal|external} [pure|view|payable] [returns (<return types>)]
-        return f'function ({", ".join(t.code_str() for t in self.inputs)}) returns ({", ".join(t.code_str() for t in self.outputs)})'
-
-    def type_key(self):
-        # doesn't include modifiers for now
-        input_params = ', '.join([p.type_key() for p in self.inputs])
-        output_params = ', '.join([p.type_key() for p in self.outputs])
-        return f'function ({input_params}) returns ({output_params})'
-
-@NodeDataclass
-class TupleType(Type):
-    ttypes: List[Type]
-
-    def is_builtin(self) -> bool:
-        return False
-
-    def is_tuple(self) -> bool:
-        return True
-
-    def code_str(self):
-        return f'({", ".join(t.code_str() for t in self.ttypes)})'
-
-
-@NodeDataclass
-class ContractPart(Node, ABC):
-    def has_modifier_kind(self, *kinds: Union[solnodes1.VisibilityModifierKind, solnodes1.MutabilityModifierKind]):
+@nodebase.NodeDataclass
+class ContractPart(AST2Node, ABC):
+    def has_modifier_kind(self, *kinds: solnodes1.VisibilityModifierKind | solnodes1.MutabilityModifierKind):
         return solnodes1.has_modifier_kind(self, *kinds)
 
 
-@NodeDataclass
-class InheritSpecifier(Node):
+@nodebase.NodeDataclass
+class InheritSpecifier(AST2Node):
     name: ResolvedUserType
-    args: List[Expr]
+    args: list[Expr]
 
     def code_str(self):
         return self.name.code_str() + f'({", ".join(e.code_str() for e in self.args)})'
 
 
-@NodeDataclass
-class LibraryOverride(Node):
-    overriden_type: Type
+@nodebase.NodeDataclass
+class LibraryOverride(AST2Node):
+    overriden_type: soltypes.Type
     library: ResolvedUserType
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class FileDefinition(TopLevelUnit):
     # This is currently only used for ownerless definitions, i.e. contracts/interfaces/etc don't have this as a parent
     # and this isn't created for most processed source files
-    parts: List[ContractPart]
+    scope: 'Scope' = field(default=None, init=False, repr=False, compare=False, hash=False)
+    parts: list[ContractPart]
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class ContractDefinition(TopLevelUnit):
     is_abstract: bool
-    inherits: List[InheritSpecifier]
-    parts: List[ContractPart]
-    type_overrides: List[LibraryOverride]
-    _subtypes: List[Ref[Union['ContractDefinition', 'InterfaceDefinition']]] = field(default_factory=list, init=False, hash=False, compare=False, repr=False)
+    inherits: list[InheritSpecifier]
+    parts: list[ContractPart]
+    type_overrides: list[LibraryOverride]
+    _subtypes: list[nodebase.Ref[U['ContractDefinition', 'InterfaceDefinition']]] = field(default_factory=list, init=False, hash=False, compare=False, repr=False)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class InterfaceDefinition(TopLevelUnit):
-    inherits: List[InheritSpecifier]
-    parts: List[ContractPart]
-    type_overrides: List[LibraryOverride]
-    _subtypes: List[Ref[Union['ContractDefinition', 'InterfaceDefinition']]] = field(default_factory=list, init=False, hash=False, compare=False, repr=False)
+    inherits: list[InheritSpecifier]
+    parts: list[ContractPart]
+    type_overrides: list[LibraryOverride]
+    _subtypes: list[nodebase.Ref[U['ContractDefinition', 'InterfaceDefinition']]] = field(default_factory=list, init=False, hash=False, compare=False, repr=False)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class LibraryDefinition(TopLevelUnit):
-    parts: List[ContractPart]
-    type_overrides: List[LibraryOverride]
+    parts: list[ContractPart]
+    type_overrides: list[LibraryOverride]
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class UserDefinedValueTypeDefinition(TopLevelUnit):
-    ttype: Type
+    ttype: soltypes.Type
 
 
-@NodeDataclass
-class EnumMember(Node):
+@nodebase.NodeDataclass
+class EnumMember(AST2Node):
     name: Ident
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class EnumDefinition(TopLevelUnit):
-    values: List[EnumMember]
+    values: list[EnumMember]
 
 
-@NodeDataclass
-class StructMember(Node):
-    ttype: Type
+@nodebase.NodeDataclass
+class StructMember(AST2Node):
+    ttype: soltypes.Type
     name: Ident
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class StructDefinition(TopLevelUnit):
-    members: List[StructMember]
+    members: list[StructMember]
 
 
-@NodeDataclass
-class ErrorParameter(Node):
-    ttype: Type
+@nodebase.NodeDataclass
+class ErrorParameter(AST2Node):
+    ttype: soltypes.Type
     name: Ident
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class ErrorDefinition(ContractPart):
     name: Ident
-    inputs: List[ErrorParameter]
+    inputs: list[ErrorParameter]
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class StateVariableDeclaration(ContractPart):
     name: Ident
-    ttype: Type
-    modifiers: List[Modifier]
+    ttype: soltypes.Type
+    modifiers: list[Modifier]
     value: Expr
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class ConstantVariableDeclaration(ContractPart):
     name: Ident
-    ttype: Type
+    ttype: soltypes.Type
     value: Expr
 
 
-@NodeDataclass
-class EventParameter(Node):
+@nodebase.NodeDataclass
+class EventParameter(AST2Node):
     name: Ident
-    ttype: Type
+    ttype: soltypes.Type
     is_indexed: bool
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class EventDefinition(ContractPart):
     name: Ident
-    inputs: List[EventParameter]
+    inputs: list[EventParameter]
     is_anonymous: bool
 
 
+@nodebase.NodeDataclass
 class Location(Enum):
     MEMORY = 'memory'
     STORAGE = 'storage'
@@ -1007,24 +354,24 @@ class Location(Enum):
     def __str__(self): return self.value
 
 
-@NodeDataclass
-class Var(Node):
+@nodebase.NodeDataclass
+class Var(AST2Node):
     name: Ident
-    ttype: Type
+    ttype: soltypes.Type
     location: Location
 
     def code_str(self):
         return raiseNotPrintable()
 
 
-@NodeDataclass
-class Parameter(Node):
+@nodebase.NodeDataclass
+class Parameter(AST2Node):
     var: Var
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Block(Stmt):
-    stmts: List[Stmt]
+    stmts: list[Stmt]
     is_unchecked: bool
 
     def code_str(self, brackets=True):
@@ -1037,7 +384,7 @@ class Block(Stmt):
             return indent('\n'.join(lines), INDENT)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class If(Stmt):
     condition: Expr
     true_branch: Stmt
@@ -1066,10 +413,10 @@ class If(Stmt):
         return '\n'.join(lines)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Catch(Stmt):
     ident: Ident
-    parameters: List[Parameter]
+    parameters: list[Parameter]
     body: Block
 
     def code_str(self):
@@ -1093,12 +440,12 @@ class Catch(Stmt):
         return '\n'.join(lines)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Try(Stmt):
     expr: Expr
-    return_parameters: List[Parameter]
+    return_parameters: list[Parameter]
     body: Block
-    catch_clauses: List[Catch]
+    catch_clauses: list[Catch]
 
     def code_str(self):
         lines = [
@@ -1126,7 +473,7 @@ class Try(Stmt):
         return '\n'.join(lines)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class While(Stmt):
     condition: Expr
     body: Stmt
@@ -1157,7 +504,7 @@ class While(Stmt):
         return '\n'.join(lines)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class For(Stmt):
     initialiser: Stmt
     condition: Expr
@@ -1188,14 +535,14 @@ class FunctionMarker(Enum):
     SYNTHETIC_FIELD_GETTER = 2
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class FunctionDefinition(ContractPart):
     name: Ident
-    inputs: List[Parameter]
-    outputs: List[Parameter]
-    modifiers: List[Modifier]
+    inputs: list[Parameter]
+    outputs: list[Parameter]
+    modifiers: list[Modifier]
     code: Block
-    markers: List[FunctionMarker]
+    markers: list[FunctionMarker]
 
     @staticmethod
     def param_str(ps) -> str:
@@ -1209,23 +556,24 @@ class FunctionDefinition(ContractPart):
         return self.descriptor()
 
 
-@NodeDataclass
-class BuiltinFunction(Node):
+@nodebase.NodeDataclass
+class BuiltinFunction(AST2Node):
     name: Ident
-    inputs: List[Parameter]
-    outputs: List[Parameter]
+    inputs: list[Parameter]
+    outputs: list[Parameter]
 
-@NodeDataclass
+
+@nodebase.NodeDataclass
 class ModifierDefinition(ContractPart):
     name: Ident
-    inputs: List[Parameter]
-    modifiers: List[Modifier]
+    inputs: list[Parameter]
+    modifiers: list[Modifier]
     code: Block
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class TupleVarDecl(Stmt):
-    vars: List[Var]
+    vars: list[Var]
     value: Expr
 
     def code_str(self):
@@ -1234,7 +582,7 @@ class TupleVarDecl(Stmt):
         return f'({", ".join(vs)}){rhs}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class VarDecl(Stmt):
     var: Var
     value: Expr
@@ -1244,7 +592,7 @@ class VarDecl(Stmt):
         return f'{self.var.ttype.code_str()} {(self.var.location.value + " ") if self.var.location else ""}{self.var.name.text}{rhs};'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class ExprStmt(Stmt):
     expr: Expr
 
@@ -1252,13 +600,13 @@ class ExprStmt(Stmt):
         return f'{self.expr.code_str()};'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Literal(Expr):
     value: Any
-    ttype: Type
+    ttype: soltypes.Type
     unit: solnodes1.Unit = None
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.ttype
 
     def code_str(self):
@@ -1268,9 +616,9 @@ class Literal(Expr):
             return str(self.value)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class TypeLiteral(Expr):
-    ttype: Type
+    ttype: soltypes.Type
 
     def type_of(self):
         return self.ttype
@@ -1279,19 +627,19 @@ class TypeLiteral(Expr):
         return self.ttype.code_str()
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class UnaryOp(Expr):
     """ Single operand expression """
     expr: Expr
     op: solnodes1.UnaryOpCode
     is_pre: bool
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         expr_ttype = self.expr.type_of()
         if self.op == solnodes1.UnaryOpCode.BOOL_NEG:
             assert expr_ttype.is_bool()
         elif self.op == solnodes1.UnaryOpCode.BIT_NEG:
-            assert is_byte_array(expr_ttype) or expr_ttype.is_int()
+            assert expr_ttype.is_byte_array() or expr_ttype.is_int()
         elif self.op != solnodes1.UnaryOpCode.DELETE:
             assert expr_ttype.is_int()
         return expr_ttype
@@ -1303,19 +651,19 @@ class UnaryOp(Expr):
             return f'{self.expr.code_str()}{str(self.op.value)}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class BinaryOp(Expr):
     left: Expr
     right: Expr
     op: solnodes1.BinaryOpCode
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         if self.op in [solnodes1.BinaryOpCode.BOOL_AND, solnodes1.BinaryOpCode.BOOL_OR, solnodes1.BinaryOpCode.EQ,
                        solnodes1.BinaryOpCode.NEQ]:
-            return BoolType()
+            return soltypes.BoolType()
         elif self.op in [solnodes1.BinaryOpCode.LTEQ, solnodes1.BinaryOpCode.LT, solnodes1.BinaryOpCode.GT,
                          solnodes1.BinaryOpCode.GTEQ]:
-            return BoolType()
+            return soltypes.BoolType()
         elif self.op in [solnodes1.BinaryOpCode.LSHIFT, solnodes1.BinaryOpCode.RSHIFT]:
             # result of a shift has the type of the left operand (from docs)
             return self.left.type_of()
@@ -1337,13 +685,13 @@ class BinaryOp(Expr):
         return f'{self.left.code_str()} {str(self.op.value)} {self.right.code_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class TernaryOp(Expr):
     condition: Expr
     left: Expr
     right: Expr
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         t1 = self.left.type_of()
         t2 = self.right.type_of()
 
@@ -1354,7 +702,7 @@ class TernaryOp(Expr):
             return t1 if t1.size > t2.size else t2
         elif t1.is_string() and t2.is_string():
             # TODO: precise string vs non precise string? precise string(x) vs precise string (y)
-            return StringType()
+            return soltypes.StringType()
         else:
             try:
                 assert t1 == t2, f'{t1} vs {t2}'
@@ -1373,49 +721,34 @@ class TernaryOp(Expr):
         return f'{self.condition.code_str()} ? {self.left.code_str()} : {self.right.code_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class SelfObject(Expr):
-    declarer: Ref[Union[ContractDefinition, InterfaceDefinition]] = field(repr=False)
+    declarer: nodebase.Ref[ContractDefinition | InterfaceDefinition] = field(repr=False)
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return ResolvedUserType(self.declarer)
 
     def code_str(self):
         return 'this'
 
 
-@NodeDataclass
-class SuperType(Type):
-    declarer: Ref[Union[ContractDefinition, InterfaceDefinition]] = field(repr=False)
-
-    def is_builtin(self) -> bool:
-        return False
-
-    def get_types_for_declared_type(self) -> List[TopLevelUnit]:
-        # FIXME: return bases
-        return self.declarer.x.get_supers()
-
-    def code_str(self):
-        return raiseNotPrintable()
-
-
-@NodeDataclass
+@nodebase.NodeDataclass
 class SuperObject(Expr):
     ttype: SuperType
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.ttype
 
     def code_str(self):
         return 'super'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class StateVarLoad(Expr):
     base: Expr
     name: Ident
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         base_type = self.base.type_of()
         assert isinstance(base_type, ResolvedUserType)
 
@@ -1434,12 +767,12 @@ class StateVarLoad(Expr):
         return f'{self.base.code_str()}.{self.name.code_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class StaticVarLoad(Expr):
     ttype: ResolvedUserType
     name: Ident
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         unit = self.ttype.value.x
         for p in unit.parts:
             if p.name.text == self.name.text and isinstance(p, (StateVariableDeclaration, ConstantVariableDeclaration)):
@@ -1450,11 +783,11 @@ class StaticVarLoad(Expr):
         return f'{self.ttype.code_str()}.{self.name.code_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class EnumLoad(Expr):
-    member: Ref[EnumMember]
+    member: nodebase.Ref[EnumMember]
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         # enum members type is its parent type
         return self.member.x.parent.as_type()
 
@@ -1463,64 +796,64 @@ class EnumLoad(Expr):
         return f'{enum_def.name.code_str()}.{self.member.x.name.code_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class StateVarStore(Expr):
     base: Expr
     name: Ident
     value: Expr
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.value.type_of()
 
     def code_str(self):
         return f'{self.base.code_str()}.{self.name.code_str()} = {self.value.code_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class LocalVarLoad(Expr):
     var: Var
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.var.ttype
 
     def code_str(self):
         return self.var.name.code_str()
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class LocalVarStore(Expr):
     var: Var
     value: Expr
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.var.ttype
 
     def code_str(self):
         return f'{self.var.name.text} = {self.value.code_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class ArrayLengthStore(Expr):
     # resizing array length is deprecated since solidity 0.6
     # The expr that loads the array e.g. this.myArray
     base: Expr
     value: Expr
 
-    def type_of(self) -> Type:
-        return UIntType(256)
+    def type_of(self) -> soltypes.Type:
+        return soltypes.UIntType(256)
 
     def code_str(self):
         raise NotImplementedError()
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class TupleLoad(Expr):
     base: Expr
     index: int
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         tuple_type = self.base.type_of()
-        assert isinstance(tuple_type, TupleType)
+        assert isinstance(tuple_type, soltypes.TupleType)
 
         assert 0 <= self.index < len(tuple_type.ttypes)
 
@@ -1530,18 +863,18 @@ class TupleLoad(Expr):
         return f'{self.base.code_str()}[{self.index}]'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class ArrayLoad(Expr):
     base: Expr
     index: Expr
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         base_type = self.base.type_of()
 
-        if isinstance(base_type, MappingType):
+        if isinstance(base_type, soltypes.MappingType):
             assert base_type.src.can_implicitly_cast_from(self.index.type_of())
             return base_type.dst
-        elif isinstance(base_type, ArrayType):
+        elif isinstance(base_type, soltypes.ArrayType):
             assert self.index.type_of().is_int()
             return base_type.base_type
         else:
@@ -1551,27 +884,27 @@ class ArrayLoad(Expr):
         return f'{self.base.code_str()}[{self.index.code_str()}]'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class ArrayStore(Expr):
     base: Expr
     index: Expr
     value: Expr
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return ArrayLoad.type_of(self)
 
     def code_str(self):
         return f'{self.base.code_str()}[{self.index.code_str()}] = {self.value.code_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class ArraySliceLoad(Expr):
     """ Gets a subarray at the given start and end indices from the given array """
     base: Expr
     start_index: Expr
     end_index: Expr
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.base.type_of()
 
     def code_str(self):
@@ -1580,16 +913,16 @@ class ArraySliceLoad(Expr):
         return f'{self.base.code_str()}[{start_str}:{end_str}]'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class CreateInlineArray(Expr):
     """ Solidity 8 inline array creation
 
     An inline array is one where the elements are explicitly stated in the definition, for example:
     'int[5]   foo2 = [1, 0, 0, 0, 0];'
     """
-    elements: List[Expr]
+    elements: list[Expr]
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         arg_types = [arg.type_of() for arg in self.elements]
         are_ints = any([t.is_int() for t in arg_types])
 
@@ -1609,17 +942,17 @@ class CreateInlineArray(Expr):
             if any([not t.is_literal_type() for t in arg_types]):
                 # if there are any non precise ones, the whole thing can't be precise, e.g. [0, 1, this.myInt] can't
                 # have a base_type of uint8(1), instead it must be uint(T(this.myInt))
-                base_type = IntType(is_signed, max_total_length)
+                base_type = soltypes.IntType(is_signed, max_total_length)
             else:
-                base_type = PreciseIntType(is_signed, max_total_length, max_real_bit_length)
+                base_type = soltypes.PreciseIntType(is_signed, max_total_length, max_real_bit_length)
 
-            return FixedLengthArrayType(base_type, len(self.elements))
+            return soltypes.FixedLengthArrayType(base_type, len(self.elements))
 
     def code_str(self):
         return f'[{", ".join(e.code_str() for e in self.elements)}]'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class MappingLoad(Expr):
     base: Expr
     key: Expr
@@ -1627,11 +960,12 @@ class MappingLoad(Expr):
     def code_str(self):
         return f'{self.base.code_str()}[{self.key.code_str()}]'
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         base_ttype = self.base.type_of()
         return base_ttype.dst
 
-@NodeDataclass
+
+@nodebase.NodeDataclass
 class MappingStore(Expr):
     base: Expr
     key: Expr
@@ -1641,30 +975,30 @@ class MappingStore(Expr):
         return f'{self.base.code_str()}[{self.key.code_str()}] = {self.value.code_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class GlobalValue(Expr):
     name: str
-    ttype: Type
+    ttype: soltypes.Type
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.ttype
 
     def code_str(self):
         return self.name
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class ABISelector(Expr):
-    function: Union[Ref[Union[FunctionDefinition, ErrorDefinition]], Expr]
+    function: nodebase.Ref[FunctionDefinition | ErrorDefinition] | Expr
 
-    def type_of(self) -> Type:
-        return Bytes(4)
+    def type_of(self) -> soltypes.Type:
+        return soltypes.Bytes(4)
 
     def __str__(self):
         return self.code_str()
 
     def code_str(self):
-        if isinstance(self.function, Ref):
+        if isinstance(self.function, nodebase.Ref):
             f = self.function.x
             owner_name = f.parent.source_unit_name
             return f'{owner_name}.{f.name.text}.selector'
@@ -1672,73 +1006,73 @@ class ABISelector(Expr):
             return f'{self.function.code_str()}.selector'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class DynamicBuiltInValue(Expr):
     # <base>.name
     name: str
-    ttype: Type
+    ttype: soltypes.Type
     base: Expr
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.ttype
 
     def code_str(self):
         return f'{self.base.code_str()}.{self.name}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class CreateMemoryArray(Expr):
-    ttype: ArrayType
+    ttype: soltypes.ArrayType
     size: Expr
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.ttype
 
     def code_str(self):
         return f'new {self.ttype.code_str()}[{self.size.code_str()}]'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class CreateStruct(Expr):
     ttype: ResolvedUserType
-    args: List[Expr]
+    args: list[Expr]
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.ttype
 
     def code_str(self):
         return f'{self.ttype.code_str()}({", ".join(e.code_str() for e in self.args)})'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class CreateAndDeployContract(Expr):
     ttype: ResolvedUserType
-    named_args: List[NamedArgument]
-    args: List[Expr]
+    named_args: list[NamedArgument]
+    args: list[Expr]
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.ttype
 
     def code_str(self):
         return f"new {self.ttype.code_str()}" + Call.param_str(self)
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Call(Expr, ABC):
-    named_args: List[NamedArgument]
-    args: List[Expr]
+    named_args: list[NamedArgument]
+    args: list[Expr]
 
     def check_arg_types(self, f: FunctionDefinition) -> bool:
         f_types = [x.var.ttype for x in f.inputs]
         c_types = [a.type_of() for a in self.args]
-        return Type.are_matching_types(f_types, c_types)
+        return soltypes.Type.are_matching_types(f_types, c_types)
 
     def param_str(self):
         return ('{' + ', '.join(e.code_str() for e in self.named_args) + '}') if hasattr(self, 'named_args') and len(
             self.named_args) > 0 else '' + f'({", ".join(e.code_str() for e in self.args)})'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class DirectCall(Call):
     ttype: ResolvedUserType
     name: Ident
@@ -1753,13 +1087,13 @@ class DirectCall(Call):
         assert len(matching_param_types) == 1
         return matching_param_types[0]
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         target_callee = self.resolve_call()
         if not target_callee.outputs:
-            ttype = VoidType()
+            ttype = soltypes.VoidType()
         elif len(target_callee.outputs) > 1:
             # For functions that return multiple values return (t(r1), ... t(rk))
-            ttype = TupleType([out_param.var.ttype for out_param in target_callee.outputs])
+            ttype = soltypes.TupleType([out_param.var.ttype for out_param in target_callee.outputs])
         else:
             ttype = target_callee.outputs[0].var.ttype
         return ttype
@@ -1770,8 +1104,8 @@ class DirectCall(Call):
     def __str__(self):
         return f'"{self.code_str()}"'
 
-# x.y
-@NodeDataclass
+
+@nodebase.NodeDataclass
 class FunctionCall(Call):
     base: Expr
     name: Ident
@@ -1798,13 +1132,13 @@ class FunctionCall(Call):
 
         raise ValueError('No match')
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         target_callee = self.resolve_call()
         if not target_callee.outputs:
-            ttype = VoidType()
+            ttype = soltypes.VoidType()
         elif len(target_callee.outputs) > 1:
             # For functions that return multiple values return (t(r1), ... t(rk))
-            ttype = TupleType([out_param.var.ttype for out_param in target_callee.outputs])
+            ttype = soltypes.TupleType([out_param.var.ttype for out_param in target_callee.outputs])
         else:
             ttype = target_callee.outputs[0].var.ttype
         return ttype
@@ -1815,126 +1149,115 @@ class FunctionCall(Call):
     def __str__(self):
         return f'"{self.code_str()}"'
 
-@NodeDataclass
+
+@nodebase.NodeDataclass
 class FunctionPointerCall(Call):
     callee: Expr
 
-    def type_of(self) -> Type:
-        callee_ttype: FunctionType = self.callee.type_of()
+    def type_of(self) -> soltypes.Type:
+        callee_ttype: soltypes.FunctionType = self.callee.type_of()
         output_ttypes = callee_ttype.outputs
         assert len(output_ttypes) > 0
 
         if not output_ttypes:
-            return VoidType()
+            return soltypes.VoidType()
         elif len(output_ttypes) == 1:
             return output_ttypes[0]
         else:
-            return TupleType(output_ttypes)
+            return soltypes.TupleType(output_ttypes)
 
     def code_str(self):
         return f'{self.callee.code_str()}{self.param_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class DynamicBuiltInCall(Call):
-    ttype: Type
-    base: Union[Expr, ResolvedUserType]
+    ttype: soltypes.Type
+    base: Expr | ResolvedUserType
     name: str
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.ttype
 
     def code_str(self):
         return f'{self.base.code_str()}.{self.name}{self.param_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class BuiltInCall(Call):
     name: str
-    ttype: Type
+    ttype: soltypes.Type
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.ttype
 
     def code_str(self):
         return f'{self.name}{self.param_str()}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Cast(Expr):
-    ttype: Type
+    ttype: soltypes.Type
     value: Expr
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         return self.ttype
 
     def code_str(self):
         return f'{self.ttype.code_str()}({self.value.code_str()})'
 
 
-@NodeDataclass
-class MetaTypeType(Type):
-    # type of a Solidity type, i.e. the type of type(X). This type has a few builtin fields such as min, max, name,
-    # creationCode, runtimeCode and interfaceId
-    ttype: Type
-
-    def is_builtin(self) -> bool:
-        return self.ttype.is_builtin()
-
-    def code_str(self):
-        return raiseNotPrintable()
-
-
-@NodeDataclass
+@nodebase.NodeDataclass
 class GetType(Expr):
     # type(MyContract)
-    ttype: Type
+    ttype: soltypes.Type
 
-    def type_of(self) -> Type:
-        return MetaTypeType(self.ttype)
+    def type_of(self) -> soltypes.Type:
+        return soltypes.MetaTypeType(self.ttype)
 
     def code_str(self):
         return f'type({self.ttype.code_str()})'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class GetFunctionPointer(Expr):
-    func: Ref[Union[FunctionDefinition, 'BuiltinFunction']]
+    func: nodebase.Ref[U[FunctionDefinition, 'BuiltinFunction']]
 
-    def type_of(self) -> Type:
+    def type_of(self) -> soltypes.Type:
         def ts(params):
             return [p.var.ttype for p in params]
         f = self.func.x
-        return FunctionType(ts(f.inputs), ts(f.outputs))
+        modifiers = f.modifiers if hasattr(f, 'modifiers') else []
+        return soltypes.FunctionType(ts(f.inputs), ts(f.outputs), modifiers)
 
     def code_str(self):
         return f'fptr({self.func.x.parent.descriptor()}::{self.func.x.name.text})'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class EmitEvent(Stmt):
-    event: Ref[EventDefinition]
-    args: List[Expr]
+    event: nodebase.Ref[EventDefinition]
+    args: list[Expr]
 
     def code_str(self):
         return f'emit {self.event.x.name.text}{Call.param_str(self)}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Revert(Stmt):
     pass
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class RevertWithError(Revert):
-    error: Ref[ErrorDefinition]
-    args: List[Expr]
+    error: nodebase.Ref[ErrorDefinition]
+    args: list[Expr]
 
     def code_str(self):
         return f'revert {self.error.x.name.text}({", ".join(e.code_str() for e in self.args)});'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class RevertWithReason(Revert):
     reason: Expr
 
@@ -1942,7 +1265,7 @@ class RevertWithReason(Revert):
         return f'revert({self.reason.code_str()});'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Require(Stmt):
     condition: Expr
     reason: Expr
@@ -1951,27 +1274,27 @@ class Require(Stmt):
         return f'require({self.condition.code_str()}{(", " + self.reason.code_str()) if self.reason else ""})'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Return(Stmt):
-    values: List[Expr]
+    values: list[Expr]
 
     def code_str(self):
         return f'return {", ".join([v.code_str() for v in self.values])}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Continue(Stmt):
     def code_str(self):
         return 'continue;'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Break(Stmt):
     def code_str(self):
         return 'break;'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class Assembly(Stmt):
     # TODO: full assembly code representation
     code: str
@@ -1980,13 +1303,20 @@ class Assembly(Stmt):
         return f'assembly {{{self.code}}}'
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class ExecModifiedCode(Stmt):
     # _; statement in modifier code bodies that show where modified function code gets executed
     pass
 
 
-@NodeDataclass
+@nodebase.NodeDataclass
 class UnprocessedCode(Stmt):
     error: Exception = field(repr=False, hash=False, compare=False)
 
+
+Types: TypeAlias = (soltypes.VariableLengthArrayType | soltypes.VoidType | soltypes.IntType
+                    | soltypes.FunctionType | soltypes.ArrayType | soltypes.BytesType | soltypes.BoolType
+                    | soltypes.AnyType | soltypes.MappingType | soltypes.StringType | soltypes.AddressType
+                    | soltypes.FixedLengthArrayType | soltypes.ByteType | soltypes.MetaTypeType
+                    | soltypes.TupleType | soltypes.PreciseIntType | soltypes.PreciseIntType
+                    | soltypes.BuiltinType | ResolvedUserType | SuperType | soltypes.FloatType)

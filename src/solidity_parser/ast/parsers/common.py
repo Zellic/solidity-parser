@@ -1,8 +1,8 @@
 import antlr4
-from antlr4.tree.Tree import TerminalNode
 import inspect
-from solidity_parser.ast.solnodes import Node
-import solidity_parser.ast.solnodes as solnodes
+
+from solidity_parser.ast import nodebase, solnodes
+
 
 class ParserBase:
     def __init__(self, subparsers, token_stream):
@@ -16,7 +16,7 @@ class ParserBase:
 
         # this can happen with rule labels like in array slice if the
         # optional subrule in the grammar doesn't match
-        if isinstance(rule, antlr4.Token) or isinstance(rule, TerminalNode):
+        if isinstance(rule, antlr4.Token) or isinstance(rule, antlr4.tree.Tree.TerminalNode):
             return None
 
         # find the appropriate _<type> creation method based on
@@ -70,7 +70,7 @@ class ParserBase:
         return node_to_decorate
 
     def wrap_node(self, rule, node, add_comments=False):
-        if isinstance(node, Node):
+        if isinstance(node, nodebase.Node):
             if hasattr(rule, 'symbol'):
                 rule = rule.symbol
             # we add 1 to each column in each of these because we used 1 based columns, see solnodes.SourceLocation
@@ -78,9 +78,9 @@ class ParserBase:
                 # for terminal node symbols
                 node.location = f'{rule.line}:{rule.start}'
 
-                node.start_location = solnodes.SourceLocation(rule.line, rule.column + 1)
+                node.start_location = nodebase.SourceLocation(rule.line, rule.column + 1)
                 token_len = rule.stop - rule.start + 1
-                node.end_location = solnodes.SourceLocation(rule.line, rule.column + token_len + 1)
+                node.end_location = nodebase.SourceLocation(rule.line, rule.column + token_len + 1)
 
                 node.start_buffer_index = rule.start
                 node.end_buffer_index = rule.stop + 1
@@ -88,9 +88,9 @@ class ParserBase:
                 # this is the normal case
                 node.location = f'{rule.start.line}:{rule.start.start}'
 
-                node.start_location = solnodes.SourceLocation(rule.start.line, rule.start.column + 1)
+                node.start_location = nodebase.SourceLocation(rule.start.line, rule.start.column + 1)
                 col_offset = rule.stop.stop - rule.stop.start + 1
-                node.end_location = solnodes.SourceLocation(rule.stop.line, rule.stop.column + col_offset + 1)
+                node.end_location = nodebase.SourceLocation(rule.stop.line, rule.stop.column + col_offset + 1)
 
                 node.start_buffer_index = rule.start.start
                 node.end_buffer_index = rule.stop.stop + 1

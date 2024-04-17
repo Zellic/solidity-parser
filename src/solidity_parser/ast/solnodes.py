@@ -1,113 +1,22 @@
+import typing
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Any, Union, Optional, NamedTuple
-from abc import ABC, abstractmethod
-from collections import namedtuple
+from typing import Any, Optional
+from solidity_parser.ast import nodebase, types as soltypes
 
 
-class SourceLocation(NamedTuple):
-    line: int
-    "Line number, beginning at 1"
-    column: int
-    "Column number, beginning at 1. E.g. the first character on the line is at column 1."
+@nodebase.NodeDataclass
+class AST1Node(nodebase.Node):
+    # scope doesn't get included in get_children or hash as long as it's not a subclass of nodebase.Node
+    scope: 'Scope' = field(default=None, init=False, repr=False, compare=False, hash=False)
+    ast2_node: 'AST2Node' = field(default=None, init=False, repr=False, compare=False, hash=False)
 
 
-class SourceLocationSpan(NamedTuple):
-    start: SourceLocation
-    end: SourceLocation
-
-    def does_contain(self, loc: SourceLocation):
-        """
-        Checks whether the given 'loc' location is contained within this span.
-        E.g. if this span represents ((5,1), (10, 1)), i.e lines 5 to 10 and loc is (6, 1), the location is contained
-        :param loc:
-        :return:
-        """
-
-        if loc.line < self.start.line or loc.line > self.end.line:
-            # outside the line range
-            return False
-
-        # below: the location is in the line range
-
-        before_start, after_end = loc.column < self.start.column, loc.column > self.end.column
-        on_start_line, on_end_line = loc.line == self.start.line, loc.line == self.end.line
-
-        if on_start_line and on_end_line:
-            # i.e. start and end line are the same, check within column range
-            return not (before_start or after_end)
-        elif on_start_line:
-            # on the start line (not on the end line, end line != start line), check after the start col
-            return not before_start
-        elif on_end_line:
-            # above but for end line
-            return not after_end
-        else:
-            # start and end lines are not the same and the loc is somewhere between, but not on the start or end lines
-            return True
-
-
-class Node:
-    # TODO: want to get rid of this
-    location: str
-    "LineNumber:LinePosition, this is set dynamically in common.make"
-    comments: List[str]
-
-    start_location: SourceLocation
-    "Source start location of this node (column is inclusive)"
-    end_location: SourceLocation
-    "Source end location of this node (column is exclusive)"
-
-    start_buffer_index: int
-    "Source start (0-based) position in the input text buffer(inclusive)"
-    end_buffer_index: int
-    "Source end (0-based) position in the input text buffer(exclusive)"
-
-    def get_source_span(self):
-        return SourceLocationSpan(self.start_location, self.end_location)
-
-    def __post_init__(self):
-        for child in self.get_children():
-            child.parent = self
-
-    def get_children(self):
-        parent = self.parent if hasattr(self, 'parent') else None
-
-        for val in vars(self).values():
-            if parent and val is parent:
-                continue
-
-            if isinstance(val, Node):
-                yield val
-            elif isinstance(val, (list, tuple)):
-                yield from [v for v in val if isinstance(v, Node)]
-
-    def get_all_children(self):
-        for direct_child in self.get_children():
-            yield direct_child
-            yield from direct_child.get_all_children()
-
-    def linenumber(self) -> int:
-        return int(self.location.split(":")[0])
-
-    def source_location(self):
-        if hasattr(self, 'scope') and self.scope:
-            from solidity_parser.ast.symtab import FileScope
-            file_scope = self.scope.find_first_ancestor_of(FileScope)
-            file_name = file_scope.source_unit_name
-        else:
-            file_name = '<unknown>'
-        return f'{file_name} @{self.location}'
-
-    def offset(self) -> int:
-        return int(self.location.split(":")[1])
-
-
-class Stmt(Node):
+class Stmt(AST1Node):
     pass
 
 
-class Expr(Node):
+class Expr(AST1Node):
     pass
 
 
@@ -117,164 +26,6 @@ class Ident(Expr):
     text: str
 
     def __str__(self): return self.text
-
-
-class Type(Node, ABC):
-    """ Base class for all Solidity types """
-
-    @abstractmethod
-    def __str__(self):
-        pass
-
-    def is_array(self) -> bool:
-        return False
-
-    def is_string(self) -> bool:
-        return False
-
-    def is_function(self) -> bool:
-        return False
-
-    def is_int(self) -> bool:
-        return False
-
-    def is_mapping(self) -> bool:
-        return False
-
-    def is_address(self) -> bool:
-        return False
-
-    def type_key(self):
-        return str(self)
-
-
-@dataclass
-class ArrayType(Type):
-    """ Single dimension array type with no size attributes """
-    base_type: Type
-
-    def __str__(self): return f"{self.base_type}[]"
-
-    def is_array(self) -> bool:
-        return True
-
-
-@dataclass
-class FixedLengthArrayType(ArrayType):
-    """ Array type with a known length that is determined at compile time """
-    size: int
-
-    def __str__(self): return f"{self.base_type}[{self.size}]"
-
-
-@dataclass
-class VariableLengthArrayType(ArrayType):
-    """ Array type with a length that is determined at runtime"""
-    size: Expr
-
-    def __str__(self): return f"{self.base_type}[{self.size}]"
-
-
-@dataclass
-class AddressType(Type):
-    """ Solidity address/address payable type """
-    is_payable: bool
-
-    def __str__(self): return f"address{' payable' if self.is_payable else ''}"
-
-    def is_address(self) -> bool:
-        return True
-
-
-@dataclass
-class ByteType(Type):
-    """ Single 8bit byte type """
-
-    def __str__(self): return "byte"
-
-
-@dataclass
-class BytesType(ArrayType):
-    base_type: Type = field(default_factory=ByteType, init=False)
-
-    def __str__(self): return 'bytes'
-
-
-@dataclass
-class IntType(Type):
-    """ Solidity native integer type of various bit length and signedness"""
-
-    is_signed: bool
-    """ Whether the type is a signed int or unsigned int """
-    size: int
-    """ Size of the type in bits """
-
-    def __str__(self): return f"{'int' if self.is_signed else 'uint'}{self.size}"
-
-    def is_int(self) -> bool:
-        return True
-
-
-class BoolType(Type):
-    """ Solidity native boolean type"""
-
-    def __str__(self): return "bool"
-
-
-class StringType(Type):
-    """ Solidity native string type"""
-
-    def __str__(self): return "string"
-
-    def is_array(self) -> bool:
-        return True
-
-    def is_string(self) -> bool:
-        return True
-
-
-class VarType(Type):
-    """ Type that wasn't explicitly identified in the code
-
-    This type should not be used without running a subsequent type inference pass.
-
-    An example variable declaration that would use this type symbol: 'var (, mantissa, exponent) = ... '
-    """
-
-    # I've only seen this once in ~10000 contracts where a contract used the 'var' keyword
-
-    def __str__(self): return "var"
-
-
-class AnyType(Type):
-    """ Type that is used only in 'using' declarations to specify that the declaration is overriding all possible types
-
-    For example in the declaration 'using SomeLibrary for *', the overriden type here is AnyType(every type
-    that is imported from SomeLibrary)
-    """
-
-    def __str__(self): return "*"
-
-
-@dataclass
-class MappingType(Type):
-    """ Type that represents a function mapping definition
-
-    For example in the mapping '(uint x => Campaign c)', src would be 'unit' and the dst would be 'Campaign',
-    src_key would be 'x' and dst_key would be 'c'
-    """
-    src: Type
-    dst: Type
-    src_name: Ident = None
-    dst_name: Ident = None
-
-    def __str__(self):
-        def _name(ident):
-            return (' ' + str(ident)) if ident else ''
-        return f"({self.src}{_name(self.src_name)} => {self.dst}{_name(self.dst_name)})"
-
-    def is_mapping(self) -> bool:
-        return True
 
 
 class Location(Enum):
@@ -296,19 +47,6 @@ class Location(Enum):
     """ A location that contains the function call arguments for external function call parameters """
 
     def __str__(self): return self.value
-
-
-@dataclass
-class UserType(Type):
-    """ Type invoked using a valid Solidity reference, e.g. a class, contract, library, enum, etc name"""
-    name: Ident
-
-    def __str__(self): return str(self.name)
-
-
-class NoType(Type):
-    def __str__(self):
-        return '<no_type>'
 
 
 @dataclass
@@ -361,6 +99,13 @@ class Literal(Expr):
     The value may be a python primitive, e.g. an integer, boolean, string, tuple, etc """
     value: Any
     unit: Unit = None
+
+    def code_str(self):
+        # shim for symtab to get type_key for ArrayType sizes, this should match the solnodes2.Literal code_str
+        if isinstance(self.value, str):
+            return f'"{self.value}"'
+        else:
+            return str(self.value)
 
 
 class UnaryOpCode(Enum):
@@ -448,7 +193,7 @@ class New(Expr):
     This expression must then be used as the base object in a constructor call to instantiate it.
 
     """
-    type_name: Type
+    type_name: soltypes.Type
 
 
 @dataclass
@@ -458,7 +203,7 @@ class NewInlineArray(Expr):
     An inline array is one where the elements are explicitly stated in the definition, for example:
     'int[5]   foo2 = [1, 0, 0, 0, 0];'
     """
-    elements: List[Expr]
+    elements: list[Expr]
 
 
 @dataclass
@@ -467,7 +212,7 @@ class PayableConversion(Expr):
 
     For example: 'payable(address(myAddressHex))'
     """
-    args: List[Expr]
+    args: list[Expr]
 
 
 @dataclass
@@ -497,26 +242,26 @@ class CallFunction(Expr):
     """ Invokes a function """
     callee: Expr
     """ This callee is most likely a GetMember expression but can be any callable """
-    modifiers: List
-    args: List[Expr]
+    modifiers: list
+    args: list[Expr]
 
 
 @dataclass
-class Var(Node):
-    var_type: Type
+class Var(AST1Node):
+    var_type: soltypes.Type
     var_name: Ident
     var_loc: Optional[Location] = None
 
 
 @dataclass
 class VarDecl(Stmt):
-    variables: List[Var]
+    variables: list[Var]
     value: Expr
     is_lhs_tuple: bool = False
 
 
 @dataclass
-class Parameter(Node):
+class Parameter(AST1Node):
     var_type: Ident
     var_loc: Location
     var_name: Ident
@@ -532,7 +277,7 @@ class ExprStmt(Stmt):
 
 @dataclass
 class Block(Stmt):
-    stmts: List[Stmt]
+    stmts: list[Stmt]
     is_unchecked: bool = False
 
 
@@ -546,16 +291,16 @@ class If(Stmt):
 @dataclass
 class Catch(Stmt):
     ident: Ident
-    parameters: List[Parameter]
+    parameters: list[Parameter]
     body: Block
 
 
 @dataclass
 class Try(Stmt):
     expr: Expr
-    return_parameters: List[Parameter]
+    return_parameters: list[Parameter]
     body: Block
-    catch_clauses: List[Catch]
+    catch_clauses: list[Catch]
 
 
 @dataclass
@@ -613,7 +358,7 @@ class Throw(Stmt):
 
 
 @dataclass
-class Modifier(Node):
+class Modifier(AST1Node):
     pass
 
 
@@ -646,22 +391,22 @@ class MutabilityModifier2(Modifier):
 @dataclass
 class InvocationModifier(Modifier):
     name: Ident
-    arguments: List[Expr]
+    arguments: list[Expr]
 
 
 @dataclass
 class OverrideSpecifier(Modifier):
-    arguments: List[UserType]
+    arguments: list[soltypes.UserType]
 
 
-class SourceUnit(Node):
+class SourceUnit(AST1Node):
     pass
 
 
 @dataclass
 class PragmaDirective(SourceUnit):
     name: Ident
-    value: Union[str, Expr]
+    value: str | Expr
 
 
 @dataclass
@@ -680,18 +425,18 @@ class UnitImportDirective(ImportDirective):
 
 
 @dataclass
-class SymbolAlias(Node):
+class SymbolAlias(AST1Node):
     symbol: Ident
     alias: Ident
 
 
 @dataclass
 class SymbolImportDirective(ImportDirective):
-    aliases: List[SymbolAlias]
+    aliases: list[SymbolAlias]
 
 
 @dataclass
-class ContractPart(Node):
+class ContractPart(AST1Node):
     pass
 
 
@@ -706,63 +451,64 @@ class SpecialFunctionKind(Enum):
 
 @dataclass
 class FunctionDefinition(SourceUnit, ContractPart):
-    name: Union[Ident, SpecialFunctionKind]
-    parameters: List[Parameter]
-    modifiers: List[Modifier]
-    returns: List[Parameter]
+    name: Ident | SpecialFunctionKind
+    parameters: list[Parameter]
+    modifiers: list[Modifier]
+    returns: list[Parameter]
     code: Block
 
 
 @dataclass
 class ModifierDefinition(ContractPart):
     name: Ident
-    parameters: List[Parameter]
-    modifiers: List[Modifier]
+    parameters: list[Parameter]
+    modifiers: list[Modifier]
     code: Block
 
 
 @dataclass
-class StructMember(Node):
-    member_type: Type
+class StructMember(AST1Node):
+    member_type: soltypes.Type
     name: Ident
 
 
 @dataclass
 class StructDefinition(SourceUnit, ContractPart):
     name: Ident
-    members: List[StructMember]
+    members: list[StructMember]
 
 
 @dataclass
 class EnumDefinition(SourceUnit, ContractPart):
     name: Ident
-    values: List[Ident]
+    values: list[Ident]
 
 
 @dataclass
 class StateVariableDeclaration(ContractPart):
-    var_type: Type
-    modifiers: List[Modifier]
+    var_type: soltypes.Type
+    modifiers: list[Modifier]
     name: Ident
     initial_value: Expr
 
 
 @dataclass
 class ConstantVariableDeclaration(SourceUnit):
-    var_type: Type
+    var_type: soltypes.Type
     name: Ident
     initial_value: Expr
 
 
+# TODO: rename with -Definition suffix
 @dataclass
 class UserValueType(SourceUnit, ContractPart):
     name: Ident
-    value: Type
+    value: soltypes.Type
 
 
 @dataclass
-class EventParameter(Node):
-    var_type: Type
+class EventParameter(AST1Node):
+    var_type: soltypes.Type
     name: Ident
     is_indexed: bool
 
@@ -771,97 +517,87 @@ class EventParameter(Node):
 class EventDefinition(ContractPart):
     name: Ident
     is_anonymous: bool
-    parameters: List[EventParameter]
+    parameters: list[EventParameter]
 
 
 @dataclass
-class ErrorParameter(Node):
-    var_type: Type
+class ErrorParameter(AST1Node):
+    var_type: soltypes.Type
     name: Ident
 
 
 @dataclass
 class ErrorDefinition(SourceUnit, ContractPart):
     name: Ident
-    parameters: List[ErrorParameter]
+    parameters: list[ErrorParameter]
 
 
 @dataclass
-class UsingAttachment(Node):
+class UsingAttachment(AST1Node):
     member_name: Ident
 
 
 @dataclass
-class UsingOperatorBinding(Node):
+class UsingOperatorBinding(AST1Node):
     member_name: Ident
-    operator: Union[UnaryOpCode, BinaryOpCode]
+    operator: UnaryOpCode | BinaryOpCode
 
 
 @dataclass
 class UsingDirective(ContractPart):
     library_name: Ident
     # either override_type or bindings is allowed but not both at the same time
-    override_type: Type
-    attachments_or_bindings: List[Union[UsingAttachment, UsingOperatorBinding]] = field(default_factory=list)
+    override_type: soltypes.Type
+    attachments_or_bindings: list[UsingAttachment | UsingOperatorBinding] = field(default_factory=list)
     is_global: bool = field(default=False)
 
 
 @dataclass
-class InheritSpecifier(Node):
-    name: UserType
-    args: List[Expr]
+class InheritSpecifier(AST1Node):
+    name: soltypes.UserType
+    args: list[Expr]
 
 
 @dataclass
 class ContractDefinition(SourceUnit):
     name: Ident
     is_abstract: bool
-    inherits: List[InheritSpecifier]
-    parts: List[ContractPart]
+    inherits: list[InheritSpecifier]
+    parts: list[ContractPart]
 
 
 @dataclass
 class InterfaceDefinition(SourceUnit):
     name: Ident
-    inherits: List[InheritSpecifier]
-    parts: List[ContractPart]
+    inherits: list[InheritSpecifier]
+    parts: list[ContractPart]
 
 
 @dataclass
 class LibraryDefinition(SourceUnit):
     name: Ident
-    parts: List[ContractPart]
+    parts: list[ContractPart]
 
 
 @dataclass
 class CreateMetaType(Expr):
-    base_type: Type
+    base_type: soltypes.Type
 
 
-@dataclass
-class FunctionType(Type):
-    parameters: List[Parameter]
-    modifiers: List[Modifier]
-    return_parameters: List[Parameter]
-
-    def __str__(self):
-        # TODO
-        return f'FT'
-
-    def type_key(self):
-        # doesn't include modifiers for now
-        input_params = ', '.join([p.var_type.type_key() for p in self.parameters])
-        output_params = ', '.join([p.var_type.type_key() for p in self.return_parameters])
-        return f'function ({input_params}) returns ({output_params})'
-
-    def is_function(self) -> bool:
-        return True
-
-
-def has_modifier_kind(node, *kinds: Union[VisibilityModifierKind, MutabilityModifierKind]):
+def has_modifier_kind(node, *kinds: VisibilityModifierKind | MutabilityModifierKind):
     if hasattr(node, 'modifiers'):
         own_kinds = [m.kind for m in node.modifiers if hasattr(m, 'kind')]
         for k in kinds:
             if k in own_kinds:
                 return True
     return False
+
+
+ModFunErrEvt: typing.TypeAlias = ModifierDefinition | FunctionDefinition | ErrorDefinition | EventDefinition
+
+
+Types: typing.TypeAlias = (soltypes.VariableLengthArrayType | soltypes.VoidType | soltypes.IntType
+                           | soltypes.FunctionType | soltypes.ArrayType | soltypes.BytesType | soltypes.BoolType
+                           | soltypes.AnyType | soltypes.MappingType | soltypes.UserType | soltypes.StringType
+                           | soltypes.FixedLengthArrayType | soltypes.AddressType | soltypes.ByteType)
+
