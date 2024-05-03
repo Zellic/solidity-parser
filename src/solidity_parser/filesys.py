@@ -118,7 +118,7 @@ class VirtualFileSystem:
         # CLI load method
         source_unit_name = self._cli_path_to_source_name(file_path)
         src_code = self._read_file(file_path)
-        self._add_loaded_source(source_unit_name, src_code, origin='[CLI]:'+file_path)
+        return self._add_loaded_source(source_unit_name, src_code, origin='[CLI]:'+file_path)
 
     def process_standard_json(self, path: str):
         json_content = self._read_file(path)
