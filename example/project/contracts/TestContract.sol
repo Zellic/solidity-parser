@@ -6,7 +6,6 @@ import "@openzeppelin/access/Ownable.sol";
 contract MyContract is Ownable {
     uint256 public myVariable;
 
-    // Function to set the value of myVariable
     function setMyVariable(uint256 newValue) public onlyOwner {
         myVariable = newValue;
     }
@@ -17,5 +16,14 @@ contract MyContract is Ownable {
 
     function addToVariable(uint256 value) public onlyOwner {
         myVariable += value;
+    }
+
+    function addToVariable2(uint256 value) public onlyOwner {
+        myVariable += value;
+    }
+
+    function addPositive(uint256 value) public onlyOwner {
+        require(value > 0);
+        this.addToVariable2(value);
     }
 }
