@@ -286,7 +286,8 @@ class Node:
 
     def get_all_children(self, predicate: Callable[['Node'], bool] = None) -> Generator['Node', None, None]:
         for direct_child in self.get_children():
-            yield direct_child
+            if not predicate or predicate(direct_child):
+                yield direct_child
             yield from direct_child.get_all_children(predicate)
 
     def _set_child_parents(self):
