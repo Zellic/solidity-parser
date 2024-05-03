@@ -254,6 +254,11 @@ class FileDefinition(TopLevelUnit):
     scope: 'Scope' = field(default=None, init=False, repr=False, compare=False, hash=False)
     parts: list[ContractPart]
 
+    def descriptor(self) -> str:
+        if self.source_unit_name != self.name.text:
+            return super().descriptor()
+        return f'{self.source_unit_name}'
+
 
 @nodebase.NodeDataclass
 class ContractDefinition(TopLevelUnit):
@@ -804,6 +809,12 @@ class StateVarStore(Expr):
 
     def type_of(self) -> soltypes.Type:
         return self.value.type_of()
+
+    def state_var(self):
+        unit = self.base.type_of().value.x
+        matches = unit.find_named_parts(self.name.text, True, StateVariableDeclaration)
+        assert len(matches) == 1
+        return matches[0]
 
     def code_str(self):
         return f'{self.base.code_str()}.{self.name.code_str()} = {self.value.code_str()}'
