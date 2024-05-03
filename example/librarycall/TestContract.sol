@@ -10,4 +10,8 @@ contract MyContract {
     function addToVariable(uint256 value) public {
         myVariable = adder.add(myVariable, value);
     }
+
+    function notALibraryCall() public {
+        addToVariable(50);
+    }
 }
