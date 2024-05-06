@@ -15,11 +15,15 @@ release = '0.1.16'
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
+    'sphinx.ext.autosectionlabel',
     'sphinx.ext.autodoc',
     'sphinx_autodoc_typehints',
     'sphinx.ext.autosummary',
     'autoapi.extension'
 ]
+
+# Make sure the target is unique
+autosectionlabel_prefix_document = True
 
 autoapi_dirs = ['../../src']
 autoapi_keep_files = True
