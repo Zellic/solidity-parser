@@ -130,7 +130,7 @@ annotating.
 IDE Line Data
 """""""""""""
 
-However, we can also get the corrected and column information for the
+However, we can also get the corrected column information for the
 :py:attr:`start <solidity_parser.ast.nodebase.Node.start_location>` and
 :py:attr:`end <solidity_parser.ast.nodebase.Node.end_location>` of the node if we need to provide these insights to an
 IDE language extension, for example.
@@ -170,7 +170,7 @@ Now create a function to do the text insertions and return the updated source co
 
        return current_source_code
 
-This code might look scary, but we'll go through it step by step:
+This code might look intimidating, but we'll go through it step by step:
 
 * Line 1 simply reverse sorts the insertions based on the order of the functions in the original source code. If we did
   a top-down insertion instead, every insertion would mess up the insertion location of the subsequent ones.

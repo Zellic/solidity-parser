@@ -9,7 +9,7 @@ Who Is This Document For?
 This is for people who want to use SOLP in their own projects.
 
 Set Up a Virtual Environment (Optional)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 It's always recommended to set up a virtual environment (venv) instead of installing the package in the global pip cache.
 
@@ -35,6 +35,8 @@ Windows:
 
 Installing
 ^^^^^^^^^^
+
+Finally, install the SOLP python package.
 
 .. code-block:: bash
 

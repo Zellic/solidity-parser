@@ -10,8 +10,8 @@ Toy Project
 -----------
 
 This tutorial uses the ``example/project`` Solidity project provided in the SOLP repository. It includes examples of
-`imports: <https://docs.soliditylang.org/en/latest/path-resolution.html#imports>`_ and
-`solc remappings <https://docs.soliditylang.org/en/latest/path-resolution.html#imports>`_ as well regular Solidity code.
+`imports <https://docs.soliditylang.org/en/latest/path-resolution.html#imports>`_ and
+`solc remappings <https://docs.soliditylang.org/en/latest/path-resolution.html#import-remapping>`_ as well regular Solidity code.
 
 Here is the contract we'll be parsing. As you can see, it defines contract TestContract, which inherits from Ownable;
 uses the inherited ``onlyOwner`` modifier; and does some simple function calls:
@@ -60,7 +60,7 @@ Copy the ``example`` folder to somewhere on your machine — ``example/project``
 on.
 
 Creating a Virtual File System (VFS)
------------------------------------
+------------------------------------
 
 For SOLP to understand the code in the example project, it has to know where the source files, library files, and import
 remappings are located and how the project is structured.
@@ -113,8 +113,8 @@ give us this very easily. We can then, for example, get the header information f
 
 While this might be useful, there are two limitations here:
 
-* We can't get a reference to the ``ContractDefinition`` for Ownable (the inherited contract). In other words, we only know its name at this point but not where it comes from or what it contains.
-* We have to load each source file one at a time instead of letting SOLP discover its way through the project.
+# We can't get a reference to the ``ContractDefinition`` for Ownable (the inherited contract). In other words, we only know its name at this point but not where it comes from or what it contains.
+# We have to load each source file one at a time instead of letting SOLP discover its way through the project.
 
 
 Getting AST2 Nodes
@@ -298,7 +298,7 @@ the output formatting and exact form might not match the original source code, b
 semantically equal.
 
 If you need to maintain the original format of the code, there are ways to do this using the
-:doc:`line data <sourcecode>` of the node.
+:ref:`getstarted/sourcecode:IDE Line Data` of the node.
 
 Next Steps
 ----------
