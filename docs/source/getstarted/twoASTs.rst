@@ -189,8 +189,8 @@ as defined in the library.
 Final Words
 -----------
 
-Hopefully this document has helped you understand why SOLP as two forms of AST. They look similar, but there are
-important details that make AST2 better for most developers.
+This document aimed to clarify why SOLP are two forms of AST. They look similar, but there are important details that
+make AST2 better for most developers.
 
 There is a lot more you can do with SOLPs ASTs; there are other components and use cases of SOLP that will be documented
 more in the future. In the meantime, check out the :py:mod:`API reference <solidity_parser.ast.solnodes2.py>` to see
