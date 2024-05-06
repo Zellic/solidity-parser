@@ -4,22 +4,22 @@ Client Setup
 .. note::
    Before installing SOLP, follow the instructions in the :doc:`prereq` document..
 
-Who is this document for?
+Who Is This Document For?
 ^^^^^^^^^^^^^^^^^^^^^^^^^
-People who want to use SOLP in their own projects
+This is for people who want to use SOLP in their own projects.
 
-Setup a Virtual Environment (optional)
+Set Up a Virtual Environment (Optional)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-It's always recommended to setup a virtual environment(venv) instead of installing the package in the global pip cache.
+It's always recommended to set up a virtual environment (venv) instead of installing the package in the global pip cache.
 
-Create a venv called `venv`:
+Create a venv called ``venv``.
 
 .. code-block:: bash
 
    python -m venv venv
 
-Then activate the venv:
+Then activate the venv.
 
 Unix:
 
@@ -40,4 +40,4 @@ Installing
 
    pip install <solp>
 
-Where `<solp>` is a path to a clone of the repository or: `git+https://github.com/Zellic/solidity-parser.git`
+Where ``<solp>`` is a path to a clone of the repository or ``git+https://github.com/Zellic/solidity-parser.git``.
