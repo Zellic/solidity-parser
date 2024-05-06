@@ -130,7 +130,7 @@ annotating.
 IDE Line Data
 """""""""""""
 
-However, we can also get the corrected column information for the
+However, we can also get the corrected line and column information for the
 :py:attr:`start <solidity_parser.ast.nodebase.Node.start_location>` and
 :py:attr:`end <solidity_parser.ast.nodebase.Node.end_location>` of the node if we need to provide these insights to an
 IDE language extension, for example.
