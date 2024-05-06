@@ -206,6 +206,9 @@ class VirtualFileSystem:
 
         logging.getLogger('VFS').debug(f'Reading {path}')
 
+        return self._do_read_path(path)
+
+    def _do_read_path(self, path: Path) -> str:
         with path.open(mode='r', encoding='utf-8') as f:
             return f.read()
 
