@@ -133,6 +133,9 @@ Attributes
    .. py:method:: _read_file(path: str, is_cli_path=True) -> str
 
 
+   .. py:method:: _do_read_path(path: pathlib.Path) -> str
+
+
    .. py:method:: _cli_path_to_source_name(input_file_path) -> str
 
       Computes the source name for a source file supplied via command line invocation of solc

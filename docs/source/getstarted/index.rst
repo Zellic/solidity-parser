@@ -10,3 +10,4 @@ Getting Started
    twoASTs
    sourcecode
    scopes
+   vfshooks
