@@ -1,10 +1,10 @@
 Quick Start
 ===========
 
-Welcome to the SOLP docs! This guide will give you a rundown of how to load, parse, analyse and manipulate your Solidity
+Welcome to the SOLP docs! This guide will give you a rundown of how to load, parse, analyze, and manipulate your Solidity
 code using SOLP.
 
-Before starting, make you've installed the SOLP library by following :doc:`clients`.
+Before starting, make sure you've installed the SOLP library by following :doc:`clients`.
 
 Toy Project
 -----------
@@ -13,8 +13,8 @@ This tutorial uses the ``example/project`` Solidity project provided in the SOLP
 `imports: <https://docs.soliditylang.org/en/latest/path-resolution.html#imports>`_ and
 `solc remappings <https://docs.soliditylang.org/en/latest/path-resolution.html#imports>`_ as well regular Solidity code.
 
-Here is the contract we'll be parsing. As you can see, it defines contract TestContract, which inherits from Ownable,
-uses the inherited ``onlyOwner`` modifier and does some simple function calls:
+Here is the contract we'll be parsing. As you can see, it defines contract TestContract, which inherits from Ownable;
+uses the inherited ``onlyOwner`` modifier; and does some simple function calls:
 
 .. code-block:: solidity
    :caption: TestContract.sol
@@ -56,17 +56,17 @@ tutorial.
 
 .. image:: ../../imgs/exampledir.png
 
-Copy the ``example`` folder to somewhere on your machine. ``example/project`` will be the **project directory** from now
+Copy the ``example`` folder to somewhere on your machine — ``example/project`` will be the **project directory** from now
 on.
 
-Creating a Virtual File System(VFS)
+Creating a Virtual File System (VFS)
 -----------------------------------
 
-For SOLP to understand the code in the example project, it has to know where the source files, library files and import
+For SOLP to understand the code in the example project, it has to know where the source files, library files, and import
 remappings are located and how the project is structured.
 
 The :py:class:`solidity_parser.filesys.VirtualFileSystem` object takes these options, handles path mappings, reads
-the files and generates an unrefined AST.
+the files, and generates an unrefined AST.
 
 .. code-block:: python
    :linenos:
@@ -82,9 +82,9 @@ the files and generates an unrefined AST.
        None
    )
 
-Replace ``./project`` on line 3 with your **project directory**
+Replace ``./project`` on line 3 with your **project directory**.
 
-Now give the VFS the remapping file
+Now give the VFS the remapping file.
 
 .. code-block:: python
 
@@ -96,8 +96,8 @@ Now give the VFS the remapping file
 Getting AST1 Nodes
 ------------------
 
-Remember how I mentioned that the VFS gives us an unrefined AST? This form of AST is known as **AST1** and the VFS can
-give us this very easily. We can then, for example, get the header information for ``MyContract`` in ``TestContract.sol``
+Remember how we mentioned that the VFS gives us an unrefined AST? This form of AST is known as **AST1**, and the VFS can
+give us this very easily. We can then, for example, get the header information for MyContract in TestContract.sol.
 
 .. code-block:: python
 
@@ -113,9 +113,8 @@ give us this very easily. We can then, for example, get the header information f
 
 While this might be useful, there are two limitations here:
 
-* We can't get a reference to the ``ContractDefinition`` for ``Ownable`` (the inherited contract), i.e. we only know
-  it's name at this point but not where it comes from or what it contains
-* We have to load each source file one at a time instead of letting SOLP discover its way through the project
+* We can't get a reference to the ``ContractDefinition`` for Ownable (the inherited contract). In other words, we only know its name at this point but not where it comes from or what it contains.
+* We have to load each source file one at a time instead of letting SOLP discover its way through the project.
 
 
 Getting AST2 Nodes
@@ -138,12 +137,11 @@ classes make this super simple!
 
    ast2_builder.process_all()
 
-In this example we only loaded entry point(``TestContract.sol``) but during symbol table building, the ``Ownable.sol``
+In this example, we only loaded the entry point (TestContract.sol), but during symbol-table building, the Ownable.sol
 file was also parsed. This makes it available later for AST2 building.
 
-Now get the AST2 nodes using :py:meth:`Builder.get_top_level_units <solidity_parser.ast.ast2builder.Builder.get_top_level_units>`:
-this includes the ``Ownable`` and ``MyContract`` contracts, but to demonstrate the tree searching behavior, we'll use
-``MyContract`` only.
+Now get the AST2 nodes using :py:meth:`Builder.get_top_level_units <solidity_parser.ast.ast2builder.Builder.get_top_level_units>`. This includes the Ownable and MyContract contracts, but to demonstrate the tree searching behavior, we'll use
+MyContract only.
 
 .. code-block:: python
 
@@ -153,12 +151,12 @@ this includes the ``Ownable`` and ``MyContract`` contracts, but to demonstrate t
    ownable_type: solnodes2.ResolvedUserType = my_contract.inherits[0].name
    ownable_contract: solnodes2.ContractDefinition = ownable_type.value.x
 
-.. note:: These AST2 objects come from the :py:mod:`solidity_parser.ast.solnodes2` module instead of the AST1 :py:mod:`solidity_parser.ast.solnodes` module
+.. note:: These AST2 objects come from the :py:mod:`solidity_parser.ast.solnodes2` module instead of the AST1 :py:mod:`solidity_parser.ast.solnodes` module.
 
-Analysing the AST
+Analyzing the AST
 -----------------
 
-Let's now collect the functions defined by ``Ownable`` and compute a measure of complexity based on the number of calls
+Let's now collect the functions defined by Ownable and compute a measure of complexity based on the number of calls
 it makes. This could be part of a tool to generate code insights or highlight areas that look overly complicated and
 need to be refactored.
 
@@ -179,28 +177,28 @@ need to be refactored.
 The benefits of using an AST structure mean we can search through the entire code of each function easily and extract
 the data we want.
 
-Working with Nodes
+Working With Nodes
 ------------------
 
 SOLP lists the :py:mod:`AST1 <solidity_parser.ast.solnodes>` and :py:mod:`AST2 <solidity_parser.ast.solnodes2>` node
 definitions as Python dataclasses and provides convenience features to make the objects easier to work with. Some common
-ones are:
+ones are the following.
 
 Parenting
 ^^^^^^^^^
 
-All nodes have a ``parent`` attribute that points to the logical parent of the node, i.e. where it's declared in the
-Solidity source code. The exact type of the parent differs depending on the node, for example
+All nodes have a ``parent`` attribute that points to the logical parent of the node (i.e., where it's declared in the
+Solidity source code). The exact type of the parent differs depending on the node. For example,
 
-* a FunctionDefinition can have a Contract, Interface, Library or FileDefinition parent depending on where it was declared
-* an Expr can have a parent that is another Expr or a Stmt
+* A ``FunctionDefinition`` can have a Contract, Interface, Library, or FileDefinition parent depending on where it was declared
+* An ``Expr`` can have a parent that is another ``Expr`` or a ``Stmt``.
 
 Equality by Value
 ^^^^^^^^^^^^^^^^^
 
 Despite storing location and parent information, two nodes representing the same data can be compared using the ``==`` operator,
 even when they are in different places in the AST. Here is a simple analysis that checks for functions that contain
-duplicated code. See how we can also check that the two functions are different(i.e. have a different names and signatures)
+duplicated code. See how we can check that the two functions are different (i.e., have a different names and signatures)
 but also check the ``code`` nodes in an intuitive way.
 
 .. code-block:: python
@@ -215,8 +213,8 @@ but also check the ``code`` nodes in an intuitive way.
 Quick Consistent Hashes
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-Often we want to use nodes as keys in dicts so we need a hash function. Python dataclasses don't support this for
-definitions with mutable attributes or lists but SOLP does. Let's find which variables are set by which functions
+Often we want to use nodes as keys in dicts, so we need a hash function. Python dataclasses don't support this for
+definitions with mutable attributes or lists but SOLP does. Let's find which variables are set by which functions.
 
 .. code-block:: python
 
@@ -228,12 +226,12 @@ definitions with mutable attributes or lists but SOLP does. Let's find which var
        return var_stores
 
 This operation is also surprisingly fast as the ``state_var`` hash is cached until it's modified! This pattern is very
-useful for creating call graphs, e.g. mappings of the type ``FunctionDefinition -> list[FunctionDefinitions]``
+useful for creating call graphs (e.g., mappings of the type ``FunctionDefinition -> list[FunctionDefinitions]``).
 
 Deep Copy
 ^^^^^^^^^
 
-Entire node trees can be passed to :py:func:`copy.deepcopy` to produce a full identical tree
+Entire node trees can be passed to :py:func:`copy.deepcopy` to produce a full identical tree.
 
 .. code-block:: python
 
@@ -247,7 +245,7 @@ Entire node trees can be passed to :py:func:`copy.deepcopy` to produce a full id
 Mutability
 ^^^^^^^^^^
 
-Nodes are mutable: they can be modified and inserted into a different branch of the AST. Let's say you wanted to create
+Nodes are mutable; they can be modified and inserted into a different branch of the AST. Let's say you wanted to create
 a transformer that computes and inlines constant expressions:
 
 .. code-block:: python
@@ -263,7 +261,7 @@ a transformer that computes and inlines constant expressions:
                store.value = solnodes2.Literal(constant_value, constant_type)
 
 
-Python encourages duck typing and SOLP is designed to take advantage of it! The ``value`` attribute is always an ``Expr``
+Python encourages duck typing, and SOLP is designed to take advantage of it! The ``value`` attribute is always an ``Expr``
 for store operations, so we can handle all of these different types of store operations at once.
 
 Code Printing
@@ -282,7 +280,7 @@ Let's say we made SOLP change the function call to ``addToVariable2`` in ``addPo
 
    print(add_positive_func.code.code_str())
 
-This prints:
+This prints
 
 .. code-block:: solidity
 
@@ -295,7 +293,7 @@ This prints:
      this.addToVariable(value);
    }
 
-``code_str`` can be called on any AST2 node, not just the ``code`` of the function. Because the code is parsed by SOLP,
+And ``code_str`` can be called on any AST2 node, not just the ``code`` of the function. Because the code is parsed by SOLP,
 the output formatting and exact form might not match the original source code, but the result will always be
 semantically equal.
 
@@ -306,7 +304,7 @@ Next Steps
 ----------
 
 This document serves as a primer to SOLP and working with the AST of Solidity programs. You can use the patterns given
-here to implement powerful analyses, reason about and generate insights for your own tools.
+here to implement powerful analyses as well as reason about and generate insights for your own tools.
 
 Naturally, there are lots of SOLP details that have been omitted that you might come across. The remaining sections in
 the Getting Started tab fill in these gaps. Enjoy!
