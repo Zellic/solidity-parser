@@ -17,6 +17,11 @@ This means you have to go through the AST1 nodes, as they are guaranteed to be f
 source location info for modifications. You can still use AST2 for analyses but you have to use AST1 nodes to write the
 output.
 
+.. figure:: ../../imgs/astmods2.png
+   :class: with-border
+
+   An overview of the strategy
+
 Setup
 -----
 
@@ -114,7 +119,7 @@ fill in the details as we go along:
 Working with Source Buffers
 """""""""""""""""""""""""""
 
-The ``annotate_func`` function is where we would put the call to an AI service that takes the source code of the **function only**
+The ``annotate_func`` function is where we would put the call to an AI service(or static analysis) that takes the source code of the **function only**
 and provides a summary.
 
 ``func_src`` is extracted from the :py:attr:`source text buffer <solidity_parser.filesys.LoadedSource.contents>` using
