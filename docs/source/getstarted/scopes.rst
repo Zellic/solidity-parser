@@ -84,9 +84,10 @@ Unqualified
 
 .. note:: The ``get_symbol_link`` function will be shown later
 
-*What does ``res_syms`` do? Why not just return the symbols found in the scope?*
+*What does res_syms do? Why not just return the symbols found in the scope?*
 
-This is because SOLP has different types of symbols: some are actual symbols based on elements in the real source code
+``res_syms`` resolves symbolic links in the symbol table to their underlying symbols. This is because SOLP has different
+types of symbols: some are actual symbols based on elements in the real source code
 and some are created because of *links* created from inherits and imports or using statements. Since we want to locate
 source code elements, we need to get the underlying symbol(s).
 
