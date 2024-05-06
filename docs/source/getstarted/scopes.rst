@@ -1,7 +1,7 @@
 Symbols and Scopes
 ==================
 
-The :py:mod:`scoping module <solidity_parser.ast.symtab.py>` for AST1 is a major service in SOLP that provides scope trees
+The :py:mod:`scoping module <solidity_parser.ast.symtab>` for AST1 is a major service in SOLP that provides scope trees
 and tables to the :py:class:`AST2 Builder <solidity_parser.ast.ast2builder.Builder>`.
 
 We'll work through using this API by considering a service that takes `LSP <https://microsoft.github.io/language-server-protocol/>`_
