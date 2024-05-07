@@ -113,8 +113,8 @@ give us this very easily. We can then, for example, get the header information f
 
 While this might be useful, there are two limitations here:
 
-# We can't get a reference to the ``ContractDefinition`` for Ownable (the inherited contract). In other words, we only know its name at this point but not where it comes from or what it contains.
-# We have to load each source file one at a time instead of letting SOLP discover its way through the project.
+#. We can't get a reference to the ``ContractDefinition`` for Ownable (the inherited contract). In other words, we only know its name at this point but not where it comes from or what it contains.
+#. We have to load each source file one at a time instead of letting SOLP discover its way through the project.
 
 
 Getting AST2 Nodes

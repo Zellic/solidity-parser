@@ -75,6 +75,8 @@ Check the parent! Qualified lookups have a base ``x``, and the member is ``y``.
 Unqualified
 ^^^^^^^^^^^
 
+In the unqualified lookup case, search the node's scope directly:
+
 .. code-block:: python
 
    symbols = ast1_node.scope.find(ast1_node.text)
@@ -124,7 +126,7 @@ Search these scopes in the same way as the previous case:
                links.append(get_symbol_link(rs))
 
 Details of ``get_symbol_link``
----------------
+------------------------------
 
 The exact details of ``get_symbol_link`` depend on what LSP framework you're using. Usually, the following info is needed
 from the reference that's found:
@@ -143,7 +145,7 @@ For Solidity built-in symbols, the ``value`` is usually ``None``, but even if it
 be a real AST1 node. SOLP doesn't parse the built-ins; they are created only in the symbol table.
 
 Checking for Built-ins
-^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^
 
 This part is simple. Check if the symbol is any of the following types:
 
@@ -157,7 +159,7 @@ This part is simple. Check if the symbol is any of the following types:
        return isinstance(sym, (symtab.BuiltinFunction, symtab.BuiltinObject, symtab.BuiltinValue))
 
 Mock Built-in File
-"""""""""""""""""
+""""""""""""""""""
 
 When the user tries to find the definition for a built-in, let's give them a file to view that contains pseudocode with
 documentation. For example, when they click on ``msg.sender``, it opens a file called builtins.sol and goes to a struct
@@ -264,7 +266,7 @@ name of this node and the range of the entire node to return to the LSP client.
 
 This function is very simple. It just copies the data from the node into the ``lsp.Range`` object. We've shown it as it
 highlights how SOLP source locations are `1 based` whereas LSP/IDE locations for this use case are `0 based`, hence the
-``-1``s on each position.
+``-1``\'s on each position.
 
 Definition Name Span
 """"""""""""""""""""
