@@ -20,7 +20,7 @@ output.
 .. figure:: ../../imgs/astmods2.png
    :class: with-border
 
-   An overview of the strategy
+   An overview of the strategy.
 
 Setup
 -----
@@ -119,7 +119,7 @@ fill in the details as we go along:
 Working With Source Buffers
 """""""""""""""""""""""""""
 
-The ``annotate_func`` function is where we would put the call to an AI service(or static analysis) that takes the source code of the **function only**
+The ``annotate_func`` function is where we would put the call to an AI service (or static analysis) that takes the source code of the **function only**
 and provides a summary.
 
 Also, ``func_src`` is extracted from the :py:attr:`source text buffer <solidity_parser.filesys.LoadedSource.contents>` using
@@ -176,7 +176,7 @@ This code might look intimidating, but we'll go through it step by step:
   a top-down insertion instead, every insertion would mess up the insertion location of the subsequent ones.
 * Lines 6–7 simply create a split in the text for us to put the function-summary comment. Since we're inserting comments
   before each function, we use the ``start_buffer_index`` — ``left`` then becomes all of the code in the file up to the ``function``
-  keyword and right is everything that comes after. When we insert our comment after ``left`` but before ``right``, it
+  keyword and ``right`` is everything that comes after. When we insert our comment after ``left`` but before ``right``, it
   puts our comment right above the function.
 * Lines 10–11 put the comments on the same indentation level as the function to make it easier to read.
 * Line 12 simply joins up all the parts and whitespace required, creating a complete source file's worth of code.

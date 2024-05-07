@@ -1,27 +1,27 @@
-Customising File Parsing
+Customizing File Parsing
 ========================
 
-So far all of the guides have used the default config of the :py:class:`VirtualFileSystem <solidity_parser.filesys.VirtualFileSystem>`
-to find, load and parse the input Solidity code. This guide goes over customising parser versions, file resolution and
+So far, all of the guides have used the default config of the :py:class:`VirtualFileSystem <solidity_parser.filesys.VirtualFileSystem>`
+to find, load, and parse the input Solidity code. This guide goes over customizing parser versions, file resolution, and
 useful tips for hooking into the VFS.
 
 Parser Version
 --------------
 
-SOLP is the only tool that's able to parse any version of Solidity source code; it doesn't require lots of builds of
-SOLP and doesn't work on EVM bytecode. To do this, the Solidity version pragma in each file is processed and a suitable
+SOLP is the only tool that's able to parse any version of Solidity source code. It doesn't require a lot of builds of
+SOLP and doesn't work on EVM bytecode. To do this, the Solidity version pragma in each file is processed, and a suitable
 parser version is inferred.
 
-Sometimes this inference doesn't work: files may have conflicting versions or versions may be omitted.
+Sometimes this inference doesn't work; files may have conflicting versions or versions may be omitted.
 
 To get around this, pass a :py:class:`Version <solidity_parser.util.version_util.Version>` to the VFS constructor.
-This will force the parser version and the language version for different steps later on, e.g.
+This will force the parser version and the language version for different steps later on. For example, this
 
 .. code-block:: python
 
    vfs = VirtualFileSystem(base_path, None, [src_path], compiler_version=Version(0, 8, 22))
 
-would force the version to Solidity 0.8.22
+would force the version to Solidity 0.8.22.
 
 Overriding File Reading
 -----------------------
@@ -49,7 +49,7 @@ setting the :py:meth:`_do_read_path <solidity_parser.filesys.VirtualFileSystem._
 AST1 Parser Override
 --------------------
 
-By default SOLP uses :py:func:`<solidity_parser.ast.helper.make_ast>` helper to choose a builtin ANTLR parser. For
+By default, SOLP uses the :py:func:`<solidity_parser.ast.helper.make_ast>` helper to choose a built-in ANTLR parser. For
 custom parsers, create a shim for :py:meth:`_add_loaded_source <solidity_parser.filesys.VirtualFileSystem._add_loaded_source>`.
 
 .. code-block:: python
