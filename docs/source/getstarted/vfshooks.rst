@@ -66,3 +66,8 @@ custom parsers, create a shim for :py:meth:`_add_loaded_source <solidity_parser.
 
 .. note:: The creator has to have the same signature as ``make_ast``.
 
+Conclusion
+----------
+For most users the contents of this guide are never needed as initializer arguments are capable of changing the file
+loading and parser selection characteristics automatically. However, for completeness, this guide has given some common
+techniques for extending and customising the behaviour of the VirtualFileSystem

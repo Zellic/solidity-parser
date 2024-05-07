@@ -50,7 +50,7 @@ Hold on! There's a couple of assumptions there. Consider the following Solidity 
 There are two things to note here.
 
 1. The Parent of ``toUint256`` Is a ``LibraryDefinition``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This point is solved by changing our mental model slightly. Does it really matter that the parent is a library or a contract?
 Usually, not really. Instead, we generalize the parent of something like a function or a state variable to be a TopLevelUnit in AST2.
@@ -76,8 +76,8 @@ Solidity allows free-floating definitions for functions and events as well as ne
 inside of a contract). This makes traversing AST1 nodes more difficult as you don't have a guarantee that the SourceUnit
 is a root node or if it is part of another SourceUnit.
 
-2. FileDefinitions
-^^^^^^^^^^^^^^^^^^^
+2. FileDefinitions Can Contain ContractParts
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Ask the virtual file system to load and parse the file above. You'll get a list of source units:
 
@@ -119,7 +119,7 @@ These constructs in Solidity require compiler support for the Solidity code to m
 
 * Imports need to be resolved using path resolution rules.
 * Pragmas influence the compiler version.
-* Using statements change what members are available for a type in a given scope.
+* Using statements change which members are available for a type in a given scope.
 
 These are complicated details that aren't useful to most people who need to the use the AST; they just want to deal
 with a simple AST interface that lets them easily navigate the Solidity code.
