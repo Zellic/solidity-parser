@@ -2,7 +2,7 @@ Client Setup
 ===============
 
 .. note::
-   Before installing SOLP, follow the instructions in the :doc:`prereq` document..
+   Before installing SOLP, follow the instructions in the :doc:`prereq` document.
 
 Who Is This Document For?
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -36,10 +36,10 @@ Windows:
 Installing
 ^^^^^^^^^^
 
-Finally, install the SOLP python package.
+Finally, install the SOLP python package,
 
 .. code-block:: bash
 
    pip install <solp>
 
-Where ``<solp>`` is a path to a clone of the repository or ``git+https://github.com/Zellic/solidity-parser.git``.
+where ``<solp>`` is a path to a clone of the repository or ``git+https://github.com/Zellic/solidity-parser.git``.

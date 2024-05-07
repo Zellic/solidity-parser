@@ -29,7 +29,7 @@ TopLevelUnits vs SourceUnits
 
 
 All nodes have a ``parent`` attribute, right? So let's say we have a function, modifier, event (etc.) definition, and we want to get the contract it
-was declared in, we just take the parent and use it like it's a Contract.
+was declared in. We just take the parent and use it like it's a contract.
 
 Hold on! There's a couple of assumptions there. Consider the following Solidity valid code:
 
@@ -53,7 +53,7 @@ There are two things to note here.
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 This point is solved by changing our mental model slightly. Does it really matter that the parent is a library or a contract?
-Usually, not really. Instead, we generalize the parent of something like a function or a state variable to be a ``TopLevelUnit`` in AST2.
+Usually, not really. Instead, we generalize the parent of something like a function or a state variable to be a TopLevelUnit in AST2.
 Without needing to know the specific definition type, we can
 
 * get type information (:py:meth:`as_type() <solidity_parser.ast.solnodes2.TopLevelUnit.as_type>`)
@@ -113,13 +113,13 @@ in the AST2 ``function.code`` for ``toUint256``, the revert node is this:
 Imports, Pragmas, Usings
 ------------------------
 
-AST1 has a bunch of ``SourceUnit`` subclasses such as ``PragmaDirective``, ``ImportDirective``, and ``UsingDirective``. We don't see them in AST2; what's going on?
+AST1 has a bunch of SourceUnit subclasses such as ``PragmaDirective``, ``ImportDirective``, and ``UsingDirective``. We don't see them in AST2; what's going on?
 
 These constructs in Solidity require compiler support for the Solidity code to make sense. For example,
 
 * Imports need to be resolved using path resolution rules.
 * Pragmas influence the compiler version.
-* Using statements changes what members are available for a type in a given scope.
+* Using statements change what members are available for a type in a given scope.
 
 These are complicated details that aren't useful to most people who need to the use the AST; they just want to deal
 with a simple AST interface that lets them easily navigate the Solidity code.
@@ -161,7 +161,7 @@ Consider the contracts:
 Import Resolution
 ^^^^^^^^^^^^^^^^^
 
-The import on line 13 is removed in AST2. The ``LibraryDefinition`` generated from `dderLib.sol is directly referenced
+The import on line 13 is removed in AST2. The ``LibraryDefinition`` generated from AdderLib.sol is directly referenced
 on line 16 as a :py:class:`ResolvedUserType <solidity_parser.ast.solnodes2.ResolvedUserType>`, which, as the name suggests, is a :py:class:`Type <solidity_parser.ast.types.Type>`
 containing a reference to the library definition. However, the AST1 :py:class:`UserType <solidity_parser.ast.types.UserType>` only knows the textual name of the type
 used in the Solidity source code.
@@ -178,7 +178,7 @@ Using Directives
 ^^^^^^^^^^^^^^^^
 
 In a similar vein, the library call on line 20 is made explicit in AST2. As shown by the ``code_str`` of the node below,
-the previous 2 argument function call now takes takes the base as the first argument, matching the signature of ``add``
+the previous 2-ary function call now takes takes the base as the first argument, matching the signature of ``add``
 as defined in the library.
 
 .. code-block:: Solidity

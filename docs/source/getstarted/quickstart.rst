@@ -11,7 +11,7 @@ Toy Project
 
 This tutorial uses the ``example/project`` Solidity project provided in the SOLP repository. It includes examples of
 `imports <https://docs.soliditylang.org/en/latest/path-resolution.html#imports>`_ and
-`solc remappings <https://docs.soliditylang.org/en/latest/path-resolution.html#import-remapping>`_ as well regular Solidity code.
+`solc remappings <https://docs.soliditylang.org/en/latest/path-resolution.html#import-remapping>`_ as well as regular Solidity code.
 
 Here is the contract we'll be parsing. As you can see, it defines contract TestContract, which inherits from Ownable;
 uses the inherited ``onlyOwner`` modifier; and does some simple function calls:
@@ -140,7 +140,7 @@ classes make this super simple!
 In this example, we only loaded the entry point (TestContract.sol), but during symbol-table building, the Ownable.sol
 file was also parsed. This makes it available later for AST2 building.
 
-Now get the AST2 nodes using :py:meth:`Builder.get_top_level_units <solidity_parser.ast.ast2builder.Builder.get_top_level_units>`. This includes the Ownable and MyContract contracts, but to demonstrate the tree searching behavior, we'll use
+Now get the AST2 nodes using :py:meth:`Builder.get_top_level_units <solidity_parser.ast.ast2builder.Builder.get_top_level_units>`. This includes the Ownable and MyContract contracts, but to demonstrate the tree-searching behavior, we'll use
 MyContract only.
 
 .. code-block:: python
@@ -214,7 +214,7 @@ Quick Consistent Hashes
 ^^^^^^^^^^^^^^^^^^^^^^^
 
 Often we want to use nodes as keys in dicts, so we need a hash function. Python dataclasses don't support this for
-definitions with mutable attributes or lists but SOLP does. Let's find which variables are set by which functions.
+definitions with mutable attributes or lists, but SOLP does. Let's find which variables are set by which functions.
 
 .. code-block:: python
 
