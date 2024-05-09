@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.17] - 2024-05-09
+ - Added documentation site
+ - Changed AST2 FileDefinition descriptor to not include file name twice
+ - Added AST2 ContractDefinition.state_var()
+ - Changed VFS process_cli_input_file to return LoadedSource result
+ - Added _do_read_path to VFS
+
 ### [0.1.16] - 2024-04-16
  - Created nodebase.py for all Node base type for AST1 and AST2 nodes
    - NodeDataclass/NodeList parenting mechanism added to AST1
