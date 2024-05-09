@@ -6,10 +6,14 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
+import importlib.metadata
+
+__version__ = importlib.metadata.version("solidity-parser")
+
 project = 'SOLP'
 copyright = '2024, Zellic'
 author = 'Zellic'
-release = '0.1.16'
+release = __version__
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
