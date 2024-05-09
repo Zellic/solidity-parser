@@ -1,7 +1,7 @@
 import sys
 from solidity_parser.ast.parsers.common import ParserBase, get_all_subparsers, map_helper
 from solidity_parser.ast.parsers.errors import invalid_solidity
-from solidity_parser.ast import solnodes
+from solidity_parser.ast import solnodes, types as soltypes
 
 from solidity_parser.grammar.v060.SolidityParser import SolidityParser
 
@@ -39,10 +39,12 @@ def custom_parsers():
         'EventParameterListContext': ParserBase.make_all,
     }
 
+
 def _block(parser, block: SolidityParser.BlockContext):
     return solnodes.Block(
         parser.make_all(block)
     )
+
 
 def _if(parser, stmt: SolidityParser.IfStatementContext):
     return solnodes.If(
@@ -140,15 +142,19 @@ def _var_decl_stmt(parser, stmt: SolidityParser.VariableDeclarationStatementCont
         # e.g: var (, mantissa, exponent) = unpackPrice(price); which is deprecated in 0.4.20
         # desugar it into multiple variables, TODO: figure out the types in a later type inference pass
         names = parser.make(stmt.identifierList())
-        variables = [solnodes.Var(solnodes.VarType(), name, None) for name in names]
+        variables = [solnodes.Var(soltypes.VarType(), name, None) for name in names]
+        is_tuple = True
     elif stmt.variableDeclaration() is not None:
         variables = [parser.make(stmt.variableDeclaration())]
+        is_tuple = False
     else:
         variables = parser.make_all(stmt.variableDeclarationList())
+        is_tuple = True
 
     return solnodes.VarDecl(
         variables,
-        parser.make(stmt.expression())
+        parser.make(stmt.expression()),
+        is_tuple
     )
 
 
@@ -239,12 +245,12 @@ def _unary_post_op(parser, expr: SolidityParser.UnaryPostOpContext):
 def _type_name(parser, type_name: SolidityParser.TypeNameContext):
     if type_name.typeName():
         if type_name.expression():
-            return solnodes.VariableLengthArrayType(
+            return soltypes.VariableLengthArrayType(
                 parser.make(type_name.typeName()),
                 parser.make(type_name.expression())
             )
         else:
-            return solnodes.ArrayType(
+            return soltypes.ArrayType(
                 parser.make(type_name.typeName())
             )
     else:
@@ -252,17 +258,32 @@ def _type_name(parser, type_name: SolidityParser.TypeNameContext):
 
 
 def _mapping_type(parser, mapping_type: SolidityParser.MappingContext):
-    return solnodes.MappingType(
+    return soltypes.MappingType(
         parser.make(mapping_type.mappingKey()),
         parser.make(mapping_type.typeName())
     )
 
 
+def params_to_types(params: solnodes.Parameter):
+    # TODO: add name + storage to FunctionType. Is it even necessary?
+    # old solnodes1.FunctionType had this but solnodes2.FunctionType didn't and now types.FunctionType doesn't either
+    # so this informtion isn't stored.
+    # Idea: create a new mixin that can be added to all the Type subclasses OR create a new NamedType that has the
+    # actual type as an attr and redirects Type calls to the attr. e.g.
+    #  class NamedType(Type):
+    #      name: Ident
+    #      ttype: Type
+    #      storage: ...
+    #      def __getattr__(self, name):
+    #          # checks...
+    #          return getattr(self.ttype, name)
+    return [p.var_type for p in params]
+
 def _function_type_name(parser, function_type: SolidityParser.FunctionTypeNameContext):
-    return solnodes.FunctionType(
-        parser.make(function_type.parameterList()),
-        parser.make(function_type.modifierList()),
-        parser.make(function_type.returnParameters())
+    return soltypes.FunctionType(
+        params_to_types(parser.make(function_type.parameterList(), default=[])),
+        params_to_types(parser.make(function_type.returnParameters(), default=[])),
+        parser.make(function_type.modifierList(), default=[])
     )
 
 
@@ -275,8 +296,8 @@ def _new_obj(parser, expr: SolidityParser.NewTypeContext):
 def _array_slice(parser, expr: SolidityParser.ArraySliceContext):
     return solnodes.GetArraySlice(
         parser.make(expr.base),
-        parser.make(expr.start),
-        parser.make(expr.end)
+        parser.make(expr.start_expr),
+        parser.make(expr.end_expr)
     )
 
 
@@ -309,15 +330,15 @@ def _primary(parser, expr: SolidityParser.PrimaryExpressionContext):
     elif expr.typeNameExpression() is not None:
         base_type = parser.make(expr.typeNameExpression())
         if expr.arrayBrackets():
-            return solnodes.ArrayType(base_type)
+            return soltypes.ArrayType(base_type)
         else:
             return base_type
     elif expr.identifier() is not None:
         # In the 080 grammar primary expressions hit 'identifier' first. To match this, if this isn't
         # an array type, return as an ident
         if expr.arrayBrackets():
-            base_type = solnodes.UserType(parser.make(expr.identifier()))
-            return solnodes.ArrayType(base_type)
+            base_type = soltypes.UserType(parser.make(expr.identifier()))
+            return soltypes.ArrayType(base_type)
         else:
             return parser.make(expr.identifier())
     else:
@@ -397,37 +418,37 @@ def _catch_clause(parser, clause: SolidityParser.CatchClauseContext):
 def _elementary_type_name(parser, name: SolidityParser.ElementaryTypeNameContext):
     if name.addressType():
         payable = name.addressType().PayableKeyword() is not None
-        return solnodes.AddressType(payable)
+        return soltypes.AddressType(payable)
     elif name.BoolType():
-        return solnodes.BoolType()
+        return soltypes.BoolType()
     elif name.StringType():
-        return solnodes.StringType()
+        return soltypes.StringType()
     elif name.VarType():
-        return solnodes.VarType()
+        return soltypes.VarType()
     elif name.Int():
         size_str = name.Int().getText()[3:]
         size = int(size_str) if size_str else 256
-        return solnodes.IntType(True, size)
+        return soltypes.IntType(True, size)
     elif name.Uint():
         size_str = name.Uint().getText()[4:]
         size = int(size_str) if size_str else 256
-        return solnodes.IntType(False, size)
+        return soltypes.IntType(False, size)
     elif name.AByte():
         # 'byte' is a type alias for 'bytes1' (according to docs)
-        return solnodes.FixedLengthArrayType(solnodes.ByteType(), 1)
+        return soltypes.FixedLengthArrayType(soltypes.ByteType(), 1)
     elif name.Byte():
         if name.Byte().getText() == 'bytes':
-            return solnodes.BytesType()
+            return soltypes.BytesType()
         else:
             size_str = name.Byte().getText()[5:]
             size = int(size_str)
-            return solnodes.FixedLengthArrayType(solnodes.ByteType(), size)
+            return soltypes.FixedLengthArrayType(soltypes.ByteType(), size)
     else:
         raise NotImplementedError('fixed/ufixed')
 
 
 def _user_defined_type(parser, name: SolidityParser.UserDefinedTypeNameContext):
-    return solnodes.UserType(solnodes.Ident(name.getText()))
+    return soltypes.UserType(solnodes.Ident(name.getText()))
 
 
 def _modifier_invocation(parser, modifier: SolidityParser.ModifierInvocationContext):
@@ -617,7 +638,7 @@ def _using_for_declaration(parser, using_for_declaration: SolidityParser.UsingFo
     if using_for_declaration.typeName():
         override_type = parser.make(using_for_declaration.typeName())
     else:
-        override_type = solnodes.AnyType()
+        override_type = soltypes.AnyType()
 
     return solnodes.UsingDirective(
         parser.make(using_for_declaration.identifier()),

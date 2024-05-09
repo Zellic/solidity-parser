@@ -23,3 +23,5 @@ src/solidity_parser.egg-info/
 
 # leave this out for now as we don't have stable builds yet
 dist/
+docs/build
+docs/source/autoapi

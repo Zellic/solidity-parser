@@ -3,7 +3,7 @@ from solidity_parser.ast.parsers.common import ParserBase, get_subparsers_from_m
 from solidity_parser.ast.parsers.errors import assert_invalid_path, unsupported_feature
 import solidity_parser.ast.parsers.parsers060 as parsers060
 from solidity_parser.grammar.v080.SolidityParser import SolidityParser
-from solidity_parser.ast import solnodes
+from solidity_parser.ast import solnodes, types as soltypes
 
 
 class Parser080(ParserBase):
@@ -68,7 +68,8 @@ def _pragma_directive(parser, pragma_directive: SolidityParser.PragmaDirectiveCo
     total_str = ''
     for token in pragma_directive.PragmaToken():
         total_str += token.getText()
-    parts = total_str.split(None, 1)
+    sep = '=' if '=' in total_str else None
+    parts = total_str.split(sep, 1)
     assert len(parts) == 2
 
     name_ident = parser.wrap_node(pragma_directive, solnodes.Ident(parts[0]))
@@ -139,7 +140,7 @@ def _library_definition(parser, library_definition: SolidityParser.LibraryDefini
 def _inheritance_specifier(parser, inheritance_specifier: SolidityParser.InheritanceSpecifierContext):
     type_name = parser.make(inheritance_specifier.identifierPath())
     return solnodes.InheritSpecifier(
-        solnodes.UserType(type_name),
+        parser.wrap_node(inheritance_specifier.identifierPath(), soltypes.UserType(type_name)),
         parser.make(inheritance_specifier.callArgumentList(), default=[])
     )
 
@@ -170,9 +171,9 @@ def _constructor_definition(parser, constructor_definition: SolidityParser.Const
 
 def _function_definition(parser, function_definition: SolidityParser.FunctionDefinitionContext):
     if function_definition.Fallback():
-        name = solnodes.SpecialFunctionKind.FALLBACK
+        name = parser.wrap_node(function_definition.Fallback(), solnodes.Ident(solnodes.SpecialFunctionKind.FALLBACK.value))
     elif function_definition.Receive():
-        name = solnodes.SpecialFunctionKind.RECEIVE
+        name = parser.wrap_node(function_definition.Receive(), solnodes.Ident(solnodes.SpecialFunctionKind.RECEIVE.value))
     else:
         name = parser.make(function_definition.identifier())
 
@@ -237,7 +238,7 @@ def _fallback_function_definition(parser, fallback_function_definition: Solidity
     modifiers += parser.make_all_rules(fallback_function_definition.overrideSpecifier())
 
     return solnodes.FunctionDefinition(
-        solnodes.SpecialFunctionKind.FALLBACK,
+        parser.wrap_node(fallback_function_definition.Fallback(), solnodes.Ident(solnodes.SpecialFunctionKind.FALLBACK.value)),
         parser.make(fallback_function_definition.parameterList(0), default=[]),
         modifiers,
         parser.make(fallback_function_definition.returnParameters, default=[]),
@@ -264,7 +265,7 @@ def _receive_function_definition(parser, receive_function_definition: SolidityPa
     modifiers += parser.make_all_rules(receive_function_definition.overrideSpecifier())
 
     return solnodes.FunctionDefinition(
-        solnodes.SpecialFunctionKind.RECEIVE,
+        parser.wrap_node(receive_function_definition.Receive(), solnodes.Ident(solnodes.SpecialFunctionKind.RECEIVE.value)),
         [],
         modifiers,
         [],
@@ -341,7 +342,7 @@ def _error_parameter(parser, error_parameter: SolidityParser.ErrorParameterConte
 
 def _using_directive(parser, using_directive: SolidityParser.UsingDirectiveContext):
     if using_directive.Mul():
-        override_type = solnodes.AnyType()
+        override_type = soltypes.AnyType()
     else:
         override_type = parser.make(using_directive.typeName())
 
@@ -355,7 +356,7 @@ def _override_specifier(parser, override_specific: SolidityParser.OverrideSpecif
     overrides = parser.make_all_rules(override_specific.identifierPath())
 
     return solnodes.OverrideSpecifier(
-        map_helper(lambda override: solnodes.UserType(override), overrides)
+        map_helper(lambda override: parser.copy_source_data(override, soltypes.UserType(override)), overrides)
     )
 
 
@@ -428,12 +429,15 @@ def _var_decl_stmt(parser, stmt: SolidityParser.VariableDeclarationStatementCont
 
     if stmt.variableDeclaration() is not None:
         variables = [parser.make(stmt.variableDeclaration())]
+        is_tuple = False
     else:
         variables = parser.make_all(stmt.variableDeclarationTuple())
+        is_tuple = True
 
     return solnodes.VarDecl(
         variables,
-        parser.make(stmt.expression())
+        parser.make(stmt.expression()),
+        is_tuple
     )
 
 
@@ -455,15 +459,6 @@ def _expr_stmt(parser, stmt: SolidityParser.ExpressionStatementContext):
     )
 
 
-def _try(parser, stmt: SolidityParser.TryStatementContext):
-    return solnodes.Try(
-        parser.make(stmt.expression()),
-        parser.make(stmt.parameterList(), default=[]),
-        parser.make(stmt.block()),
-        parser.make_all_rules(stmt.catchClause())
-    )
-
-
 def _catch_clause(parser, catch_clause: SolidityParser.CatchClauseContext):
     return solnodes.Catch(
         parser.make(catch_clause.identifier()),
@@ -474,21 +469,21 @@ def _catch_clause(parser, catch_clause: SolidityParser.CatchClauseContext):
 
 def _emit(parser, stmt: SolidityParser.EmitStatementContext):
     return solnodes.Emit(
-        solnodes.CallFunction(
+        parser.wrap_node(stmt, solnodes.CallFunction(
             parser.make(stmt.expression()),
             [],
             parser.make(stmt.callArgumentList())
-        )
+        ))
     )
 
 
 def _revert(parser, stmt: SolidityParser.RevertStatementContext):
     return solnodes.Revert(
-        solnodes.CallFunction(
+        parser.wrap_node(stmt, solnodes.CallFunction(
             parser.make(stmt.expression()),
             [],
             parser.make(stmt.callArgumentList())
-        )
+        ))
     )
 
 
@@ -506,8 +501,8 @@ def _index_access(parser, expr: SolidityParser.IndexAccessContext):
 def _index_range_access(parser, expr: SolidityParser.IndexRangeAccessContext):
     return solnodes.GetArraySlice(
         parser.make(expr.expression(0)),
-        parser.make(expr.start),
-        parser.make(expr.end)
+        parser.make(expr.start_expr),
+        parser.make(expr.end_expr)
     )
 
 
@@ -541,25 +536,25 @@ def _meta_type(parser, meta_type: SolidityParser.MetaTypeContext):
 def _type_name(parser, type_name: SolidityParser.TypeNameContext):
     if type_name.typeName():
         if type_name.expression():
-            return solnodes.VariableLengthArrayType(
+            return soltypes.VariableLengthArrayType(
                 parser.make(type_name.typeName()),
                 parser.make(type_name.expression())
             )
         else:
-            return solnodes.ArrayType(
+            return soltypes.ArrayType(
                 parser.make(type_name.typeName())
             )
     elif type_name.identifierPath():
-        return solnodes.UserType(parser.make_first(type_name))
+        return soltypes.UserType(parser.make_first(type_name))
     else:
         return parser.make_first(type_name)
 
 
 def _function_type_name(parser, function_type: SolidityParser.FunctionTypeNameContext):
-    return solnodes.FunctionType(
-        parser.make(function_type.arguments),
-        parser.make_all_rules(function_type.visibility()) + parser.make_all_rules(function_type.stateMutability()),
-        parser.make(function_type.returnParameters)
+    return soltypes.FunctionType(
+        parsers060.params_to_types(parser.make(function_type.arguments, default=[])),
+        parsers060.params_to_types(parser.make(function_type.returnParameters, default=[])),
+        parser.make_all_rules(function_type.visibility()) + parser.make_all_rules(function_type.stateMutability())
     )
 
 
@@ -567,8 +562,8 @@ def _mapping_type(parser, mapping: SolidityParser.MappingTypeContext):
     key = parser.make(mapping.key)
     # Previous grammars had the key as a type, 0.8 grammar defined is as a raw ident path, so wrap it here
     if isinstance(key, solnodes.Ident):
-        key = solnodes.UserType(key)
-    return solnodes.MappingType(
+        key = parser.wrap_node(mapping.key, soltypes.UserType(key))
+    return soltypes.MappingType(
         key,
         parser.make(mapping.value)
     )
@@ -689,25 +684,25 @@ def _unicode_string_literal(parser, literal: SolidityParser.UnicodeStringLiteral
 def _elementary_type_name(parser, name: SolidityParser.ElementaryTypeNameContext):
     if name.Address():
         payable = name.Payable() is not None
-        return solnodes.AddressType(payable)
+        return soltypes.AddressType(payable)
     elif name.Bool():
-        return solnodes.BoolType()
+        return soltypes.BoolType()
     elif name.String():
-        return solnodes.StringType()
+        return soltypes.StringType()
     elif name.Bytes():
-        return solnodes.BytesType()
+        return soltypes.BytesType()
     elif name.SignedIntegerType():
         size_str = name.SignedIntegerType().getText()[3:]
         size = int(size_str) if size_str else 256
-        return solnodes.IntType(True, size)
+        return soltypes.IntType(True, size)
     elif name.UnsignedIntegerType():
         size_str = name.UnsignedIntegerType().getText()[4:]
         size = int(size_str) if size_str else 256
-        return solnodes.IntType(False, size)
+        return soltypes.IntType(False, size)
     elif name.FixedBytes():
         size_str = name.FixedBytes().getText()[5:]
         size = int(size_str)
-        return solnodes.FixedLengthArrayType(solnodes.ByteType(), size)
+        return soltypes.FixedLengthArrayType(soltypes.ByteType(), size)
     elif name.Fixed() or name.Ufixed():
         return unsupported_feature('fixed/unfixed type')
     else:

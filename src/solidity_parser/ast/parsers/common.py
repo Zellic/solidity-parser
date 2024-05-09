@@ -1,8 +1,8 @@
 import antlr4
-from antlr4.tree.Tree import TerminalNode
 import inspect
-from solidity_parser.ast.solnodes import Node
-import solidity_parser.ast.solnodes as solnodes
+
+from solidity_parser.ast import nodebase, solnodes
+
 
 class ParserBase:
     def __init__(self, subparsers, token_stream):
@@ -16,7 +16,7 @@ class ParserBase:
 
         # this can happen with rule labels like in array slice if the
         # optional subrule in the grammar doesn't match
-        if isinstance(rule, antlr4.Token) or isinstance(rule, TerminalNode):
+        if isinstance(rule, antlr4.Token) or isinstance(rule, antlr4.tree.Tree.TerminalNode):
             return None
 
         # find the appropriate _<type> creation method based on
@@ -58,20 +58,42 @@ class ParserBase:
         else:
             return map_helper(self.make, [r for r in rules if is_grammar_rule(r)])
 
+    def copy_source_data(self, decorated_node, node_to_decorate):
+        node_to_decorate.location = decorated_node.location
+        node_to_decorate.start_location = decorated_node.start_location
+        node_to_decorate.end_location = decorated_node.end_location
+        node_to_decorate.start_buffer_index = decorated_node.start_buffer_index
+        node_to_decorate.end_buffer_index = decorated_node.end_buffer_index
+
+        if hasattr(decorated_node, 'comments'):
+            node_to_decorate.comments = decorated_node.comments
+        return node_to_decorate
+
     def wrap_node(self, rule, node, add_comments=False):
-        if isinstance(node, Node):
+        if isinstance(node, nodebase.Node):
+            if hasattr(rule, 'symbol'):
+                rule = rule.symbol
+            # we add 1 to each column in each of these because we used 1 based columns, see solnodes.SourceLocation
             if isinstance(rule.start, int):
                 # for terminal node symbols
                 node.location = f'{rule.line}:{rule.start}'
-            elif isinstance(rule.start.start, int):
+
+                node.start_location = nodebase.SourceLocation(rule.line, rule.column + 1)
+                token_len = rule.stop - rule.start + 1
+                node.end_location = nodebase.SourceLocation(rule.line, rule.column + token_len + 1)
+
+                node.start_buffer_index = rule.start
+                node.end_buffer_index = rule.stop + 1
+            else:
                 # this is the normal case
                 node.location = f'{rule.start.line}:{rule.start.start}'
-            else:
-                # this is a hack to support fcremo's codebase
-                # see: c3c05f5625b36a6b22a701031416d303a5605e0d
-                # this is not the ideal way to solve it, but is good enough
-                # for now (doesn't break other codebases)
-                node.location = f'{rule.start.start.line}:{rule.start.start.start}'
+
+                node.start_location = nodebase.SourceLocation(rule.start.line, rule.start.column + 1)
+                col_offset = rule.stop.stop - rule.stop.start + 1
+                node.end_location = nodebase.SourceLocation(rule.stop.line, rule.stop.column + col_offset + 1)
+
+                node.start_buffer_index = rule.start.start
+                node.end_buffer_index = rule.stop.stop + 1
 
             # For now just tag comments to contract definitions, function definitions, etc but not stmts, exprs, etc
             if isinstance(node, (solnodes.SourceUnit, solnodes.ContractPart)):

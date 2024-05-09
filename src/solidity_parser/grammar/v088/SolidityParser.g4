@@ -345,7 +345,7 @@ dataLocation: Memory | Storage | Calldata;
  */
 expression:
 	expression LBrack index=expression? RBrack # IndexAccess
-	| expression LBrack start=expression? Colon end=expression? RBrack # IndexRangeAccess
+	| expression LBrack start_expr=expression? Colon end_expr=expression? RBrack # IndexRangeAccess
 	| expression Period (identifier | Address) # MemberAccess
 //	| expression LBrace (namedArgument (Comma namedArgument)*)? RBrace # FunctionCallOptions
 //	| expression callArgumentList # FunctionCall

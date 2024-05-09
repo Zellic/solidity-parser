@@ -4,14 +4,18 @@ from typing import List, Dict, Optional, Union, Callable, Tuple
 from collections import namedtuple
 from solidity_parser.ast import solnodes
 from solidity_parser.ast import helper as ast_helper
+from solidity_parser.util.version_util import Version
 
 import os
 import logging
 import jsons
+from functools import partial
 
 
 @dataclass
 class Source:
+    """ Structure of a source unit defined in the standard JSON input """
+
     # keccak256: Optional[str]
     urls: Optional[List[str]]
     content: str
@@ -19,6 +23,11 @@ class Source:
 
 @dataclass
 class StandardJsonInput:
+    """
+    Solidity standard JSON input see:
+    https://docs.soliditylang.org/en/v0.8.25/using-the-compiler.html#compiler-api
+    """
+
     # language: str # 'Solidity'
     sources: Dict[str, Source]  # source unit name -> source
     # settings, not required for now
@@ -26,30 +35,52 @@ class StandardJsonInput:
 
 @dataclass
 class LoadedSource:
+    """
+    Source unit loaded inside the virtual filesystem
+    """
+
     source_unit_name: str
+    """ The computed source unit name, see the solidity docs for how this is computed """
     contents: str
+    """ Source code """
+    origin: Optional[Path]
+    """ Path to the source unit on disk, if it was loaded from disk """
     ast_creator_callback: Optional[Callable[[str], List[solnodes.SourceUnit]]]
+    """ Optional function for changing the AST creation method, e.g. for testing and forcing the parser version """
 
     @property
     def ast(self) -> List[solnodes.SourceUnit]:
-        # Mechanism for creating the AST on demand and caching it
+        """ Property for getting the AST from the source code lazily """
         if not hasattr(self, '_ast'):
             logging.getLogger('VFS').debug(f'Parsing {self.source_unit_name}')
-
-            if not self.ast_creator_callback:
-                creator = ast_helper.make_ast
-            else:
-                creator = self.ast_creator_callback
-
+            creator = self.ast_creator_callback
             self._ast = creator(self.contents)
         return self._ast
 
 
 ImportMapping = namedtuple('ImportMapping', ['context', 'prefix', 'target'])
+""" An import remapping for changing the source unit name before the import is resolved """
 
 
 class VirtualFileSystem:
-    def __init__(self, base_path: str, cwd: str = None, include_paths: List[str] = None):
+    """
+    This is the "virtual file system" defined in the Solidity docs and implemented in solc. The idea is to abstract
+    away the specifics of how the sources are stored, such as on disk or in memory and the paths used in the source
+    files to resolve imports. The code is not ideal but it emulates the behaviour of the c++ code of solc.
+
+    https://docs.soliditylang.org/en/v0.8.17/path-resolution.html
+    """
+
+    def __init__(self, base_path: str | Path,
+                 cwd: str | Path = None,
+                 include_paths: List[str | Path] = None,
+                 compiler_version: Version = None):
+        """
+        :param base_path: Project base path (e.g. the directory containing all project files)
+        :param cwd: Current working directory(e.g. invocation directory of solc)
+        :param include_paths: List of paths of libraries and source folders
+        :param compiler_version: Version of the parser to use, if not specified, the version in source files will be used
+        """
         if cwd is None:
             cwd = os.getcwd()
         self.cwd = cwd
@@ -64,6 +95,8 @@ class VirtualFileSystem:
 
         self.sources: Dict[str, LoadedSource] = {}
         self.origin_sources: Dict[str, LoadedSource] = {}
+
+        self.compiler_version = compiler_version
 
     @property
     def base_path(self):
@@ -85,7 +118,7 @@ class VirtualFileSystem:
         # CLI load method
         source_unit_name = self._cli_path_to_source_name(file_path)
         src_code = self._read_file(file_path)
-        self._add_loaded_source(source_unit_name, src_code, origin='[CLI]:'+file_path)
+        return self._add_loaded_source(source_unit_name, src_code, origin='[CLI]:'+file_path)
 
     def process_standard_json(self, path: str):
         json_content = self._read_file(path)
@@ -127,6 +160,8 @@ class VirtualFileSystem:
         if import_source_name in self.sources:
             return self.sources[import_source_name]
 
+        logging.getLogger('VFS').debug(f'Import path {import_path} in {importer_source_unit_name} => {import_source_name}')
+
         # When the source is not available in the virtual filesystem, the compiler passes the source unit name to the
         # import callback. The Host Filesystem Loader will attempt to use it as a path and look up the file on disk.
         origin, contents = self._read_file_callback(import_source_name, self._base_path, self.include_paths)
@@ -139,9 +174,25 @@ class VirtualFileSystem:
         raise ValueError(f"Can't import {import_path} from {importer_source_unit_name} ({bool(contents)},{bool(loaded_source)})")
 
     def _add_loaded_source(self, source_unit_name: str, source_code: str, creator=None, origin=None) -> LoadedSource:
-        loaded_source = LoadedSource(source_unit_name, source_code, creator if creator else ast_helper.make_ast)
-        self.sources[source_unit_name] = loaded_source
+        if source_unit_name in self.sources:
+            raise ValueError(f'{source_unit_name} has already been loaded in VFS')
+
+        if origin in self.origin_sources:
+            raise ValueError(f'{origin}({source_unit_name}) has already been loaded as {self.origin_sources[origin].source_unit_name}')
+
+        basic_creator = creator if creator else ast_helper.make_ast
+        creator_options = {
+            'origin': origin
+        }
+        if self.compiler_version:
+            creator_options['version'] = self.compiler_version
+        partial_creator = partial(basic_creator, **creator_options)
+
+        loaded_source = LoadedSource(source_unit_name, source_code, origin, partial_creator)
+
         self.origin_sources[origin] = loaded_source
+        self.sources[source_unit_name] = loaded_source
+
         return loaded_source
 
     def _read_file(self, path: str, is_cli_path=True) -> str:
@@ -155,6 +206,9 @@ class VirtualFileSystem:
 
         logging.getLogger('VFS').debug(f'Reading {path}')
 
+        return self._do_read_path(path)
+
+    def _do_read_path(self, path: Path) -> str:
         with path.open(mode='r', encoding='utf-8') as f:
             return f.read()
 

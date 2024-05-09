@@ -7,7 +7,7 @@ from solidity_parser.ast import symtab, ast2builder, solnodes, solnodes2
 class TestUDVT(unittest.TestCase):
 
     def setUp(self) -> None:
-        self.vfs = filesys.VirtualFileSystem('../testcases/08_22')
+        self.vfs = filesys.VirtualFileSystem('testcases/08_22')
         self.symtab_builder = symtab.Builder2(self.vfs)
         self.ast2_builder = ast2builder.Builder()
 
@@ -65,10 +65,9 @@ class TestUDVT(unittest.TestCase):
 
     def test_add_not_attached(self):
         # tests that the 'add' function wasn't attached to the Int scope, it was only bound to the + operator
-        with self.assertRaises(errors.CodeProcessingError) as context:
-            self._load('./OperatorAttachAndBindFailureCase.sol')
+        self._load('./OperatorAttachAndBindFailureCase.sol')
 
-        msg = str(context.exception)
+        msg = str(self.ast2_builder.error_handler.caught_errors[0])
 
         self.assertTrue('Can\'t resolve call' in msg, msg)
 
@@ -82,12 +81,11 @@ class TestUDVT(unittest.TestCase):
         self.assertEqual('OperatorAttachAndBind.sol.add(x, y)', library_call.code_str())
 
     def test_neg_too_many_args(self):
-        with self.assertRaises(errors.CodeProcessingError) as context:
-            self._load('./NegOperatorNotEnoughArgs.sol')
+        self._load('./NegOperatorNotEnoughArgs.sol')
 
-        msg = str(context.exception)
+        msg = str(self.ast2_builder.error_handler.caught_errors[0])
 
-        self.assertTrue('Mismatched arg types: [ResolvedUserType(Int)] vs [ResolvedUserType(Int), ResolvedUserType(Int)]' in msg, msg)
+        self.assertTrue('No bound functions for - operator' in msg, msg)
 
     def test_add_operator_bound_with_import(self):
         self._load('./NegOperator.sol')

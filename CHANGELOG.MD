@@ -1,9 +1,77 @@
-
+ 
 ## Changelog
 All notable changes to this project will be documented in this file.
  
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
+
+### [0.1.18] - 2024-05-09
+ - Fixed version string in docs
+
+### [0.1.17] - 2024-05-09
+ - Added documentation site
+ - Changed AST2 FileDefinition descriptor to not include file name twice
+ - Added AST2 ContractDefinition.state_var()
+ - Changed VFS process_cli_input_file to return LoadedSource result
+ - Added _do_read_path to VFS
+
+### [0.1.16] - 2024-04-16
+ - Created nodebase.py for all Node base type for AST1 and AST2 nodes
+   - NodeDataclass/NodeList parenting mechanism added to AST1
+ - Created types.py for shared AST1 and AST2 types
+
+### [0.1.15] - 2024-03-20
+ - Cleaned up AST2 ErrorHandler
+   - Removed code_errors from AST2Builder, moved to ErrorHandler.caught_errors
+ - Added errors.UnexpectedProcessingErrors for wrapping python errors in AST2Builder
+ - Fixed Ident and Using directive and import resolution issues
+
+### [0.1.14] - 2024-02-05
+ - Fixed AST1 parser line number tracking
+ - Updated AST2 error handling
+ - Fixed issues with free floating functions/events/errors
+ - Added `start_location` and `end_location` to ast2 nodes
+ - Added `origin` to `LoadedSource`
+ - Added origin tracking to VFS
+
+
+### [0.1.13] - 2024-01-11
+ - Add SourceLocationSpan in AST1
+ - Stability fixes to do with using directives and symtab searching
+
+### [0.1.12] - 2024-01-08
+- Fixed line number issue with rules with `start` attributes
+- Added source start/end location markers for solnodes1
+- Updated main.py stress tester
+- Added requirement for python 3.10 in README
+
+### [0.1.11] - 2024-01-04
+ - Minor AST2 fixes
+ - make_ast now takes the input source 'origin' to better locate parsing errors
+   - Added Origin to AntlrParsingError
+ - Removed polluting symtab exists debug line
+ - Fixed issue with type lookup in symtab pulling inherited Using types
+
+### [0.1.10] - 2023-12-19
+ - Changed git versioning to setuptools versioning (was broken)
+
+### [0.1.9] - 2023-12-19
+ - Added soft errors in AST2 for code processing exceptions
+ - Improved FCA to account for unprocessed function code
+ - Fixed AST1 parsing issue for VarDecl tuples desugars that have 1 element, e.g. (x,) = ...
+ - Changed AST2 log levels from info to debug
+
+### [0.1.8] - 2023-12-14
+ - Fixed many internal AST2 bugs
+ - Added parser_version to symtab.Builder2
+
+### [0.1.7] - 2023-12-12
+ - Fixed inherited Using directive scopes in subcontracts
+ - Added snapshottest library for testing
+ - Fixed bug with ast2builder map_arg_as_type
+
+### [0.1.6] - 2023-12-11
+ - Fixed parsing bug with pragmas using `=` symbol
 
 ### [0.1.5] - 2023-12-06
 

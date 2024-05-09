@@ -1,7 +1,8 @@
 import unittest
 from mock import patch, Mock, MagicMock
 
-from solidity_parser.ast.solnodes2 import Node, VoidType, BoolType, TupleType, NodeList
+from solidity_parser.ast.nodebase import Node, NodeList
+from solidity_parser.ast.types import VoidType, BoolType, TupleType
 
 
 class TestNodeDataclass(unittest.TestCase):

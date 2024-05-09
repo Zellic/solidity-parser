@@ -7,7 +7,7 @@ from solidity_parser.ast import symtab, ast2builder, solnodes2
 class TestUsingDirectives(unittest.TestCase):
 
     def setUp(self) -> None:
-        self.vfs = filesys.VirtualFileSystem('../testcases/using_directives')
+        self.vfs = filesys.VirtualFileSystem('testcases/using_directives')
         self.symtab_builder = symtab.Builder2(self.vfs)
         self.ast2_builder = ast2builder.Builder()
 
@@ -15,6 +15,8 @@ class TestUsingDirectives(unittest.TestCase):
         fs = [self.symtab_builder.process_or_find_from_base_dir(f) for f in files]
         self.ast2_builder.enqueue_files(fs)
         self.ast2_builder.process_all()
+
+        self.assertEqual([], self.ast2_builder.error_handler.caught_errors)
 
     def test_basic_using_directive(self):
         self._load('./UsingDirectiveNormal.sol')
@@ -57,3 +59,21 @@ class TestUsingDirectives(unittest.TestCase):
         set_v = [p for p in units[0].parts if str(p.name) == 'set_v'][0]
         library_call = [c for c in set_v.code.get_all_children() if isinstance(c, solnodes2.Call)][0]
         self.assertEqual('FreeFunctions.sol.mask(n, 16)', library_call.code_str())
+
+    def test_no_inherited_using_scope(self):
+        self._load('./NoInheritedUsing.sol')
+
+    def test_defined_in_same_scope(self):
+        self._load('./DefinedInSameScope.sol')
+
+        my_lib = [u for u in self.ast2_builder.get_top_level_units() if isinstance(u, solnodes2.LibraryDefinition)][0]
+
+    def test_different_type(self):
+        self._load('./OverrideTypeDifferent.sol')
+
+        my_lib = [u for u in self.ast2_builder.get_top_level_units() if isinstance(u, solnodes2.LibraryDefinition)][0]
+
+    def test_overloads(self):
+        self._load('./OverloadedFunctions.sol')
+
+        my_lib = [u for u in self.ast2_builder.get_top_level_units() if isinstance(u, solnodes2.LibraryDefinition)][0]

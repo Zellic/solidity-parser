@@ -1,5 +1,5 @@
 import sys
-from solidity_parser.ast import solnodes
+from solidity_parser.ast import solnodes, types as soltypes
 from solidity_parser.ast.parsers import parsers080
 from solidity_parser.ast.parsers import parsers088
 from solidity_parser.ast.parsers.parsers080 import custom_parsers as custom_parsers080
@@ -48,7 +48,7 @@ def _using_directive_alias(parser, rule: SolidityParser.UsingDirectiveAliasConte
 def _using_directive(parser, rule: SolidityParser.UsingDirectiveContext):
     ### overrides the base UsingDirectiveContext rule ###
     if rule.Mul():
-        override_type = solnodes.AnyType()
+        override_type = soltypes.AnyType()
     else:
         override_type = parser.make(rule.typeName())
 
@@ -88,10 +88,10 @@ def _mapping_type(parser, rule: SolidityParser.MappingTypeContext):
     ### overrides the base MappingTypeContext rule ###
     key = parser.make(rule.key)
     if isinstance(key, solnodes.Ident):
-        key = solnodes.UserType(key)
+        key = soltypes.UserType(key)
     value = parser.make(rule.value)
 
     key_name = parser.make(rule.name1)
     value_name = parser.make(rule.name2)
 
-    return solnodes.MappingType(key, value, key_name, value_name)
+    return soltypes.MappingType(key, value, key_name, value_name)

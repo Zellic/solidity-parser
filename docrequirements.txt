@@ -1,0 +1,4 @@
+sphinx==7.3.7
+furo==2024.1.29
+sphinx-autoapi==3.0.0
+sphinx_autodoc_typehints==2.1.0
