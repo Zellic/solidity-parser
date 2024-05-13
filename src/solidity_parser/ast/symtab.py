@@ -1036,11 +1036,24 @@ class Builder2:
         # sanitise inputs if windows paths are given
         relative_source_unit_name = relative_source_unit_name.replace('\\', '/')
 
-        source_unit_name = self.vfs._compute_source_unit_name(relative_source_unit_name, '')
-        fs = self.root_scope.find_single(FileScope.alias(source_unit_name))
-        if fs:
-            return fs
-        return self.process_file(source_unit_name)
+        source_unit_names = self.vfs._compute_possible_source_unit_names(relative_source_unit_name, '')
+
+        # try to find already loaded ones first
+        for sun in source_unit_names:
+            fs = self.root_scope.find_single(FileScope.alias(sun))
+            if fs:
+                return fs
+
+        # try to load it
+        for sun in source_unit_names:
+            try:
+                return self.process_file(sun)
+            except ValueError:
+                # thrown when process_file can't find anything: try the next sun
+                logging.getLogger('ST').exception(f'FS Processing attempt failed for {sun}')
+                continue
+
+        raise ValueError(f'Could not load {relative_source_unit_name}')
 
     def process_file(self, source_unit_name: str, source_units: list[solnodes.SourceUnit] = None):
         if source_units is None:

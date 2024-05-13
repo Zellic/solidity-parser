@@ -2334,7 +2334,9 @@ class Builder:
                 for part in ast1_node.parts:
                     if isinstance(part, solnodes1.UsingDirective):
                         if part.library_name:
-                            library_scope = part.scope.find_user_type_scope(part.library_name.text, find_base_symbol=True)
+                            # get the parent scope of the usingdirective, usually a FileScope as the proxy scope gets
+                            # in the using directive scope
+                            library_scope = part.scope.parent_scope.find_user_type_scope(part.library_name.text, find_base_symbol=True)
                             assert isinstance(library_scope.value, solnodes1.LibraryDefinition)
                             library = self.type_helper.get_contract_type(library_scope)
                             if isinstance(part.override_type, soltypes.AnyType):

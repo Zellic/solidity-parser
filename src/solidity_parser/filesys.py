@@ -155,23 +155,28 @@ class VirtualFileSystem:
         self.import_remaps.append(ImportMapping(context, prefix, target))
 
     def lookup_import_path(self, import_path: str, importer_source_unit_name: str = None) -> LoadedSource:
-        import_source_name = self._compute_source_unit_name(import_path, importer_source_unit_name)
+        import_source_unit_names = self._compute_possible_source_unit_names(import_path, importer_source_unit_name)
 
-        if import_source_name in self.sources:
-            return self.sources[import_source_name]
+        for source_unit_name in import_source_unit_names:
+            if source_unit_name in self.sources:
+                return self.sources[source_unit_name]
 
-        logging.getLogger('VFS').debug(f'Import path {import_path} in {importer_source_unit_name} => {import_source_name}')
+            logging.getLogger('VFS').debug(f'Possible Import path {import_path} in {importer_source_unit_name} => {source_unit_name}')
 
-        # When the source is not available in the virtual filesystem, the compiler passes the source unit name to the
-        # import callback. The Host Filesystem Loader will attempt to use it as a path and look up the file on disk.
-        origin, contents = self._read_file_callback(import_source_name, self._base_path, self.include_paths)
+            # "When the source is not available in the virtual filesystem, the compiler passes the source unit name to the
+            # import callback. The Host Filesystem Loader will attempt to use it as a path and look up the file on disk."
+            try:
+                origin, contents = self._read_file_callback(source_unit_name, self._base_path, self.include_paths)
+            except ValueError:
+                # thrown if the callback fails, try the next source unit name
+                continue
 
-        if contents:
-            loaded_source = self._add_loaded_source(import_source_name, contents, origin=origin)
-            if loaded_source:
-                return loaded_source
+            if contents:
+                loaded_source = self._add_loaded_source(source_unit_name, contents, origin=origin)
+                if loaded_source:
+                    return loaded_source
 
-        raise ValueError(f"Can't import {import_path} from {importer_source_unit_name} ({bool(contents)},{bool(loaded_source)})")
+        raise ValueError(f"Can't import {import_path} from {importer_source_unit_name}")
 
     def _add_loaded_source(self, source_unit_name: str, source_code: str, creator=None, origin=None) -> LoadedSource:
         if source_unit_name in self.sources:
@@ -262,10 +267,13 @@ class VirtualFileSystem:
         contents = self._read_file(candidates[0], is_cli_path=False)
         return candidates[0], contents
 
-    def _remap_import(self, source_unit_name: str, importer_source_unit_name: str) -> str:
+    def _remap_import(self, source_unit_name: str, importer_source_unit_name: str) -> list[str]:
         """Takes a source unit name and checks if it should be remapped
         Note: do not pass an import path as the source unit name
         """
+
+        possible_remappings = []
+
         for mapping in self.import_remaps:
             # context must match the beginning of the source unit name of the file containing the import
             if mapping.context and not importer_source_unit_name.startswith(mapping.context):
@@ -274,11 +282,19 @@ class VirtualFileSystem:
             # prefix must match the beginning of the source unit name resulting from the import
             if source_unit_name.startswith(mapping.prefix):
                 # target is the value the prefix is replaced with
-                return self._clean_path(mapping.target, source_unit_name[len(mapping.prefix):])
+                possible_remappings.append(self._clean_path(mapping.target, source_unit_name[len(mapping.prefix):]))
 
-        return source_unit_name
+        if not possible_remappings:
+            return [source_unit_name]
+        else:
+            return possible_remappings
 
-    def _compute_source_unit_name(self, path: str, importer_source_unit_name: str) -> str:
+    def _compute_possible_source_unit_names(self, path: str, importer_source_unit_name: str) -> list[str]:
+        """
+        Computes a list of possible source unit names for an import path. Usually there is only 1, but if there are
+        multiple matching import remappings, we have to test each one later on when the file lookup happens
+        """
+
         if not self._is_relative_import(path):
             return self._remap_import(path, importer_source_unit_name)
 

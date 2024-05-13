@@ -44,9 +44,9 @@ class TestVirtualFileSystem(unittest.TestCase):
         ['../.././../util.sol', 'lib/src/../contract.sol', 'util.sol'],
         ['../../.././../util.sol', 'lib/src/../contract.sol', 'util.sol']
     ])
-    def test_compute_source_unit_name(self, path, importer, expected):
-        result = self.vfs._compute_source_unit_name(path, importer)
-        self.assertEqual(expected, result)
+    def test_compute_possible_source_unit_names(self, path, importer, expected):
+        results = self.vfs._compute_possible_source_unit_names(path, importer)
+        self.assertEqual([expected], results)
 
     # def test_remap_import(self):
     #     self.vfs.add_import_remapping(None, 'github.com/ethereum/dapp-bin/', 'dapp-bin/')
