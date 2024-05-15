@@ -1,7 +1,12 @@
 name: gendocs
 
 on: [push, workflow_dispatch]
-
+on:
+  push:
+    branches: [ "main"]
+  workflow_dispatch:
+    branches: [ "main" ]
+    
 jobs:
   gendocs:
     runs-on: ubuntu-latest
