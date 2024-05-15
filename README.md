@@ -17,7 +17,7 @@ ASTs and IRs are easily usable by consumer applications without any additional d
 
 ### Goals
 
-The goal of this project are to:
+The goals of this project are to:
   - parse Solidity source files into typed AST/IR structures
   - load code from different Solidity versions(0.4-0.8^) for common analyses
   - load entire Solidity projects for analysis with the requisite dependency context
