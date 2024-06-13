@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.20] - 2024-06-13
+ - Fixed issue with AST2 TypeHelper with function types of overriden functions
+
 ### [0.1.19] - 2024-05-13
  - Fixed import lookup case for remapping files with imports that clash
 
