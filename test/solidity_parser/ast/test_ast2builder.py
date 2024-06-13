@@ -53,6 +53,14 @@ class TestSolidityTypeHelper(SnapshotTestCase):
         self.assertEqual(self.type_helper.get_expr_type(exprs[0]), [])
         self.assertEqual(self.type_helper.get_expr_type(exprs[0], allow_multiple=True), [])
 
+    def test_get_expr_type_function_call_hierarchy(self):
+        file_scope = self.symtab_builder.process_or_find_from_base_dir('HierarchyFunctions.sol')
+        ast1_nodes = file_scope.value
+
+        expr = [c for u in ast1_nodes if u for c in u.get_all_children() if isinstance(c, solnodes1.CallFunction) and str(c.callee) == 'hasFoo'][0]
+
+        self.assertEqual(self.type_helper.get_function_expr_type(expr), soltypes.BoolType())
+
     def test_get_expr_type_float(self):
         file_scope = self.symtab_builder.process_or_find_from_base_dir('float_type.sol')
         ast1_nodes = file_scope.value

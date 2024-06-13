@@ -197,8 +197,19 @@ class TypeHelper:
                 # lookup a single unqualified Ident in the current scope(expr.scope). Note this path ISN'T taken for
                 # qualified lookups (e.g. x.y)
                 if allow_multiple:
-                    # return all matching symbol types, TODO: should use ACCEPT_INHERITABLE here also?
-                    return [self.symbol_to_ast2_type(s, function_callee=function_callee) for s in expr.scope.find(text)]
+                    # return all matching symbol types
+                    symbols = expr.scope.find(text)
+                    any_or_all_funcs = self.any_or_all([isinstance(s.value, symtab.ModFunErrEvtScope) for s in symbols])
+                    self.error_handler.assert_error('Expected any or all function callees', any_or_all_funcs)
+
+                    if function_callee and any_or_all_funcs:
+                        # less sophisticated way compared to refine_expr but we need to get the function at the top of
+                        # the hierarchy (symtab returns them all)
+                        function_chain = self.builder.is_declaration_chain(symbols)
+                        self.error_handler.assert_error('Multiple matching functions must be in a hierarchy chain', function_chain)
+                        return [self.symbol_to_ast2_type(symbols[0], function_callee=function_callee)]
+
+                    return [self.symbol_to_ast2_type(s, function_callee=function_callee) for s in symbols]
                 else:
                     inheritable_predicate = symtab.ACCEPT_INHERITABLE(expr.scope)
                     symbols = expr.scope.find(expr.text, predicate=inheritable_predicate)
@@ -1317,12 +1328,9 @@ class Builder:
                 # i.e. we might have
                 # B is A { f() } A { f() }
                 # So we resolve to B.f
-                symbol_sources = [self.get_declaring_contract_scope_in_scope(candidate[0]) for candidate in bucket_candidates]
-                # if symbol_sources[0] == source, we matched multiple symbols in the same bucket that aren't in an
-                # override chain, e.g. multiple matches in the same contract
-                are_sub_contracts = all([self.is_subcontract(symbol_sources[0], source) and not symbol_sources[0] == source for source in symbol_sources[1:]])
+                are_sub_contracts = self.is_declaration_chain([candidate[0] for candidate in bucket_candidates])
                 if are_sub_contracts:
-                    aliases = ', '.join([s.aliases[0] for s in symbol_sources])
+                    aliases = ', '.join([self.get_declaring_contract_scope_in_scope(c[0]).aliases[0] for c in bucket_candidates])
                     logging.getLogger('AST2').debug(f'Base chain: {aliases} @ {expr.location}')
                     candidates.append((c.base, *bucket_candidates[0]))  # type: ignore
                 else:
@@ -1585,6 +1593,11 @@ class Builder:
 
         return [Builder.FunctionCallee(base, symbols) for base, symbols in new_buckets.items()]
 
+    def is_declaration_chain(self, function_symbols):
+        symbol_sources = [self.get_declaring_contract_scope_in_scope(s) for s in function_symbols]
+        are_sub_contracts = all([self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+        return are_sub_contracts
+
     @link_with_ast1
     def refine_expr(self, expr: solnodes1.Expr, is_function_callee=False, allow_type=False, allow_tuple_exprs=False,
                     allow_multiple_exprs=False, allow_none=True, allow_stmt=False, is_argument=False,
@@ -1834,11 +1847,8 @@ class Builder:
                 # TODO: can this be ambiguous or does the reference always select a single function
                 if len(member_symbols) == 1:
                     # Func pointer load e.g. this is the first param in abi.encodeCall(A.f, ...)
-                    symbol_sources = [self.get_declaring_contract_scope_in_scope(d) for d in member_symbols[0]]
-                    are_sub_contracts = all(
-                        [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
-                    self.error_handler.assert_error(f'{expr} has too many target definitions ({len(member_symbols[0])})',
-                                       are_sub_contracts)
+                    are_sub_contracts = self.is_declaration_chain(member_symbols[0])
+                    self.error_handler.assert_error(f'{expr} has too many target definitions ({len(member_symbols[0])})',are_sub_contracts)
                     func_sym = member_symbols[0][0]
                     if isinstance(func_sym.value, solnodes1.FunctionDefinition):
                         return solnodes2.GetFunctionPointer(nodebase.Ref(func_sym.value.ast2_node))
@@ -1911,9 +1921,7 @@ class Builder:
 
                 if directly_referenced_callables[0]:
                     # check that functions are part of a chain
-                    symbol_sources = [self.get_declaring_contract_scope_in_scope(s) for s in callee.symbols]
-                    are_sub_contracts = all(
-                        [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                    are_sub_contracts = self.is_declaration_chain(callee.symbols)
                     self.error_handler.assert_error(f'Too many target definitions ({len(callee.symbols)})', are_sub_contracts)
 
                     member_symbol = callee.symbols[0]
@@ -2082,9 +2090,7 @@ class Builder:
                 mod_defs = node.scope.find(node.name.text)
                 if len(mod_defs) > 1:
                     # If we have multiple matches, check that they are part of an override chain and pick the first one
-                    symbol_sources = [self.get_declaring_contract_scope_in_scope(d) for d in mod_defs]
-                    are_sub_contracts = all(
-                        [self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+                    are_sub_contracts = self.is_declaration_chain(mod_defs)
                     self.error_handler.assert_error(f'{node.name.text} has too many target definitions ({len(mod_defs)})', are_sub_contracts)
 
                 target = self.load_non_top_level_if_required(mod_defs[0].value)
