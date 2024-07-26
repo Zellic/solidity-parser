@@ -25,7 +25,7 @@ Unix:
 
 .. code-block:: bash
 
-   ./venv/Scripts/activate
+   ./venv/bin/activate
 
 Windows:
 
