@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.21] - 2024-08-01
+ - Fixed issue where `using *` statements with unimported types were causing crashes
+ - Changed types.type_key to support UserTypes with a callback
+ - Added symtab.TypeNotFound error
+ - 
+
 ### [0.1.20] - 2024-06-13
  - Fixed issue with AST2 TypeHelper with function types of overriden functions
 
