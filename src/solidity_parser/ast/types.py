@@ -85,7 +85,7 @@ class Type(Node, ABC):
         """
         return False
 
-    def type_key(self):
+    def type_key(self, *args, **kwargs):
         """ Returns a unique key for the type that can be used to cache types in the symbol table """
         return self.code_str()
 
@@ -122,6 +122,9 @@ class FloatType(Type):
             return True
         return actual_type.is_float()
 
+    def type_key(self, *args, **kwargs):
+        raise ValueError('Float types do not have a type key')
+
 
 @NodeDataclass
 class VoidType(Type):
@@ -137,6 +140,9 @@ class VoidType(Type):
     def __str__(self):
         return '<void>'
 
+    def type_key(self, *args, **kwargs):
+        raise ValueError('Void types do not have a type key')
+
 
 @NodeDataclass
 class ArrayType(Type):
@@ -146,6 +152,9 @@ class ArrayType(Type):
     def __str__(self): return f"{self.base_type}[]"
 
     def code_str(self): return f'{self.base_type.code_str()}[]'
+    
+    def type_key(self, name_resolver=None, *args, **kwargs):
+        return f"{self.base_type.type_key(name_resolver, *args, **kwargs)}[]"
 
     def is_builtin(self) -> bool:
         # e.g. byte[] is builtin, string[] is builtin, MyContract[] is not
@@ -183,6 +192,12 @@ class FixedLengthArrayType(ArrayType):
 
     def __str__(self): return f"{self.base_type}[{self.size}]"
 
+    def code_str(self):
+        return f'{self.base_type.code_str()}[{str(self.size)}]'
+    
+    def type_key(self, name_resolver=None, *args, **kwargs):
+        return f"{self.base_type.type_key(name_resolver, *args, **kwargs)}[{str(self.size)}]"
+    
     def is_fixed_size(self) -> bool:
         return True
 
@@ -200,9 +215,6 @@ class FixedLengthArrayType(ArrayType):
 
         return False
 
-    def code_str(self):
-        return f'{self.base_type.code_str()}[{str(self.size)}]'
-
 
 @NodeDataclass
 class VariableLengthArrayType(ArrayType):
@@ -214,6 +226,10 @@ class VariableLengthArrayType(ArrayType):
     def code_str(self):
         return f'{self.base_type.code_str()}[{self.size.code_str()}]'
 
+    def type_key(self, name_resolver=None, *args, **kwargs):
+        # the size bit is a bit tricky as it might not be a literal, just stringify it for now
+        return f"{self.base_type.type_key(name_resolver, *args, **kwargs)}[{self.size.code_str()}]"
+
 
 @NodeDataclass
 class AddressType(Type):
@@ -221,6 +237,9 @@ class AddressType(Type):
     is_payable: bool
 
     def __str__(self): return f"address{' payable' if self.is_payable else ''}"
+
+    def code_str(self):
+        return 'address' + (' payable' if self.is_payable else '')
 
     def can_implicitly_cast_from(self, actual_type: Type) -> bool:
         # address_payable(actual_type) can be cast to address implicitly
@@ -256,9 +275,6 @@ class AddressType(Type):
 
     def is_address(self) -> bool:
         return True
-
-    def code_str(self):
-        return 'address' + (' payable' if self.is_payable else '')
 
 
 @NodeDataclass
@@ -309,9 +325,12 @@ class BytesType(ArrayType):
         return super().can_implicitly_cast_from(actual_type)
 
     def __str__(self):
-        return self.code_str()
+        return 'bytes'
 
     def code_str(self):
+        return 'bytes'
+
+    def type_key(self, *args, **kwargs):
         return 'bytes'
 
 
@@ -384,14 +403,17 @@ class StringType(ArrayType):
 
     def __str__(self): return "string"
 
+    def code_str(self):
+        return 'string'
+
+    def type_key(self, *args, **kwargs):
+        return 'string'
+
     def is_builtin(self) -> bool:
         return True
 
     def is_string(self) -> bool:
         return True
-
-    def code_str(self):
-        return 'string'
 
 
 @NodeDataclass
@@ -432,6 +454,12 @@ class MappingType(Type):
             return (' ' + str(ident)) if ident else ''
         return f"({self.src}{_name(self.src_name)} => {self.dst}{_name(self.dst_name)})"
 
+    def code_str(self):
+        return str(self)
+
+    def type_key(self, name_resolver=None, *args, **kwargs):
+        return f"({self.src.type_key(name_resolver, *args, **kwargs)} => {self.dst.type_key(name_resolver, *args, **kwargs)})"
+
     def is_mapping(self) -> bool:
         return True
 
@@ -450,9 +478,6 @@ class MappingType(Type):
                 next_link = None
         return result
 
-    def code_str(self):
-        return str(self)
-
 
 @NodeDataclass
 class UserType(Type):
@@ -464,6 +489,12 @@ class UserType(Type):
     name: 'Ident'
 
     def __str__(self): return str(self.name)
+
+    def type_key(self, name_resolver=None, *args, **kwargs):
+        if name_resolver is None:
+            raise ValueError(f'Cannot resolve {self.name} without a name resolver')
+        else:
+            return name_resolver(self.scope, self.name.text)
 
 
 @NodeDataclass
@@ -530,10 +561,10 @@ class FunctionType(Type):
     def __str__(self):
         return self.code_str()
 
-    def type_key(self):
+    def type_key(self, name_resolver=None, *args, **kwargs):
         # doesn't include modifiers for now
-        input_params = ', '.join([p.type_key() for p in self.inputs])
-        output_params = ', '.join([p.type_key() for p in self.outputs])
+        input_params = ', '.join([p.type_key(name_resolver, *args, **kwargs) for p in self.inputs])
+        output_params = ', '.join([p.type_key(name_resolver, *args, **kwargs) for p in self.outputs])
         return f'function ({input_params}) returns ({output_params})'
 
 
@@ -557,6 +588,9 @@ class TupleType(Type):
     def __str__(self):
         return f'({", ".join(str(t) for t in self.ttypes)})'
 
+    def type_key(self, name_resolver=None, *args, **kwargs):
+        return f'({", ".join(t.type_key(name_resolver, *args, **kwargs) for t in self.ttypes)})'
+
 
 @NodeDataclass
 class MetaTypeType(Type):
@@ -576,6 +610,8 @@ class MetaTypeType(Type):
     def __str__(self):
         return f'type({self.ttype})'
 
+    # TODO: metatype typekey
+
 
 @NodeDataclass
 class VarType(Type):
@@ -590,6 +626,9 @@ class VarType(Type):
 
     def __str__(self): return "var"
 
+    def type_key(self, name_resolver=None, *args, **kwargs):
+        raise ValueError('Var types do not have a type key')
+
 
 @NodeDataclass
 class AnyType(Type):
@@ -601,3 +640,5 @@ class AnyType(Type):
 
     def __str__(self): return "*"
 
+    def type_key(self, name_resolver=None, *args, **kwargs):
+        raise ValueError('Any types do not have a type key')

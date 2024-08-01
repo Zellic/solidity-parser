@@ -118,6 +118,9 @@ def _add_to_results(possible_symbols: Collection, results: list, found_already: 
                 results.append(s)
 
 
+class TypeNotFound(Exception):
+    pass
+
 class Scopeable:
     """Element that can be added as a child of a Scope"""
     
@@ -393,6 +396,7 @@ class Scope(Scopeable):
         :param predicate: Optional function to filter during the search
 
         :return: A single scope if find_base_symbol is True, or a list of scopes if find_base_symbol is False
+        :raises TypeNotFound: if no type matching the name was found
         """
 
         if not default and not find_base_symbol:
@@ -462,6 +466,9 @@ class Scope(Scopeable):
 
         if not result:
             result = default
+
+        if not result:
+            raise TypeNotFound(f"Could not find scope for type: '{name}'")
 
         return result.res_syms_single() if find_base_symbol else result
 
@@ -640,12 +647,17 @@ def create_builtin_scope(key, value=None, values=None, functions=None):
     return scope
 
 
-def type_key(ttype) -> str:
-    return f'<type:{ttype.type_key()}>'
+def simple_name_resolver(scope, name):
+    type_scope = scope.find_user_type_scope(name, find_base_symbol=True)
+    return type_scope.aliases[0]
 
 
-def meta_type_key(ttype) -> str:
-    return f'<metatype:{ttype.type_key()}>'
+def type_key(ttype, name_resolver=simple_name_resolver) -> str:
+    return f'<type:{ttype.type_key(name_resolver)}>'
+
+
+def meta_type_key(ttype, name_resolver=simple_name_resolver) -> str:
+    return f'<metatype:{ttype.type_key(name_resolver)}>'
 
 
 class RootScope(Scope):
@@ -720,7 +732,7 @@ class RootScope(Scope):
         def address_object(payable):
             # key is <type: address> or <type: address payable>
             t = soltypes.AddressType(payable)
-            scope = BuiltinObject(type_key(t), t)
+            scope = BuiltinObject(type_key(t, None), t)
             scope.add(BuiltinValue('balance', uint()))
             scope.add(BuiltinValue('code', bytes()))
             scope.add(BuiltinValue('codehash', bytes32()))
@@ -1258,6 +1270,7 @@ class Builder2:
         return f'<{base_name}>@{node.location}'
 
     def find_using_target_scope_and_name(self, current_scope, target_type: soltypes.Type):
+
         # TODO: Not sure if this is possible and I don't want to handle it(yet), just want to handle Types
         #  for target_type
         if isinstance(target_type, solnodes.Ident):
@@ -1399,7 +1412,15 @@ class Builder2:
             if not func_def.parameters:
                 continue
             target_type = func_def.parameters[0].var_type
-            target_type_scope, target_scope_name = self.find_using_target_scope_and_name(cur_scope, target_type)
+            try:
+                target_type_scope, target_scope_name = self.find_using_target_scope_and_name(cur_scope, target_type)
+            except TypeNotFound:
+                # when a contract has a 'using L for *' directive, it doesn't need to import any of the types that will
+                # be bound to by the first parameter of the library's functions => the target type lookup in the current
+                # scope might fail(if it wasnt imported). In this case, finding the base scope of the type by looking in
+                # the library scope(don't take any proxy scopes here as indirect using directives aren't
+                # inherited/imported).
+                target_type_scope, target_scope_name = self.find_using_target_scope_and_name(library_scope, target_type)
 
             scope_to_add_to = self.get_proxy_scope_for_type(cur_scope, target_type, target_scope_name, target_type_scope, library_scope, check_lib=False)
 

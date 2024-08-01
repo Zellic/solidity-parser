@@ -750,11 +750,16 @@ class TypeHelper:
                 scope = ttype.value.x.scope
                 assert isinstance(scope, symtab.FileScope)
                 return [scope]
-            
-            user_scopes = node.scope.find_user_type_scope(ttype.value.x.name.text)
+
+            try:
+                user_scopes = node.scope.find_user_type_scope(ttype.value.x.name.text)
+            except symtab.TypeNotFound:
+                # Weird situation where an object of type T is used in a contract during an intermediate computation but
+                # T isn't imported. E.g. (x.y).z = f() where x.y is of type T and f returns an object of type S but
+                # T isn't imported in the contract. This is the AddressSlot case in ERC1967Upgrade
+                return [ttype.scope]
 
             filtered_scopes = []
-
             for s in user_scopes:
                 if s is not None and s.value != ttype.scope.value:
                     if s.res_syms_single() != ttype.scope.res_syms_single():
@@ -763,23 +768,13 @@ class TypeHelper:
                         continue
                 filtered_scopes.append(s)
 
-            user_scopes = filtered_scopes
-
-            if not user_scopes:
-                # Weird situation where an object of type T is used in a contract during an intermediate computation but
-                # T isn't imported. E.g. (x.y).z = f() where x.y is of type T and f returns an object of type S but
-                # T isn't imported in the contract. This is the AddressSlot case in ERC1967Upgrade
-                scopes = [ttype.scope]
-            else:
-                scopes = user_scopes
             # "Prior to version 0.5.0, Solidity allowed address members to be accessed by a contract instance, for
             # example this.balance. This is now forbidden and an explicit conversion to address must be done:
             # address(this).balance"
             # TODO: add versioncheck
             # if ttype.value.x.is_contract():
             #     scopes.append(scope.find_type(solnodes1.AddressType(False)))
-
-            return scopes
+            return filtered_scopes
         elif isinstance(ttype, soltypes.BuiltinType):
             scope = node.scope.find_single(ttype.name)
         elif isinstance(ttype, soltypes.MetaTypeType):

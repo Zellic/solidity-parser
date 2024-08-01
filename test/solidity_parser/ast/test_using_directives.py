@@ -77,3 +77,6 @@ class TestUsingDirectives(unittest.TestCase):
         self._load('./OverloadedFunctions.sol')
 
         my_lib = [u for u in self.ast2_builder.get_top_level_units() if isinstance(u, solnodes2.LibraryDefinition)][0]
+
+    def test_unimported_attachments(self):
+        self._load('./UsingUnimportedAttachments.sol')

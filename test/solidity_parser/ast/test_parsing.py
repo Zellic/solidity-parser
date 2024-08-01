@@ -118,11 +118,12 @@ class TestASTJSONCases(LibSolidityTestBase, SnapshotTestCase):
         self._load_separated_file('ast_internal_function_different_ids_export.sol')
 
     # def test_debug(self):
-    #     self._load('using_for_directive.sol')
+    #     self._load('non_utf8.sol')
     #     units = self.ast2_builder.get_top_level_units()
     #     self.assertMatchSnapshot(units)
     # 
     #     print("x")
+
 
 class TestSemanticTestCases(LibSolidityTestBase, SnapshotTestCase):
     SRC_DIR = 'testcases/libsolidity/semanticTests'

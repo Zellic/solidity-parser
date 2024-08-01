@@ -63,6 +63,12 @@ class ResolvedUserType(soltypes.Type):
     def __repr__(self):
         return self.__str__()
 
+    def type_key(self, *args, **kwargs):
+        return self.value.x.name.text
+
+    def code_str(self):
+        return self.value.x.name.text
+
     def is_builtin(self) -> bool:
         return False
 
@@ -80,9 +86,6 @@ class ResolvedUserType(soltypes.Type):
 
     def get_types_for_declared_type(self) -> list['TopLevelUnit']:
         return [self.value.x] + self.value.x.get_subtypes()
-
-    def code_str(self):
-        return self.value.x.name.text
 
 
 @nodebase.NodeDataclass
