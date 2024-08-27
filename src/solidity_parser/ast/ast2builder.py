@@ -203,11 +203,11 @@ class TypeHelper:
                     self.error_handler.assert_error('Expected any or all function callees', any_or_all_funcs)
 
                     if function_callee and any_or_all_funcs:
-                        # less sophisticated way compared to refine_expr but we need to get the function at the top of
-                        # the hierarchy (symtab returns them all)
                         function_chain = self.builder.is_declaration_chain(symbols)
-                        self.error_handler.assert_error('Multiple matching functions must be in a hierarchy chain', function_chain)
-                        return [self.symbol_to_ast2_type(symbols[0], function_callee=function_callee)]
+                        if function_chain:
+                            # less sophisticated way compared to refine_expr: we need to get the function at the top
+                            # of the hierarchy (symtab returns them all), i.e. the one that overrides all the others
+                            return [self.symbol_to_ast2_type(symbols[0], function_callee=function_callee)]
 
                     return [self.symbol_to_ast2_type(s, function_callee=function_callee) for s in symbols]
                 else:
@@ -1590,7 +1590,7 @@ class Builder:
 
     def is_declaration_chain(self, function_symbols):
         symbol_sources = [self.get_declaring_contract_scope_in_scope(s) for s in function_symbols]
-        are_sub_contracts = all([self.is_subcontract(symbol_sources[0], source) for source in symbol_sources[1:]])
+        are_sub_contracts = all([self.is_subcontract(symbol_sources[0], source) and symbol_sources[0] != source for source in symbol_sources[1:]])
         return are_sub_contracts
 
     @link_with_ast1
