@@ -20,6 +20,11 @@ def get_test_cases(subdir, exclusions):
     return [(p,) for p in Path(base_dir).rglob('*.sol') if str(p.relative_to(base_dir)).replace('\\', '/') not in exclusions]
 
 
+def get_test_cases_only(subdir, inclusions):
+    base_dir = Path(os.getcwd()) / subdir
+    return [(base_dir/p,) for p in inclusions]
+
+
 def test_case_namer2(base_dir):
     def namer(testcase_func, param_num, param):
         file = str(param[0][0]).replace('\\', '/')
@@ -66,7 +71,7 @@ class LibSolidityTestBase(unittest.TestCase):
         #             f.write(str(x))
         #             f.write('\n')
 
-    def _load_separated_file(self, file):
+    def _load_separated_file(self, file, check_errors=True):
         txt = Path(self.vfs.base_path + '/' + file).read_text()
 
         header_regex = '==== Source: ([a-zA-Z]+) ===='
@@ -83,11 +88,21 @@ class LibSolidityTestBase(unittest.TestCase):
         self.ast2_builder.enqueue_files(fs)
         self.ast2_builder.process_all()
 
-        self.assertEqual([], self.error_handler.caught_errors)
+        if check_errors:
+            self.assertEqual([], self.error_handler.caught_errors)
 
 
 class TestASTJSONCases(LibSolidityTestBase, SnapshotTestCase):
     SRC_DIR = 'testcases/libsolidity/ASTJSON'
+    SPLIT_CASES = [
+        'ast_internal_function_different_ids_export.sol',
+        'ast_internal_function_id_export.sol',
+        'documentation.sol'
+    ]
+    FAILURE_CASES = [
+        'fail_after_parsing.sol',
+        'not_existing_import.sol'
+    ]
 
     def __init__(self, *args, **kwargs):
         self.maxDiff = None
@@ -96,14 +111,7 @@ class TestASTJSONCases(LibSolidityTestBase, SnapshotTestCase):
     @parameterized.expand(
         get_test_cases(
             SRC_DIR,
-            [
-                # needs to be split, see test_ast_internal_function_different_ids_export
-                'ast_internal_function_different_ids_export.sol',
-                'documentation.sol',  # same
-                'fail_after_parsing.sol',  # shouldn't pass ast2
-                'not_existing_import.sol',  #
-                'ast_internal_function_id_export.sol'  # actually broken
-            ]
+            SPLIT_CASES + FAILURE_CASES
         ),
         name_func=test_case_namer
     )
@@ -114,15 +122,21 @@ class TestASTJSONCases(LibSolidityTestBase, SnapshotTestCase):
             units = self.ast2_builder.get_top_level_units()
             self.assertMatchSnapshot(units)
 
-    def test_ast_internal_function_different_ids_export(self):
-        self._load_separated_file('ast_internal_function_different_ids_export.sol')
-
-    # def test_debug(self):
-    #     self._load('non_utf8.sol')
-    #     units = self.ast2_builder.get_top_level_units()
-    #     self.assertMatchSnapshot(units)
-    # 
-    #     print("x")
+    # @parameterized.expand(
+    #     get_test_cases_only(
+    #         SRC_DIR,
+    #         FAILURE_CASES
+    #     ),
+    #     name_func=test_case_namer
+    # )
+    # def test_failure_path(self, file):
+    #     self.error_handler.quiet_errors = True
+    #     self._load(str(file.absolute().relative_to(Path(self.vfs.base_path).absolute())), check_errors=False)
+    #
+    #     if not self.error_handler.caught_errors:
+    #         self.fail(f"Expected errors but parsing succeeded: {file}")
+    #     else:
+    #         self.assertMatchSnapshot([e.args[0] for e in self.error_handler.caught_errors])
 
 
 class TestSemanticTestCases(LibSolidityTestBase, SnapshotTestCase):

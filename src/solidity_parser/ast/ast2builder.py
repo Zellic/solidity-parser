@@ -1117,7 +1117,7 @@ class Builder:
         elif isinstance(node, solnodes1.Continue):
             return solnodes2.Continue()
         elif isinstance(node, solnodes1.Revert):
-            # Special case of refine_function_call
+            # Special case of refine_call_function
             error_def, new_args = self.refine_call_function(node.call, allow_error=True)
             assert isinstance(error_def, solnodes2.ErrorDefinition)
             return solnodes2.RevertWithError(nodebase.Ref(error_def), new_args)
@@ -1167,7 +1167,7 @@ class Builder:
             return results
 
         def create_option_args():
-            return [solnodes2.NamedArgument(self.ident(arg.name), self.refine_expr(arg.value)) for arg in expr.modifiers]
+            return [solnodes2.NamedArgument(self.ident(arg.name), self.refine_expr(arg.value)) for arg in expr.special_call_options]
 
         callee = expr.callee
 

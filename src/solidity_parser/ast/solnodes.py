@@ -239,11 +239,13 @@ class GetMember(Expr):
 
 @dataclass
 class CallFunction(Expr):
-    """ Invokes a function """
+    """ Invokes the given callee """
     callee: Expr
     """ This callee is most likely a GetMember expression but can be any callable """
-    modifiers: list
+    special_call_options: list[NamedArg]
+    """ See https://docs.soliditylang.org/en/v0.8.21/control-structures.html#external-function-calls """
     args: list[Expr]
+    """ The actual arguments in the () brackets of the call, may include positional and named arguments """
 
 
 @dataclass
