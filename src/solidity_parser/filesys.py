@@ -131,10 +131,10 @@ class VirtualFileSystem:
         with open(remappings_file_path, encoding='utf-8') as f:
             lines = f.read().splitlines()
 
-        def raise_invalid_format(txt):
-            raise ValueError(f'Invalid remapping syntax, expected: <context>?:<prefix>=<target>, got: {txt}')
+        def raise_invalid_format():
+            raise ValueError(f'Invalid remapping syntax on line {line_num + 1}, expected: <context>?:<prefix>=<target>, got: "{line}"')
 
-        for line in lines:
+        for line_num, line in enumerate(lines):
             split1 = line.split(':')
 
             if len(split1) == 2:
