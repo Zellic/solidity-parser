@@ -96,7 +96,7 @@ class LibSolidityTestBase(unittest.TestCase):
             self.assertEqual([], self.error_handler.caught_errors)
 
 
-class   TestCases1(LibSolidityTestBase, SnapshotTestCase):
+class TestCases1(LibSolidityTestBase, SnapshotTestCase):
     SRC_DIR = 'testcases/weirdcases'
 
     def __init__(self, *args, **kwargs):

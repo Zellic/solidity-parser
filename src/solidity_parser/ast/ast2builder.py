@@ -1413,7 +1413,7 @@ class Builder:
                     elif len(new_args) == 0:
                         return solnodes2.Revert()
                     self.error_handler.todo(expr)
-                name = f'{possible_base.name}.{sym.aliases[0]}' if possible_base else {sym.aliases[0]}
+                name = f'{possible_base.name}.{sym.aliases[0]}' if possible_base else sym.aliases[0]
                 return solnodes2.BuiltInCall(special_call_options, new_args, name, out_type)
             elif isinstance(possible_base, solnodes2.Expr):
                 # e.g. myaddress.call(...)
