@@ -1061,7 +1061,7 @@ class CreateStruct(Expr):
 @nodebase.NodeDataclass
 class CreateAndDeployContract(Expr):
     ttype: ResolvedUserType
-    named_args: list[NamedArgument]
+    call_options: list[NamedArgument]
     args: list[Expr]
 
     def type_of(self) -> soltypes.Type:
@@ -1073,7 +1073,7 @@ class CreateAndDeployContract(Expr):
 
 @nodebase.NodeDataclass
 class Call(Expr, ABC):
-    named_args: list[NamedArgument]
+    call_options: list[NamedArgument]
     args: list[Expr]
 
     def check_arg_types(self, f: FunctionDefinition) -> bool:
@@ -1082,8 +1082,8 @@ class Call(Expr, ABC):
         return soltypes.Type.are_matching_types(f_types, c_types)
 
     def param_str(self):
-        return (('{' + ', '.join(e.code_str() for e in self.named_args) + '}') if hasattr(self, 'named_args') and len(
-            self.named_args) > 0 else '') + f'({", ".join(e.code_str() for e in self.args)})'
+        return (('{' + ', '.join(e.code_str() for e in self.call_options) + '}') if hasattr(self, 'call_options') and len(
+            self.call_options) > 0 else '') + f'({", ".join(e.code_str() for e in self.args)})'
 
 
 @nodebase.NodeDataclass
