@@ -922,6 +922,7 @@ class Builder:
                 code_nodes = [result]
 
             for n in code_nodes:
+                n.id_location = ast1_node.id_location
                 n.start_location = ast1_node.start_location
                 n.end_location = ast1_node.end_location
 
@@ -1151,7 +1152,7 @@ class Builder:
 
     @dataclass
     class PartialFunctionCallee(FunctionCallee):
-        named_args: Dict[str, solnodes2.Expr]
+        call_options: Dict[str, solnodes2.Expr]
 
     def refine_call_function(self, expr, allow_error=False, allow_stmt=False, allow_event=False):
         def create_new_args():
@@ -1166,7 +1167,7 @@ class Builder:
                     results.append(ast2_arg)
             return results
 
-        def create_option_args():
+        def create_special_call_options():
             return [solnodes2.NamedArgument(self.ident(arg.name), self.refine_expr(arg.value)) for arg in expr.special_call_options]
 
         callee = expr.callee
@@ -1182,7 +1183,7 @@ class Builder:
             elif base_type.is_user_type():
                 # e.g. new X(...)
                 # TODO: check if option args are allowed here
-                return solnodes2.CreateAndDeployContract(base_type, create_option_args(), create_new_args())
+                return solnodes2.CreateAndDeployContract(base_type, create_special_call_options(), create_new_args())
 
         # possible_base could be a Type or an expr:
         #  expr case is straight forward, i.e. myVar.xyz(), 'myVar' is the base
@@ -1192,35 +1193,50 @@ class Builder:
         #
         # Symbols are matches by name only
         callees: Union[List[Builder.FunctionCallee], solnodes2.Expr] = self.refine_expr(callee, is_function_callee=True)
-        option_args = create_option_args()
+        special_call_options = create_special_call_options()
 
         # Function pointer call, e.g. <myExpr>(...);
         if isinstance(callees, solnodes2.Expr):
             new_args = create_new_args()
-            return solnodes2.FunctionPointerCall(option_args, new_args, callees)
+            return solnodes2.FunctionPointerCall(special_call_options, new_args, callees)
 
         if any([isinstance(c, Builder.PartialFunctionCallee) for c in callees]):
-            self.error_handler.assert_error('Ambiguous partial function callee', len(callees) == 1)
-
             # Partially built callee, i.e. the full expr may be x(y=5, z=6), a partial callee might only be x(y=5, z=?)
             # This is because some exprs are built top down(partial) instead of bottom up. The top down ones are
             # difficult as we have to backtrack and fill in details afterwards
-            c = callees[0]
 
-            # these 'keys' are parameters that haven't been filled in yet
-            unmatched_keys = [key for key in c.named_args.keys() if c.named_args[key] is None]
+            def split_keys(c: Builder.PartialFunctionCallee):
+                missing, filled = set(), set()
+                for key in c.call_options.keys():
+                    if c.call_options[key] is None:
+                        missing.add(key)
+                    else:
+                        filled.add(key)
+                return missing, filled
 
-            if len(unmatched_keys) > 0:
+            possible_unmatched_keys, fully_matched_keys = split_keys(callees[0])
+
+            if possible_unmatched_keys:
                 # Atm only allow f.gas(x) and f.value(x) i.e. 1 arg, this can be improved by checking against the symtab
                 # entries for gas and value
-                self.error_handler.assert_error(f'{c} expected one arg, got {expr.args}', len(expr.args) == 1)
-                # parse x in f.gas(x) and add it as a named arg
-                c.named_args[unmatched_keys[0]] = self.refine_expr(expr.args[0])
+                self.error_handler.assert_error(f'Expected one arg, got {expr.args}', len(expr.args) == 1)
+
+            for c in callees:
+                c_missing, c_matched = split_keys(c)
+                if len(c_missing) > 0:
+                    self.error_handler.assert_error(f'Too many options: {c_missing} vs {possible_unmatched_keys}', c_missing == possible_unmatched_keys)
+                    # parse x in f.gas(x) and add it as a call option
+                    c.call_options[list(c_missing)[0]] = self.refine_expr(expr.args[0])
+                if len(c_matched) > 0:
+                    self.error_handler.assert_error(f'Too many options: {c_matched} vs {fully_matched_keys}', c_matched == fully_matched_keys)
+
+            if len(possible_unmatched_keys) > 0:
                 return callees
             else:
-                # if there are no unmatched keys, i.e. this partial function call has been fully filled out, then
+                # if there are no unmatched keys, i.e. this partial function application has been fully filled out,
                 # continue with function call node determination as normal as PartialFunctionCallee is a FunctionCallee
-                option_args.extend([solnodes2.NamedArgument(solnodes2.Ident(name), value) for name, value in c.named_args.items()])
+                # arbitrarily pick the first one
+                special_call_options.extend([solnodes2.NamedArgument(solnodes2.Ident(name), value) for name, value in callees[0].call_options.items()])
 
         arg_types = [self.type_helper.get_expr_type(arg) for arg in expr.args]
 
@@ -1248,15 +1264,15 @@ class Builder:
             if ttype.is_user_type() and cast(solnodes2.ResolvedUserType, ttype).value.x.is_struct():
                 # struct init
                 new_args = create_new_args()
-                self.error_handler.error(f'Option args not allowed during struct initialiser: {option_args}',
-                                   len(option_args) == 0)
+                self.error_handler.error(f'Call options not allowed during struct initialiser: {special_call_options}',
+                                   len(special_call_options) == 0)
                 return solnodes2.CreateStruct(ttype, new_args)
             else:
                 # casts must look like T(x), also can't have a base as the base is the resolved callee
                 self.error_handler.error(f'Can only cast single arg: {expr.args}',
                                    len(expr.args) == 1)
-                self.error_handler.error(f'Option args not allowed during struct initialiser: {option_args}',
-                                   len(option_args) == 0)
+                self.error_handler.error(f'Call options not allowed during cast: {special_call_options}',
+                                   len(special_call_options) == 0)
                 self.error_handler.assert_error('Cast must not have base', not callees[0].base)
 
                 # TODO: put version check on this
@@ -1326,7 +1342,7 @@ class Builder:
                 are_sub_contracts = self.is_declaration_chain([candidate[0] for candidate in bucket_candidates])
                 if are_sub_contracts:
                     aliases = ', '.join([self.get_declaring_contract_scope_in_scope(c[0]).aliases[0] for c in bucket_candidates])
-                    logging.getLogger('AST2').debug(f'Base chain: {aliases} @ {expr.location}')
+                    logging.getLogger('AST2').debug(f'Base chain: {aliases} @ {expr.id_location}')
                     candidates.append((c.base, *bucket_candidates[0]))  # type: ignore
                 else:
                     return self.error_handler.assert_error(f'Resolved to too many different bases: {bucket_candidates}, args={arg_types}')
@@ -1381,7 +1397,7 @@ class Builder:
                 # TODO: separate node for revert, require, etc
                 if sym.aliases[0] == 'require':
                     assert allow_stmt
-                    assert len(option_args) == 0
+                    assert len(special_call_options) == 0
 
                     if len(new_args) == 1:
                         return solnodes2.Require(new_args[0], None)
@@ -1398,19 +1414,19 @@ class Builder:
                         return solnodes2.Revert()
                     self.error_handler.todo(expr)
                 name = f'{possible_base.name}.{sym.aliases[0]}' if possible_base else {sym.aliases[0]}
-                return solnodes2.BuiltInCall(option_args, new_args, name, out_type)
+                return solnodes2.BuiltInCall(special_call_options, new_args, name, out_type)
             elif isinstance(possible_base, solnodes2.Expr):
                 # e.g. myaddress.call(...)
-                return solnodes2.DynamicBuiltInCall(option_args, new_args, out_type, possible_base, sym.aliases[0])
+                return solnodes2.DynamicBuiltInCall(special_call_options, new_args, out_type, possible_base, sym.aliases[0])
             elif isinstance(possible_base, solnodes2.Types):
                 possible_base: solnodes2.Types
                 if possible_base.is_user_type() and cast(solnodes2.ResolvedUserType, possible_base).value.x.is_udvt():
                     self.error_handler.assert_error(f'Builtin call with {possible_base} base must be a UDVT call', possible_base.value.x.is_udvt())
-                    return solnodes2.DynamicBuiltInCall(option_args, new_args, out_type, possible_base, sym.aliases[0])
+                    return solnodes2.DynamicBuiltInCall(special_call_options, new_args, out_type, possible_base, sym.aliases[0])
                 else:
                     # bytes.concat, string.concat
                     name = f'{str(possible_base)}.{sym.aliases[0]}'
-                    return solnodes2.BuiltInCall(option_args, new_args, name, out_type)
+                    return solnodes2.BuiltInCall(special_call_options, new_args, name, out_type)
         elif isinstance(sym.value, solnodes1.FunctionDefinition):
             # TODO: check for None possible_base in refine_expr
 
@@ -1439,12 +1455,12 @@ class Builder:
             self.load_non_top_level_if_required(sym.value)
             name = solnodes2.Ident(sym.value.name.text)
             if isinstance(possible_base, solnodes2.Expr):
-                return solnodes2.FunctionCall(option_args, new_args, possible_base, name)
+                return solnodes2.FunctionCall(special_call_options, new_args, possible_base, name)
             else:
-                return solnodes2.DirectCall(option_args, new_args, possible_base, name)
+                return solnodes2.DirectCall(special_call_options, new_args, possible_base, name)
         elif isinstance(sym.value, solnodes1.StateVariableDeclaration):
             assert isinstance(possible_base, solnodes2.Expr)
-            assert len(option_args) == 0
+            assert len(special_call_options) == 0
 
             if ftype.is_mapping():
                 # create nested mapping loads multiple args were passed to this "call".
@@ -1471,7 +1487,7 @@ class Builder:
                 return solnodes2.StateVarLoad(possible_base, solnodes2.Ident(sym.aliases[0]))
         elif isinstance(sym.value, solnodes1.ErrorDefinition):
             assert allow_error
-            assert len(option_args) == 0
+            assert len(special_call_options) == 0
             self.load_non_top_level_if_required(sym.value)
             return sym.value.ast2_node, new_args
         elif isinstance(sym.value, solnodes1.EventDefinition):
@@ -1489,7 +1505,7 @@ class Builder:
             return solnodes2.EmitEvent(nodebase.Ref(sym.value.ast2_node), new_args)
         elif isinstance(sym.value, (solnodes1.Var, solnodes1.Parameter)):
             # refine_expr again but this time not as a function callee to get the callee as an expr
-            return solnodes2.FunctionPointerCall(option_args, new_args, self.refine_expr(callee))
+            return solnodes2.FunctionPointerCall(special_call_options, new_args, self.refine_expr(callee))
         self.error_handler.todo(sym.value)
 
 
@@ -1758,7 +1774,7 @@ class Builder:
 
             ident_target = ident_symbol.value  # the AST1 node that this Ident is referring to
 
-            if isinstance(ident_target, solnodes1.FunctionDefinition):
+            if isinstance(ident_target, (solnodes1.FunctionDefinition, solnodes1.EventDefinition, solnodes1.ErrorDefinition)):
                 # TODO: can this be ambiguous or does the reference always select a single function
                 return solnodes2.GetFunctionPointer(nodebase.Ref(ident_target.ast2_node))
             elif isinstance(ident_target, solnodes1.ConstantVariableDeclaration):
@@ -1805,133 +1821,135 @@ class Builder:
 
             base_type: solnodes2.Types = self.type_helper.get_expr_type(expr.obj_base)
 
-            if not isinstance(base_type, soltypes.FunctionType) or is_function_callee:
-                find_direct_scope = isinstance(base, (soltypes.BytesType, soltypes.StringType))
-                base_scopes = self.type_helper.scopes_for_type(base, base_type, use_encoded_type_key=not find_direct_scope)
+            find_direct_scope = isinstance(base, (soltypes.BytesType, soltypes.StringType))
+            base_scopes = self.type_helper.scopes_for_type(base, base_type, use_encoded_type_key=not find_direct_scope)
 
-                using_predicate = self.type_helper.create_filter_using_scope(base_type)
-                member_symbols = [scope_symbols for s in base_scopes if (scope_symbols := s.find(mname, predicate=using_predicate))]
+            using_predicate = self.type_helper.create_filter_using_scope(base_type)
+            member_symbols = [scope_symbols for s in base_scopes if (scope_symbols := s.find(mname, predicate=using_predicate))]
 
-                if len(member_symbols) == 0:
-                    base_scopes = self.type_helper.scopes_for_type(base, base_type,
-                                                                   use_encoded_type_key=not find_direct_scope)
-                assert len(member_symbols) > 0, f'No matches to call {str(base)}.{mname}'
+            self.error_handler.assert_error(f'No matches to call {str(base)}.{mname}', len(member_symbols) > 0)
 
-                if is_function_callee:
-                    if isinstance(base_type, soltypes.BuiltinType):
-                        bucket_base = base_type
-                    else:
-                        bucket_base = self.refine_expr(base, allow_type=True)
+            if is_function_callee:
+                # special case for old gas and value special call options when doing external calls. This syntax looks
+                # exactly like the certain syntax with using directives, but the behaviour is different. in this case
+                # we want to recognise the syntax as a partial function application, whereas for using directives, we
+                # want to continue with symbol resolution for function calls as normal
+                if isinstance(base_type, soltypes.FunctionType):
+                    if len(base_scopes) == 1 and len(member_symbols[0]) == 1:
+                        if isinstance(member_symbols[0][0], symtab.BuiltinFunction):
+                            self.error_handler.assert_error(f'Invalid special call operator: f{mname}',
+                                                            mname in ['gas', 'value'])
+                            callees: List[Builder.FunctionCallee] = self.refine_expr(base, is_function_callee=True)
+                            return [Builder.PartialFunctionCallee(c.base, c.symbols, {mname: None}) for c in callees]
 
-                    callees = []
-                    for bucket in member_symbols:
-                        split_buckets = defaultdict(list)
-                        for real_sym in bucket:
-                            resolved_sym = real_sym.res_syms_single()
-                            # direct type reference, e.g. MyContract -> no base
-                            sym_base = None if self.is_top_level(resolved_sym.value) else bucket_base
-                            split_buckets[sym_base].append(real_sym)
-                        for split_bucket_base, split_bucket in split_buckets.items():
-                            callees.append(Builder.FunctionCallee(split_bucket_base, split_bucket))
-
-                    # assert len(member_symbols) == 1 # 1 bucket for now, need to investigate
-                    # Create callee objects
-                    # return [Builder.FunctionCallee(bucket_base, bucket) for bucket in member_symbols]
-                    return callees
-                # elif is_argument:
-                # TODO: can this be ambiguous or does the reference always select a single function
-                if len(member_symbols) == 1:
-                    # Func pointer load e.g. this is the first param in abi.encodeCall(A.f, ...)
-                    are_sub_contracts = self.is_declaration_chain(member_symbols[0])
-                    self.error_handler.assert_error(f'{expr} has too many target definitions ({len(member_symbols[0])})',are_sub_contracts)
-                    func_sym = member_symbols[0][0]
-                    if isinstance(func_sym.value, solnodes1.FunctionDefinition):
-                        return solnodes2.GetFunctionPointer(nodebase.Ref(func_sym.value.ast2_node))
-
-                # if sum(len(xs) for xs in member_symbols) > 1:
-                #     logging.getLogger('AST2').info(
-                #         f'Multiple resolves for {str(base)}.{mname}, choosing first: {sym} from {sym.parent_scope.aliases}')
-
-                all_member_symbols = [ms for mss in member_symbols for ms in mss]
-                unique_member_symbols = []
-                symtab._add_to_results(all_member_symbols, unique_member_symbols, set())
-
-                self.error_handler.assert_error(f'Expected single symbol, got: {member_symbols}', len(unique_member_symbols) == 1)
-                sym = unique_member_symbols[0]
-
-                if isinstance(sym, symtab.BuiltinValue):
-                    if isinstance(base_type, soltypes.BuiltinType):
-                        # e.g. msg.gas, where the base is a builtin object
-                        return solnodes2.GlobalValue(f'{base_type.name}.{mname}', self.type_helper.map_type(sym.ttype))
-                    else:
-                        # e.g. myarray.length, 'length' is builtin to the array type(i.e. not a concrete field)
-                        new_base = self.refine_expr(base)
-                        return solnodes2.DynamicBuiltInValue(mname, self.type_helper.map_type(sym.ttype), new_base)
-                elif isinstance(sym, symtab.BuiltinFunction):
-                    input_params = [solnodes2.Parameter(solnodes2.Var(None, self.type_helper.map_type(t), None)) for t in (sym.input_types or [])]
-                    output_params = [solnodes2.Parameter(solnodes2.Var(None, self.type_helper.map_type(t), None)) for t in (sym.output_types or [])]
-                    builtin_f = solnodes2.BuiltinFunction(sym.aliases[0], input_params, output_params)
-                    return solnodes2.GetFunctionPointer(nodebase.Ref(builtin_f))
+                if isinstance(base_type, soltypes.BuiltinType):
+                    bucket_base = base_type
                 else:
-                    referenced_member = sym.value
-                    new_base = self.refine_expr(base, allow_type=True)
+                    bucket_base = self.refine_expr(base, allow_type=True)
 
-                    if isinstance(referenced_member, solnodes1.StructMember):
-                        assert isinstance(new_base, solnodes2.Expr)
-                        return solnodes2.StateVarLoad(new_base, solnodes2.Ident(mname))
-                    elif isinstance(referenced_member, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration)):
-                        # if the base is a type, it's a constant load, i.e. MyX.myConst (possibly also a qualified
-                        # lookup like MyX.MyY.myConst?)
-                        # else it's an instance member load which requires an expr base
-                        if isinstance(new_base, solnodes2.Types):
-                            assert isinstance(new_base, solnodes2.ResolvedUserType)
-                            assert solnodes1.MutabilityModifierKind.CONSTANT in [m.kind for m in referenced_member.modifiers if hasattr(m, 'kind')]
-                            return solnodes2.StaticVarLoad(new_base, solnodes2.Ident(referenced_member.name.text))
-                    elif isinstance(referenced_member, solnodes1.Ident) and isinstance(referenced_member.parent,
-                                                                                       solnodes1.EnumDefinition):
-                        assert isinstance(new_base, solnodes2.ResolvedUserType) and new_base.value.x.is_enum()
-                        member_matches = [member for member in new_base.value.x.values
-                                          if member.name.text == referenced_member.text]
-                        assert len(member_matches) == 1
-                        return solnodes2.EnumLoad(nodebase.Ref(member_matches[0]))
-                    elif self.is_top_level(referenced_member) or isinstance(referenced_member, solnodes1.ErrorDefinition):
-                        assert isinstance(new_base, solnodes2.ResolvedUserType)
-                        # Qualified top level reference, e.g. MyLib.MyEnum...
-                        return self.type_helper.get_contract_type(sym)
-            else:
-                # need to resolve this as if it was a function call, e.g. we have x.myFunc.selector and we treat it as
-                # if it's x.myFunc()
-                callees: List[Builder.FunctionCallee] = self.refine_expr(base, is_function_callee=True)
+                callees = []
+                for bucket in member_symbols:
+                    split_buckets = defaultdict(list)
+                    for real_sym in bucket:
+                        resolved_sym = real_sym.res_syms_single()
+                        # direct type reference, e.g. MyContract -> no base
+                        sym_base = None if self.is_top_level(resolved_sym.value) else bucket_base
+                        split_buckets[sym_base].append(real_sym)
+                    for split_bucket_base, split_bucket in split_buckets.items():
+                        callees.append(Builder.FunctionCallee(split_bucket_base, split_bucket))
 
-                self.error_handler.assert_error('Invalid number of bases', len(callees) == 1)
+                return callees
 
-                callee = callees[0]
+            if len(member_symbols) == 1:
+                are_sub_contracts = self.is_declaration_chain(member_symbols[0])
+                self.error_handler.assert_error(f'{expr} has too many target definitions ({len(member_symbols[0])})',are_sub_contracts)
+                func_sym = member_symbols[0][0]
 
-                directly_referenced_callables = []
-                for callee_symbol in callee.symbols:
-                    callee_value = callee_symbol.res_syms_single().value
-                    is_valid_type = isinstance(callee_value, (solnodes1.FunctionDefinition, solnodes1.EventDefinition, solnodes1.ErrorDefinition))
-                    directly_referenced_callables.append(is_valid_type)
-                self.error_handler.error(f'Incongruent callables: {callee.symbols}', self.type_helper.any_or_all(directly_referenced_callables))
+                if isinstance(func_sym, symtab.BuiltinValue) and func_sym.aliases[0] == 'selector':
+                    callees: List[Builder.FunctionCallee] = self.refine_expr(base, is_function_callee=True)
 
-                if directly_referenced_callables[0]:
-                    # check that functions are part of a chain
-                    are_sub_contracts = self.is_declaration_chain(callee.symbols)
-                    self.error_handler.assert_error(f'Too many target definitions ({len(callee.symbols)})', are_sub_contracts)
+                    self.error_handler.assert_error('Invalid number of bases', len(callees) == 1)
 
-                    member_symbol = callee.symbols[0]
-                    possible_base = callee.base
-                    # TODO: make this work without explicit check
-                    if mname == 'selector':
+                    callee = callees[0]
+
+                    directly_referenced_callables = []
+                    for callee_symbol in callee.symbols:
+                        callee_value = callee_symbol.res_syms_single().value
+                        is_valid_type = isinstance(callee_value, (
+                        solnodes1.FunctionDefinition, solnodes1.EventDefinition, solnodes1.ErrorDefinition))
+                        directly_referenced_callables.append(is_valid_type)
+                    self.error_handler.error(f'Incongruent callables: {callee.symbols}',
+                                             self.type_helper.any_or_all(directly_referenced_callables))
+
+                    if directly_referenced_callables[0]:
+                        # check that functions are part of a chain
+                        are_sub_contracts = self.is_declaration_chain(callee.symbols)
+                        self.error_handler.assert_error(f'Too many target definitions ({len(callee.symbols)})',
+                                                        are_sub_contracts)
+
+                        member_symbol = callee.symbols[0]
+                        possible_base = callee.base
+
+                        self.error_handler.assert_error(f'Expected selector: got {mname}', mname == 'selector')
                         return solnodes2.ABISelector(nodebase.Ref(member_symbol.value.ast2_node))
                     else:
-                        # the named arg value comes as the argument of the parent call function expr
-                        return [Builder.PartialFunctionCallee(possible_base, [member_symbol], { mname: None })]
+                        self.error_handler.assert_error(f'Too many callees: {callees}', len(callees) == 1)
+                        self.error_handler.assert_error(f'Expected selector: got {expr}.{mname}',
+                                                        mname == 'selector')
+                        refined_base = self.refine_expr(base)
+                        return solnodes2.ABISelector(refined_base)
+
+                if isinstance(func_sym.value, (solnodes1.FunctionDefinition, solnodes1.EventDefinition, solnodes1.ErrorDefinition)):
+                    # Func pointer load e.g. this is the first param in abi.encodeCall(A.f, ...)
+                    # TODO: can this be ambiguous or does the reference always select a single function
+                    return solnodes2.GetFunctionPointer(nodebase.Ref(func_sym.value.ast2_node))
+
+            all_member_symbols = [ms for mss in member_symbols for ms in mss]
+            unique_member_symbols = []
+            symtab._add_to_results(all_member_symbols, unique_member_symbols, set())
+
+            self.error_handler.assert_error(f'Expected single symbol, got: {member_symbols}', len(unique_member_symbols) == 1)
+            sym = unique_member_symbols[0]
+
+            if isinstance(sym, symtab.BuiltinValue):
+                if isinstance(base_type, soltypes.BuiltinType):
+                    # e.g. msg.gas, where the base is a builtin object
+                    return solnodes2.GlobalValue(f'{base_type.name}.{mname}', self.type_helper.map_type(sym.ttype))
                 else:
-                    self.error_handler.assert_error(f'Too many callees: {callees}', len(callees) == 1)
-                    self.error_handler.assert_error(f'Expected selector: got {expr}.{mname}', mname == 'selector')
-                    refined_base = self.refine_expr(base)
-                    return solnodes2.ABISelector(refined_base)
+                    # e.g. myarray.length, 'length' is builtin to the array type(i.e. not a concrete field)
+                    new_base = self.refine_expr(base)
+                    return solnodes2.DynamicBuiltInValue(mname, self.type_helper.map_type(sym.ttype), new_base)
+            elif isinstance(sym, symtab.BuiltinFunction):
+                input_params = [solnodes2.Parameter(solnodes2.Var(None, self.type_helper.map_type(t), None)) for t in (sym.input_types or [])]
+                output_params = [solnodes2.Parameter(solnodes2.Var(None, self.type_helper.map_type(t), None)) for t in (sym.output_types or [])]
+                builtin_f = solnodes2.BuiltinFunction(sym.aliases[0], input_params, output_params)
+                return solnodes2.GetFunctionPointer(nodebase.Ref(builtin_f))
+            else:
+                referenced_member = sym.value
+                new_base = self.refine_expr(base, allow_type=True)
+
+                if isinstance(referenced_member, solnodes1.StructMember):
+                    assert isinstance(new_base, solnodes2.Expr)
+                    return solnodes2.StateVarLoad(new_base, solnodes2.Ident(mname))
+                elif isinstance(referenced_member, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration)):
+                    # if the base is a type, it's a constant load, i.e. MyX.myConst (possibly also a qualified
+                    # lookup like MyX.MyY.myConst?)
+                    # else it's an instance member load which requires an expr base
+                    if isinstance(new_base, solnodes2.Types):
+                        assert isinstance(new_base, solnodes2.ResolvedUserType)
+                        assert solnodes1.MutabilityModifierKind.CONSTANT in [m.kind for m in referenced_member.modifiers if hasattr(m, 'kind')]
+                        return solnodes2.StaticVarLoad(new_base, solnodes2.Ident(referenced_member.name.text))
+                elif isinstance(referenced_member, solnodes1.Ident) and isinstance(referenced_member.parent,
+                                                                                   solnodes1.EnumDefinition):
+                    assert isinstance(new_base, solnodes2.ResolvedUserType) and new_base.value.x.is_enum()
+                    member_matches = [member for member in new_base.value.x.values
+                                      if member.name.text == referenced_member.text]
+                    assert len(member_matches) == 1
+                    return solnodes2.EnumLoad(nodebase.Ref(member_matches[0]))
+                elif self.is_top_level(referenced_member) or isinstance(referenced_member, solnodes1.ErrorDefinition):
+                    assert isinstance(new_base, solnodes2.ResolvedUserType)
+                    # Qualified top level reference, e.g. MyLib.MyEnum...
+                    return self.type_helper.get_contract_type(sym)
             self.error_handler.todo(expr)
         elif isinstance(expr, solnodes1.Literal):
             if isinstance(expr.value, tuple):
@@ -2062,14 +2080,20 @@ class Builder:
             return []
         return [self.modifier(m) for m in node_with_modifiers.modifiers]
 
-    def modifier(self, node: solnodes1.Modifier):
+    def modifier(self, node: solnodes1.Modifier | solnodes2.Modifier):
+        if isinstance(node, solnodes2.VisibilityModifier):
+            return solnodes2.VisibilityModifier(node.kind)
+        if isinstance(node, solnodes2.MutabilityModifier):
+            return solnodes2.MutabilityModifier(node.kind)
+
         if isinstance(node, solnodes1.VisibilityModifier2):
             return solnodes2.VisibilityModifier(node.kind)
-        elif isinstance(node, solnodes1.MutabilityModifier2):
+        if isinstance(node, solnodes1.MutabilityModifier2):
             return solnodes2.MutabilityModifier(node.kind)
-        elif isinstance(node, solnodes1.OverrideSpecifier):
+        if isinstance(node, solnodes1.OverrideSpecifier):
             return solnodes2.OverrideSpecifier([self.type_helper.get_user_type(t) for t in node.arguments])
-        elif isinstance(node, solnodes1.InvocationModifier):
+
+        if isinstance(node, solnodes1.InvocationModifier):
             target = self.type_helper.get_expr_type(node.name, allow_multiple=True)
 
             if isinstance(target, list):

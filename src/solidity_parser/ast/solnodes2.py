@@ -1082,8 +1082,8 @@ class Call(Expr, ABC):
         return soltypes.Type.are_matching_types(f_types, c_types)
 
     def param_str(self):
-        return ('{' + ', '.join(e.code_str() for e in self.named_args) + '}') if hasattr(self, 'named_args') and len(
-            self.named_args) > 0 else '' + f'({", ".join(e.code_str() for e in self.args)})'
+        return (('{' + ', '.join(e.code_str() for e in self.named_args) + '}') if hasattr(self, 'named_args') and len(
+            self.named_args) > 0 else '') + f'({", ".join(e.code_str() for e in self.args)})'
 
 
 @nodebase.NodeDataclass
@@ -1235,7 +1235,7 @@ class GetType(Expr):
 
 @nodebase.NodeDataclass
 class GetFunctionPointer(Expr):
-    func: nodebase.Ref[U[FunctionDefinition, 'BuiltinFunction']]
+    func: nodebase.Ref[U[FunctionDefinition, ErrorDefinition, EventDefinition, 'BuiltinFunction']]
 
     def type_of(self) -> soltypes.Type:
         def ts(params):

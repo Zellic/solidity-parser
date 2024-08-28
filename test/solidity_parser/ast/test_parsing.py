@@ -15,9 +15,9 @@ from .helper import register_solnodes2_formatter
 register_solnodes2_formatter()
 
 
-def get_test_cases(subdir, exclusions):
+def get_test_cases(subdir, exclusions, rglob=True):
     base_dir = Path(os.getcwd()) / subdir
-    return [(p,) for p in Path(base_dir).rglob('*.sol') if str(p.relative_to(base_dir)).replace('\\', '/') not in exclusions]
+    return [(p,) for p in (Path(base_dir).rglob('*.sol') if rglob else Path(base_dir).glob('*.sol')) if str(p.relative_to(base_dir)).replace('\\', '/') not in exclusions]
 
 
 def get_test_cases_only(subdir, inclusions):
@@ -46,12 +46,16 @@ def test_case_namer(testcase_func, param_num, param):
 
 
 class LibSolidityTestBase(unittest.TestCase):
-    def __init__(self, base_path, *args, **kwargs):
-        self.base_path = base_path
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, **vfs_options):
+        self.maxDiff = None
+        super().__init__(*args)
+        self.vfs_options = vfs_options
+
+        if 'compiler_version' not in self.vfs_options:
+            self.vfs_options['compiler_version'] = Version(0, 8, 22)
 
     def setUp(self) -> None:
-        self.vfs = filesys.VirtualFileSystem(self.base_path, compiler_version=Version(0, 8, 22))
+        self.vfs = filesys.VirtualFileSystem(**self.vfs_options)
         self.symtab_builder = symtab.Builder2(self.vfs)
         self.ast2_builder = ast2builder.Builder()
         self.error_handler = self.ast2_builder.error_handler
@@ -92,6 +96,28 @@ class LibSolidityTestBase(unittest.TestCase):
             self.assertEqual([], self.error_handler.caught_errors)
 
 
+class   TestCases1(LibSolidityTestBase, SnapshotTestCase):
+    SRC_DIR = 'testcases/weirdcases'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs, base_path=self.SRC_DIR, compiler_version=Version(0, 5, 11))
+
+    @parameterized.expand(
+        get_test_cases(
+            SRC_DIR,
+            [],
+            rglob=False
+        ),
+        name_func=test_case_namer
+    )
+    def test_success_path(self, file):
+        self._load(str(file.absolute().relative_to(Path(self.vfs.base_path).absolute())), check_errors=True)
+
+        if not self.error_handler.caught_errors:
+            units = self.ast2_builder.get_top_level_units()
+            self.assertMatchSnapshot(units)
+
+
 class TestASTJSONCases(LibSolidityTestBase, SnapshotTestCase):
     SRC_DIR = 'testcases/libsolidity/ASTJSON'
     SPLIT_CASES = [
@@ -106,7 +132,7 @@ class TestASTJSONCases(LibSolidityTestBase, SnapshotTestCase):
 
     def __init__(self, *args, **kwargs):
         self.maxDiff = None
-        super().__init__(self.SRC_DIR, *args, **kwargs)
+        super().__init__(*args, **kwargs, base_path=self.SRC_DIR)
 
     @parameterized.expand(
         get_test_cases(
@@ -141,10 +167,9 @@ class TestASTJSONCases(LibSolidityTestBase, SnapshotTestCase):
 
 class TestSemanticTestCases(LibSolidityTestBase, SnapshotTestCase):
     SRC_DIR = 'testcases/libsolidity/semanticTests'
-    def __init__(self, *args, **kwargs):
-        super().__init__(self.SRC_DIR, *args, **kwargs)
 
-        self.snapshot_should_update = True
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs, base_path=self.SRC_DIR)
 
     @parameterized.expand(
         get_test_cases(
@@ -359,8 +384,8 @@ class TestSemanticTestCases(LibSolidityTestBase, SnapshotTestCase):
 
     def test_debug(self):
         register_solnodes2_formatter()
-        self._load('libraries/internal_library_function_attached_to_array_named_pop_push.sol')
+        self._load('events/event_selector.sol')
         units = self.ast2_builder.get_top_level_units()
-        self.assertMatchSnapshot(units)
+        # self.assertMatchSnapshot(units)
 
         print("x")

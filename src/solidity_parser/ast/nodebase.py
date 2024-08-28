@@ -249,7 +249,7 @@ class Node:
         return SourceLocationSpan(self.start_location, self.end_location)
 
     def linenumber(self) -> int:
-        return int(self.location.split(":")[0])
+        return int(self.id_location.split(":")[0])
 
     def source_location(self):
         if hasattr(self, 'scope') and self.scope:
@@ -258,10 +258,10 @@ class Node:
             file_name = file_scope.source_unit_name
         else:
             file_name = '<unknown>'
-        return f'{file_name} @{self.location}'
+        return f'{file_name} @{self.id_location}'
 
     def offset(self) -> int:
-        return int(self.location.split(":")[1])
+        return int(self.id_location.split(":")[1])
 
     def get_children(self, predicate: Callable[['Node'], bool] = None) -> Generator['Node', None, None]:
         if not predicate:

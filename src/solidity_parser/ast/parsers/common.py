@@ -59,7 +59,7 @@ class ParserBase:
             return map_helper(self.make, [r for r in rules if is_grammar_rule(r)])
 
     def copy_source_data(self, decorated_node, node_to_decorate):
-        node_to_decorate.location = decorated_node.location
+        node_to_decorate.id_location = decorated_node.id_location
         node_to_decorate.start_location = decorated_node.start_location
         node_to_decorate.end_location = decorated_node.end_location
         node_to_decorate.start_buffer_index = decorated_node.start_buffer_index
@@ -76,7 +76,7 @@ class ParserBase:
             # we add 1 to each column in each of these because we used 1 based columns, see solnodes.SourceLocation
             if isinstance(rule.start, int):
                 # for terminal node symbols
-                node.location = f'{rule.line}:{rule.start}'
+                node.id_location = f'{rule.line}:{rule.start}'
 
                 node.start_location = nodebase.SourceLocation(rule.line, rule.column + 1)
                 token_len = rule.stop - rule.start + 1
@@ -86,7 +86,7 @@ class ParserBase:
                 node.end_buffer_index = rule.stop + 1
             else:
                 # this is the normal case
-                node.location = f'{rule.start.line}:{rule.start.start}'
+                node.id_location = f'{rule.start.line}:{rule.start.start}'
 
                 node.start_location = nodebase.SourceLocation(rule.start.line, rule.start.column + 1)
                 col_offset = rule.stop.stop - rule.stop.start + 1

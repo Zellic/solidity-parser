@@ -556,15 +556,32 @@ class FunctionType(Type):
 
     def code_str(self):
         # function (<parameter types>) {internal|external} [pure|view|payable] [returns (<return types>)]
-        return f'function ({", ".join(t.code_str() for t in self.inputs)}) returns ({", ".join(t.code_str() for t in self.outputs)})'
+        if self.inputs is None:
+            input_params = '<polymorphic>'
+        else:
+            input_params = ", ".join(t.code_str() for t in self.inputs)
+
+        if self.outputs is None:
+            output_params = '<polymorphic>'
+        else:
+            output_params = ", ".join(t.code_str() for t in self.outputs)
+
+        return f'function ({input_params}) returns ({output_params})'
 
     def __str__(self):
         return self.code_str()
 
     def type_key(self, name_resolver=None, *args, **kwargs):
         # doesn't include modifiers for now
-        input_params = ', '.join([p.type_key(name_resolver, *args, **kwargs) for p in self.inputs])
-        output_params = ', '.join([p.type_key(name_resolver, *args, **kwargs) for p in self.outputs])
+        if self.inputs is None:
+            input_params = '<polymorphic>'
+        else:
+            input_params = ', '.join([p.type_key(name_resolver, *args, **kwargs) for p in self.inputs])
+
+        if self.outputs is None:
+            output_params = '<polymorphic>'
+        else:
+            output_params = ', '.join([p.type_key(name_resolver, *args, **kwargs) for p in self.outputs])
         return f'function ({input_params}) returns ({output_params})'
 
 

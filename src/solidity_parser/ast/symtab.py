@@ -969,7 +969,7 @@ class ProxyScope(ScopeAndSymbol):
 
 class UsingDirectiveScope(ScopeAndSymbol):
     def __init__(self, node: solnodes.UsingDirective):
-        ScopeAndSymbol.__init__(self, f'Using:{node.location}', node)
+        ScopeAndSymbol.__init__(self, f'Using:{node.id_location}', node)
 
 
 class UsingFunctionSymbol(Symbol):
@@ -1237,7 +1237,7 @@ class Builder2:
                 self.add_node_dfs(latest_scope, child_node, context, build_skeletons, child_index)
 
     def make_using_scope(self, node: solnodes.UsingDirective):
-        # return self.make_scope(node, f'Using:{node.location}')
+        # return self.make_scope(node, f'Using:{node.id_location}')
         return UsingDirectiveScope(node)
 
     def make_var_decl_scope(self, node: solnodes.VarDecl):
@@ -1267,7 +1267,7 @@ class Builder2:
         return sym_type(name, node)
 
     def scope_name(self, base_name, node):
-        return f'<{base_name}>@{node.location}'
+        return f'<{base_name}>@{node.id_location}'
 
     def find_using_target_scope_and_name(self, current_scope, target_type: soltypes.Type):
 
@@ -1510,7 +1510,7 @@ class Builder2:
     def process_using_directive(self, node: solnodes.UsingDirective, context: Context):
         if isinstance(node.override_type, soltypes.AnyType):
             if node.is_global:
-                raise ValueError(f'Using @{node.location} can\'t be global')
+                raise ValueError(f'Using @{node.id_location} can\'t be global')
             self.process_using_any_type(context, node)
         else:
             # Two cases here, before 0.8.19 this was the only form this statement could take:
