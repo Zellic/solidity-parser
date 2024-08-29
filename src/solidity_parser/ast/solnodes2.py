@@ -1071,15 +1071,34 @@ class CreateAndDeployContract(Expr):
         return f"new {self.ttype.code_str()}" + Call.param_str(self)
 
 
+def check_arg_types(args: list[Expr], f: FunctionDefinition) -> bool:
+    named_args = {a.name.text: a.expr.type_of() for a in args if isinstance(a, NamedArgument)}
+
+    if len(named_args) > 0:
+        func_params = {p.var.name.text: p.var.ttype for p in f.inputs}
+
+        if set(func_params.keys()) != set(named_args.keys()):
+            return False
+
+        f_types, c_types = [], []
+
+        for k, v in named_args.items():
+            f_types.append(func_params[k])
+            c_types.append(v)
+    else:
+        f_types = [x.var.ttype for x in f.inputs]
+        c_types = [a.type_of() for a in args]
+
+    return soltypes.Type.are_matching_types(f_types, c_types)
+
+
 @nodebase.NodeDataclass
 class Call(Expr, ABC):
     call_options: list[NamedArgument]
     args: list[Expr]
 
     def check_arg_types(self, f: FunctionDefinition) -> bool:
-        f_types = [x.var.ttype for x in f.inputs]
-        c_types = [a.type_of() for a in self.args]
-        return soltypes.Type.are_matching_types(f_types, c_types)
+        return check_arg_types(self.args, f)
 
     def param_str(self):
         return (('{' + ', '.join(e.code_str() for e in self.call_options) + '}') if hasattr(self, 'call_options') and len(

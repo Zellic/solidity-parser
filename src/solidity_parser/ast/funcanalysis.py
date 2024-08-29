@@ -3,9 +3,8 @@ from typing import List, Union
 from enum import Enum
 
 from solidity_parser.ast.solnodes2 import (FunctionCall, DirectCall, ResolvedUserType, TopLevelUnit, FunctionDefinition,
-                                           SuperType, AST2Node, SuperObject, SelfObject, UnprocessedCode, Stmt,
-                                           Assembly)
-from solidity_parser.ast.types import Type
+                                           SuperType, SuperObject, SelfObject, UnprocessedCode, Stmt,
+                                           Assembly, Expr, check_arg_types)
 from solidity_parser.ast.mro_helper import c3_linearise
 from solidity_parser.ast.solnodes import VisibilityModifierKind, MutabilityModifierKind
 
@@ -85,7 +84,7 @@ def add_function_to_cg(cg: DiGraph, finished_functions, function: FunctionDefini
                 add_function_to_cg(cg, finished_functions, t_f)
 
 
-def find_possible_calls(declared_ttype: Union[ResolvedUserType, SuperType], name: str, arg_types: List[Type], match_filter=lambda x: True, use_subtypes=True) -> List[FunctionDefinition]:
+def find_possible_calls(declared_ttype: Union[ResolvedUserType, SuperType], name: str, args: List[Expr], match_filter=lambda x: True, use_subtypes=True) -> List[FunctionDefinition]:
     # this is probably not the best way to do it but here the algorithm to determine what could possibly be called
     # for the given declared type and function descriptor:
     # 1. take the declared type + its subtypes and filter out the abstract types as its not possible to instantiate an
@@ -100,9 +99,8 @@ def find_possible_calls(declared_ttype: Union[ResolvedUserType, SuperType], name
 
     def descriptor_matches(p):
         if isinstance(p, FunctionDefinition) and p.name.text == name:
-            if len(p.inputs) == len(arg_types):
-                f_types = [x.var.ttype for x in p.inputs]
-                return Type.are_matching_types(f_types, arg_types)
+            if len(p.inputs) == len(args):
+                return check_arg_types(args, p)
         return False
 
     is_super_call = isinstance(declared_ttype, SuperType)
@@ -200,7 +198,7 @@ def find_important_paths2(source: FunctionDefinition):
                 self_call = not ((isinstance(code_node, FunctionCall) and not isinstance(code_node.base, (SelfObject, SuperObject))) or isinstance(code_node, DirectCall))
 
                 if self_call:
-                    targets = find_possible_calls(code_node.base_type(), code_node.name.text, [arg.type_of() for arg in code_node.args], use_subtypes=False)
+                    targets = find_possible_calls(code_node.base_type(), code_node.name.text, code_node.args, use_subtypes=False)
                     assert len(targets) >= 1
 
                     # we only get back paths if we hit a sink and only propagate them forward if we get those paths
