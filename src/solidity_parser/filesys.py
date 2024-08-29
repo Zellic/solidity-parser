@@ -135,6 +135,9 @@ class VirtualFileSystem:
             raise ValueError(f'Invalid remapping syntax on line {line_num + 1}, expected: <context>?:<prefix>=<target>, got: "{line}"')
 
         for line_num, line in enumerate(lines):
+            if not line:
+                continue
+
             split1 = line.split(':')
 
             if len(split1) == 2:
