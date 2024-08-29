@@ -5,11 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.22] - 2024-08-29
+ - Fixed issues with external function call options(gas/value) being confused with name function arguments
+ - Renamed `solnodes.CallFunction.modifiers` to `special_call_options`
+ - Renamed `solnodes2.Call` and `solnodes2.CreateAndDeployContract` `named_args` to `call_options`
+ - Fixed error messaging and ignore line numbers when parsing remapping files
+ - Fixed naming issue where `location` was being used instead of `id_location` for AST Node source locations
+ - Allowed AST2 partial function building to expand multiple calls(used for `call` on `address payable`)
+ - Added `selector` support for Events and Errors
+ - Fixed incompatability issue with partial function application for old style gas/value and using functions on function base types
+ - Fixed issue with BuiltInCall `name` being a set instead of string
+ - Fixed other misc issues in AST2Builder
+ - Fixed function call resolution for calls with named args
+ - Added testcases
+
 ### [0.1.21] - 2024-08-01
  - Fixed issue where `using *` statements with unimported types were causing crashes
  - Changed types.type_key to support UserTypes with a callback
  - Added symtab.TypeNotFound error
- - 
 
 ### [0.1.20] - 2024-06-13
  - Fixed issue with AST2 TypeHelper with function types of overriden functions

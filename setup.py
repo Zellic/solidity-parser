@@ -26,7 +26,7 @@ class BuildPyWithGenerateCommand(setuptools.command.build_py.build_py):
 
 setup(
     name='solidity-parser',
-    version='0.1.21',
+    version='0.1.22',
 
     install_requires=[
         "antlr4-python3-runtime==4.11.1",
