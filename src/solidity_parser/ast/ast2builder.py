@@ -2262,8 +2262,11 @@ class Builder:
 
             for p in ast1_node.parts:
                 # don't need usings or pragmas for AST2
-                if not self.is_top_level(p) and self.should_create_skeleton(p) and not p.ast2_node:
-                    ast2_node.parts.append(self.define_skeleton(p, None))
+                if not self.is_top_level(p) and self.should_create_skeleton(p):
+                    if not p.ast2_node:
+                        ast2_node.parts.append(self.define_skeleton(p, None))
+                    else:
+                        ast2_node.parts.append(p.ast2_node)
 
                 if isinstance(p, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration)):
                     # generate synthetic, codeless, getter functions for each field. This is to fix virtual function
