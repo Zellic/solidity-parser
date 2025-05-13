@@ -28,7 +28,7 @@ class ErrorHandler:
     them in CodeProcessingErrors so that the client can catch and decide what to do with them.
     """
 
-    def __init__(self, create_state, quiet_errors=True):
+    def __init__(self, create_state, quiet_errors=False):
         """
         :param create_state: A function used to compute the state of the builder for a node when an error context
                              wrapped function is called
@@ -707,8 +707,12 @@ class TypeHelper:
         elif isinstance(value, solnodes1.FunctionDefinition):
             return soltypes.FunctionType(self.param_types(value.parameters), self.param_types(value.returns), self.builder.modifiers(value))
         elif isinstance(value, solnodes1.ErrorDefinition):
-            # AFAIK this is only used for MyError.selector
-            return soltypes.FunctionType(self.param_types(value.parameters), [], [])
+            if function_callee:
+                # error initialised like callable eg MyError(1,2), I believe this is only passed to require() in 0.8.26
+                return solnodes2.UserDefinedErrorType(nodebase.Ref(value))
+            else:
+                # AFAIK this is only used for MyError.selector
+                return soltypes.FunctionType(self.param_types(value.parameters), [], [])
         elif isinstance(value, solnodes1.EventDefinition):
             # This can happen with old solidity contracts before the 'emit' keyword was created. In this case, an
             # event is triggered by a function call e.g. MyEvent() instead of emit MyEvent()
@@ -1118,10 +1122,9 @@ class Builder:
         elif isinstance(node, solnodes1.Continue):
             return solnodes2.Continue()
         elif isinstance(node, solnodes1.Revert):
-            # Special case of refine_call_function
-            error_def, new_args = self.refine_call_function(node.call, allow_error=True)
-            assert isinstance(error_def, solnodes2.ErrorDefinition)
-            return solnodes2.RevertWithError(nodebase.Ref(error_def), new_args)
+            err_create = self.refine_call_function(node.call, allow_error=True)
+            assert isinstance(err_create, solnodes2.CreateError)
+            return solnodes2.RevertWithError(err_create)
         self.error_handler.todo(node)
 
     def get_declaring_contract_scope(self, node: solnodes1.AST1Node) -> Union[
@@ -1158,7 +1161,9 @@ class Builder:
         def create_new_args():
             results = []
             for ast1_arg in expr.args:
-                ast2_arg = self.refine_expr(ast1_arg, is_argument=True)
+                # technically we should check hasattr(expr.callee, 'name') and str(expr.callee.name) == 'require'
+                # but don't want to hardcode it
+                ast2_arg = self.refine_expr(ast1_arg, is_argument=True, allow_error=True)
                 if isinstance(ast2_arg, list):
                     # this currently only happens for tuples of exprs (not tuples of types) in the 2nd arg of
                     # abi.encodeCall calls
@@ -1402,7 +1407,8 @@ class Builder:
                     if len(new_args) == 1:
                         return solnodes2.Require(new_args[0], None)
                     elif len(new_args) == 2:
-                        assert new_args[1].type_of().is_string()
+                        reason_ttype = new_args[1].type_of()
+                        assert reason_ttype.is_string() or reason_ttype.is_user_error()
                         return solnodes2.Require(new_args[0], new_args[1])
                     self.error_handler.todo(expr)
                 elif sym.aliases[0] == 'revert':
@@ -1489,7 +1495,11 @@ class Builder:
             assert allow_error
             assert len(special_call_options) == 0
             self.load_non_top_level_if_required(sym.value)
-            return sym.value.ast2_node, new_args
+            assert isinstance(sym.value.ast2_node, solnodes2.ErrorDefinition)
+            return solnodes2.CreateError(
+                solnodes2.UserDefinedErrorType(nodebase.Ref(sym.value.ast2_node)),
+                new_args
+            )
         elif isinstance(sym.value, solnodes1.EventDefinition):
             # old style event Emit that looks like a function call: we convert this to an Emit Stmt in AST2
             assert allow_event
@@ -1612,7 +1622,7 @@ class Builder:
     @link_with_ast1
     def refine_expr(self, expr: solnodes1.Expr, is_function_callee=False, allow_type=False, allow_tuple_exprs=False,
                     allow_multiple_exprs=False, allow_none=True, allow_stmt=False, is_argument=False,
-                    is_assign_rhs=False, allow_event=False):
+                    is_assign_rhs=False, allow_event=False, allow_error=False):
         if expr is None:
             assert allow_none
             return None
@@ -1814,7 +1824,7 @@ class Builder:
             else:
                 self.error_handler.todo(ident_target)
         elif isinstance(expr, solnodes1.CallFunction):
-            return self.refine_call_function(expr, allow_stmt=allow_stmt, allow_event=allow_event)
+            return self.refine_call_function(expr, allow_stmt=allow_stmt, allow_event=allow_event, allow_error=allow_error)
         elif isinstance(expr, solnodes1.GetMember):
             base = expr.obj_base
             mname = expr.name.text

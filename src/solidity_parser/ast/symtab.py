@@ -710,6 +710,9 @@ class RootScope(Scope):
         block_object.add(BuiltinValue('difficulty', uint()))
         block_object.add(BuiltinValue('gaslimit', uint()))
         block_object.add(BuiltinValue('number', uint()))
+        # Add blobbasefee only for Solidity 0.8.24 and above
+        if parser_version and parser_version.is_enforced_in(version_util.Version(0, 8, 24)):
+            block_object.add(BuiltinValue('blobbasefee', uint()))
         block_object.add(now_symbol := BuiltinValue('timestamp', uint()))  # now was used pre solidity 0.7 for block.timestamp
         self.add(block_object)
 
@@ -768,11 +771,16 @@ class RootScope(Scope):
 
         self.add(BuiltinFunction('gasleft', [], [uint()]))
 
-        self.add(BuiltinFunction('blobhash', [uint()], [bytes32()]))
+        # Add blobhash only for Solidity 0.8.24 and above
+        if parser_version and parser_version.is_enforced_in(version_util.Version(0, 8, 24)):
+            self.add(BuiltinFunction('blobhash', [uint()], [bytes32()]))
         self.add(BuiltinFunction('blockhash', [uint()], [bytes32()]))
 
         self.add(BuiltinFunction('require', [soltypes.BoolType(), soltypes.StringType()], []))
         self.add(BuiltinFunction('require', [soltypes.BoolType()], []))
+        # Add require(bool, error) overload for Solidity 0.8.26 and above
+        if parser_version and parser_version.is_enforced_in(version_util.Version(0, 8, 26)):
+            self.add(BuiltinFunction('require', [soltypes.BoolType(), soltypes.ErrorType()], []))
 
         self.add(BuiltinFunction('assert', [soltypes.BoolType()], []))
 

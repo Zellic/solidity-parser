@@ -55,6 +55,10 @@ class Type(Node, ABC):
         """ Check if the type is a user defined type, e.g. struct, enum, contract, etc """
         return False
 
+    def is_user_error(self) -> bool:
+        """ Check if the type is defined by a user defined Error function """
+        return False
+
     def is_address(self) -> bool:
         return False
 
@@ -584,6 +588,21 @@ class FunctionType(Type):
             output_params = ', '.join([p.type_key(name_resolver, *args, **kwargs) for p in self.outputs])
         return f'function ({input_params}) returns ({output_params})'
 
+@NodeDataclass
+class ErrorType(Type):
+    # for now this type only occurs as a type filter for the 0.8.26 require() builtin that takes an error "object" as an arg
+    def __str__(self):
+        return '<err>'
+    def is_builtin(self) -> bool:
+        return False
+    def code_str(self):
+        raise ValueError('ErrorType is not a printable')
+    def type_key(self, *args, **kwargs):
+        raise ValueError('ErrorType does not have a type key')
+    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
+        if super().can_implicitly_cast_from(actual_type):
+            return True
+        return actual_type.is_user_error()
 
 @NodeDataclass
 class TupleType(Type):

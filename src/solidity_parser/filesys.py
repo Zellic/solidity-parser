@@ -354,7 +354,9 @@ class VirtualFileSystem:
 
     @staticmethod
     def _clean_path(*parts: List[str]) -> str:
-        return os.path.join(*parts).replace('\\', '/')
+        def strip(p):
+            return p if not p.startswith('/') else p[1:]
+        return os.path.join(*[strip(p) for p in parts]).replace('\\', '/')
 
     @staticmethod
     def _strip_prefix(prefix, path) -> Optional[Path]:

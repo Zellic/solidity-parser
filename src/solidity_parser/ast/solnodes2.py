@@ -48,6 +48,35 @@ class Expr(AST2Node, ABC):
 class Modifier(AST2Node, ABC):
     pass
 
+@nodebase.NodeDataclass
+class UserDefinedErrorType(soltypes.Type):
+    # Use a ref because this type doesn't "own" the ErrorDefinition node instance
+    value: nodebase.Ref['ErrorDefinition'] = field(repr=False)
+
+    def is_user_error(self) -> bool:
+        return True
+
+    def is_user_type(self) -> bool:
+        return True
+
+    def __str__(self):
+        return f'error({self.value.x.name.text})'
+
+    def __repr__(self):
+        return self.__str__()
+
+    def code_str(self):
+        return self.value.x.name.text
+
+    def type_key(self, *args, **kwargs):
+        return self.value.x.name.text
+
+    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
+        if super().can_implicitly_cast_from(actual_type):
+            return True
+        if actual_type.is_user_error():
+            return actual_type.value.x == self.value.x
+        return False
 
 @nodebase.NodeDataclass
 class ResolvedUserType(soltypes.Type):
@@ -1059,6 +1088,18 @@ class CreateStruct(Expr):
 
 
 @nodebase.NodeDataclass
+class CreateError(Expr):
+    ttype: UserDefinedErrorType
+    args: list[Expr]
+
+    def type_of(self) -> soltypes.Type:
+        return self.ttype
+
+    def code_str(self):
+        return f'{self.ttype.code_str()}({", ".join(e.code_str() for e in self.args)})'
+
+
+@nodebase.NodeDataclass
 class CreateAndDeployContract(Expr):
     ttype: ResolvedUserType
     call_options: list[NamedArgument]
@@ -1283,11 +1324,10 @@ class Revert(Stmt):
 
 @nodebase.NodeDataclass
 class RevertWithError(Revert):
-    error: nodebase.Ref[ErrorDefinition]
-    args: list[Expr]
+    error: CreateError
 
     def code_str(self):
-        return f'revert {self.error.x.name.text}({", ".join(e.code_str() for e in self.args)});'
+        return f'revert {self.error.code_str()};'
 
 
 @nodebase.NodeDataclass
@@ -1352,4 +1392,5 @@ Types: TypeAlias = (soltypes.VariableLengthArrayType | soltypes.VoidType | solty
                     | soltypes.AnyType | soltypes.MappingType | soltypes.StringType | soltypes.AddressType
                     | soltypes.FixedLengthArrayType | soltypes.ByteType | soltypes.MetaTypeType
                     | soltypes.TupleType | soltypes.PreciseIntType | soltypes.PreciseIntType
-                    | soltypes.BuiltinType | ResolvedUserType | SuperType | soltypes.FloatType)
+                    | soltypes.BuiltinType | ResolvedUserType | SuperType | soltypes.FloatType
+                    | soltypes.ErrorType | UserDefinedErrorType)
