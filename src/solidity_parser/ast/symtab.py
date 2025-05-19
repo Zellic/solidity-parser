@@ -1650,10 +1650,10 @@ class Builder2:
             else:
                 return self.make_symbol(node, name=node.var_name.text)
         elif isinstance(node, solnodes.EventParameter):
-            if node.name is None:
+            if node.var_name is None:
                 name = f'<unnamed_paramter:{visit_index}'
             else:
-                name = node.name.text
+                name = node.var_name.text
             return self.make_symbol(node, name=name)
         elif isinstance(node, solnodes.VarDecl):
             return None  # TODO: this is a sentinel

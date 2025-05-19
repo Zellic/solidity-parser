@@ -524,8 +524,19 @@ def ABIType() -> BuiltinType:
 
 
 @NodeDataclass
+class FunctionParameter(Node):
+    """
+    Shim: see Type to understand why
+    """
+    name: 'Ident'
+    ttype: Type
+    scope: 'Scope' = field(default=None, init=False, repr=False, compare=False, hash=False)
+
+
+@NodeDataclass
 class FunctionType(Type):
-    inputs: list[Type]
+    input_params: list[FunctionParameter]
+    # TODO: maybe outputs need to use NamedType as well, unsure
     outputs: list[Type]
     # "By default, function types are internal, so the internal keyword can be omitted. Note that this only applies to
     # function types. Visibility has to be specified explicitly for functions defined in contracts, they do not have a
@@ -552,18 +563,18 @@ class FunctionType(Type):
         # No other conversions between function types are possible
 
         if actual_type.is_function():
-            if len(actual_type.inputs) != len(self.inputs):
+            if len(actual_type.input_params) != len(self.input_params):
                 return False
-            return all([t1 == t2 for t1, t2 in zip(self.inputs, actual_type.inputs)])
+            return all([t1.ttype == t2.ttype for t1, t2 in zip(self.input_params, actual_type.input_params)])
 
         return False
 
     def code_str(self):
         # function (<parameter types>) {internal|external} [pure|view|payable] [returns (<return types>)]
-        if self.inputs is None:
+        if self.input_params is None:
             input_params = '<polymorphic>'
         else:
-            input_params = ", ".join(t.code_str() for t in self.inputs)
+            input_params = ", ".join(t.code_str() for t in self.input_params)
 
         if self.outputs is None:
             output_params = '<polymorphic>'
@@ -577,16 +588,17 @@ class FunctionType(Type):
 
     def type_key(self, name_resolver=None, *args, **kwargs):
         # doesn't include modifiers for now
-        if self.inputs is None:
+        if self.input_params is None:
             input_params = '<polymorphic>'
         else:
-            input_params = ', '.join([p.type_key(name_resolver, *args, **kwargs) for p in self.inputs])
+            input_params = ', '.join([p.ttype.type_key(name_resolver, *args, **kwargs) for p in self.input_params])
 
         if self.outputs is None:
             output_params = '<polymorphic>'
         else:
             output_params = ', '.join([p.type_key(name_resolver, *args, **kwargs) for p in self.outputs])
         return f'function ({input_params}) returns ({output_params})'
+
 
 @NodeDataclass
 class ErrorType(Type):

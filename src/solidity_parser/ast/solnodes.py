@@ -264,7 +264,7 @@ class VarDecl(Stmt):
 
 @dataclass
 class Parameter(AST1Node):
-    var_type: Ident
+    var_type: soltypes.Type
     var_loc: Location
     var_name: Ident
 
@@ -511,7 +511,7 @@ class UserValueType(SourceUnit, ContractPart):
 @dataclass
 class EventParameter(AST1Node):
     var_type: soltypes.Type
-    name: Ident
+    var_name: Ident
     is_indexed: bool
 
 
@@ -525,7 +525,7 @@ class EventDefinition(ContractPart):
 @dataclass
 class ErrorParameter(AST1Node):
     var_type: soltypes.Type
-    name: Ident
+    var_name: Ident
 
 
 @dataclass
@@ -601,5 +601,6 @@ ModFunErrEvt: typing.TypeAlias = ModifierDefinition | FunctionDefinition | Error
 Types: typing.TypeAlias = (soltypes.VariableLengthArrayType | soltypes.VoidType | soltypes.IntType
                            | soltypes.FunctionType | soltypes.ArrayType | soltypes.BytesType | soltypes.BoolType
                            | soltypes.AnyType | soltypes.MappingType | soltypes.UserType | soltypes.StringType
-                           | soltypes.FixedLengthArrayType | soltypes.AddressType | soltypes.ByteType)
+                           | soltypes.FixedLengthArrayType | soltypes.AddressType | soltypes.ByteType
+                           | soltypes.ErrorType )
 

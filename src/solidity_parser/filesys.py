@@ -179,6 +179,11 @@ class VirtualFileSystem:
                 if loaded_source:
                     return loaded_source
 
+        for source_unit_name in import_source_unit_names:
+            try:
+                self._read_file_callback(source_unit_name, self._base_path, self.include_paths)
+            except ValueError:
+                pass
         raise ValueError(f"Can't import {import_path} from {importer_source_unit_name}")
 
     def _add_loaded_source(self, source_unit_name: str, source_code: str, creator=None, origin=None) -> LoadedSource:

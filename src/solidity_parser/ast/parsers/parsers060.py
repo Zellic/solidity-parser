@@ -264,24 +264,15 @@ def _mapping_type(parser, mapping_type: SolidityParser.MappingContext):
     )
 
 
-def params_to_types(params: solnodes.Parameter):
-    # TODO: add name + storage to FunctionType. Is it even necessary?
-    # old solnodes1.FunctionType had this but solnodes2.FunctionType didn't and now types.FunctionType doesn't either
-    # so this informtion isn't stored.
-    # Idea: create a new mixin that can be added to all the Type subclasses OR create a new NamedType that has the
-    # actual type as an attr and redirects Type calls to the attr. e.g.
-    #  class NamedType(Type):
-    #      name: Ident
-    #      ttype: Type
-    #      storage: ...
-    #      def __getattr__(self, name):
-    #          # checks...
-    #          return getattr(self.ttype, name)
+def params_to_types(params: list[solnodes.Parameter]):
     return [p.var_type for p in params]
+
+def input_params_to_types(params: list[solnodes.Parameter]):
+    return [soltypes.FunctionParameter(p.var_name, p.var_type) for p in params]
 
 def _function_type_name(parser, function_type: SolidityParser.FunctionTypeNameContext):
     return soltypes.FunctionType(
-        params_to_types(parser.make(function_type.parameterList(), default=[])),
+        input_params_to_types(parser.make(function_type.parameterList(), default=[])),
         params_to_types(parser.make(function_type.returnParameters(), default=[])),
         parser.make(function_type.modifierList(), default=[])
     )
