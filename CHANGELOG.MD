@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+### [0.1.23] - 2025-05-19
+ - Added `FunctionParameter` for input parameters of `FunctionType`s (required for named argument support)
+ - Changed `FunctionType` field `inputs` to `input_params`
+ - Added `block.blobbasefee` builtin variable
+ - Added `blobhash` builtin function
+ - Added new `require` function that takes an `ErrorType`
+ - Added `Type.is_user_error`
+ - Added `ErrorType` to make allow class error objects
+ - Added `UserDefinedErrorType` for solidity `error` 'function' types
+ - Added `CreateError` AST2 node for first class error initialisation
+ - Changed AST2 `RevertWithError` to take a `CreateError` object instead of a type and list of args
+ - Changed AST1 `EventParameter` and `ErrorParameter` to use `var_name` instead of `name` to be consistent with Parameter
+ - Changed AST1 `Parameter` to use `soltypes.Type` for `var_type` instead of `Ident`
+ - Fixed hashing issue with `NodeList`
+ - Fixed some issues with function type widening with 
+ - 
 ### [0.1.22] - 2024-08-29
  - Fixed issues with external function call options(gas/value) being confused with name function arguments
  - Renamed `solnodes.CallFunction.modifiers` to `special_call_options`
