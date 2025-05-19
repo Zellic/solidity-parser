@@ -48,6 +48,35 @@ class Expr(AST2Node, ABC):
 class Modifier(AST2Node, ABC):
     pass
 
+@nodebase.NodeDataclass
+class UserDefinedErrorType(soltypes.Type):
+    # Use a ref because this type doesn't "own" the ErrorDefinition node instance
+    value: nodebase.Ref['ErrorDefinition'] = field(repr=False)
+
+    def is_user_error(self) -> bool:
+        return True
+
+    def is_user_type(self) -> bool:
+        return True
+
+    def __str__(self):
+        return f'error({self.value.x.name.text})'
+
+    def __repr__(self):
+        return self.__str__()
+
+    def code_str(self):
+        return self.value.x.name.text
+
+    def type_key(self, *args, **kwargs):
+        return self.value.x.name.text
+
+    def can_implicitly_cast_from(self, actual_type: 'Type') -> bool:
+        if super().can_implicitly_cast_from(actual_type):
+            return True
+        if actual_type.is_user_error():
+            return actual_type.value.x == self.value.x
+        return False
 
 @nodebase.NodeDataclass
 class ResolvedUserType(soltypes.Type):
@@ -1059,6 +1088,18 @@ class CreateStruct(Expr):
 
 
 @nodebase.NodeDataclass
+class CreateError(Expr):
+    ttype: UserDefinedErrorType
+    args: list[Expr]
+
+    def type_of(self) -> soltypes.Type:
+        return self.ttype
+
+    def code_str(self):
+        return f'{self.ttype.code_str()}({", ".join(e.code_str() for e in self.args)})'
+
+
+@nodebase.NodeDataclass
 class CreateAndDeployContract(Expr):
     ttype: ResolvedUserType
     call_options: list[NamedArgument]
@@ -1072,16 +1113,30 @@ class CreateAndDeployContract(Expr):
 
 
 def check_arg_types(args: list[Expr], f: FunctionDefinition) -> bool:
-    named_args = {a.name.text: a.expr.type_of() for a in args if isinstance(a, NamedArgument)}
+    # weird edge case: imagine a call x.abc({a:1,b:2}) where we have a "using statement" for x. The statement gets
+    # converted to a DirectCall to X.abc, with the args (x, {a:1}, {b:2}), i.e.a mix of 1 positional argument the rest
+    # named
+    possible_direct_call = len(args) > 0 and not isinstance(args[0], NamedArgument) and all([isinstance(a, NamedArgument) for a in args[1:]])
+
+    named_args = {
+        a.name.text: a.expr.type_of()
+        for a in (args[1:] if possible_direct_call else args) if isinstance(a, NamedArgument)
+    }
 
     if len(named_args) > 0:
-        func_params = {p.var.name.text: p.var.ttype for p in f.inputs}
+        func_params = {p.var.name.text: p.var.ttype for p in (f.inputs[1:] if possible_direct_call else f.inputs)}
 
         if set(func_params.keys()) != set(named_args.keys()):
             return False
 
         f_types, c_types = [], []
 
+        if possible_direct_call:
+            # want to match first arg by direct
+            f_types.append(f.inputs[0].var.ttype)
+            c_types.append(args[0].type_of())
+
+        # f_types[i] and c_types[i] are expected and provided types of an arg 'x'
         for k, v in named_args.items():
             f_types.append(func_params[k])
             c_types.append(v)
@@ -1117,6 +1172,8 @@ class DirectCall(Call):
         unit = self.ttype.value.x
         matching_name_funcs = [p for p in unit.parts if isinstance(p, FunctionDefinition) and p.name.text == self.name.text]
         matching_param_types = [f for f in matching_name_funcs if self.check_arg_types(f)]
+        if len(matching_name_funcs) > 0:
+            self.check_arg_types(matching_name_funcs[0])
         assert len(matching_param_types) == 1
         return matching_param_types[0]
 
@@ -1259,9 +1316,11 @@ class GetFunctionPointer(Expr):
     def type_of(self) -> soltypes.Type:
         def ts(params):
             return [p.var.ttype for p in params]
+        def its(params: list[ErrorParameter | Parameter | EventParameter]):
+            return [soltypes.FunctionParameter(p.var.name, p.var.ttype) for p in params]
         f = self.func.x
         modifiers = f.modifiers if hasattr(f, 'modifiers') else []
-        return soltypes.FunctionType(ts(f.inputs), ts(f.outputs), modifiers)
+        return soltypes.FunctionType(its(f.inputs), ts(f.outputs), modifiers)
 
     def code_str(self):
         return f'fptr({self.func.x.parent.descriptor()}::{self.func.x.name.text})'
@@ -1283,11 +1342,10 @@ class Revert(Stmt):
 
 @nodebase.NodeDataclass
 class RevertWithError(Revert):
-    error: nodebase.Ref[ErrorDefinition]
-    args: list[Expr]
+    error: CreateError
 
     def code_str(self):
-        return f'revert {self.error.x.name.text}({", ".join(e.code_str() for e in self.args)});'
+        return f'revert {self.error.code_str()};'
 
 
 @nodebase.NodeDataclass
@@ -1352,4 +1410,5 @@ Types: TypeAlias = (soltypes.VariableLengthArrayType | soltypes.VoidType | solty
                     | soltypes.AnyType | soltypes.MappingType | soltypes.StringType | soltypes.AddressType
                     | soltypes.FixedLengthArrayType | soltypes.ByteType | soltypes.MetaTypeType
                     | soltypes.TupleType | soltypes.PreciseIntType | soltypes.PreciseIntType
-                    | soltypes.BuiltinType | ResolvedUserType | SuperType | soltypes.FloatType)
+                    | soltypes.BuiltinType | ResolvedUserType | SuperType | soltypes.FloatType
+                    | soltypes.ErrorType | UserDefinedErrorType)

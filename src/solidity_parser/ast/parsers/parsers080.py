@@ -552,7 +552,7 @@ def _type_name(parser, type_name: SolidityParser.TypeNameContext):
 
 def _function_type_name(parser, function_type: SolidityParser.FunctionTypeNameContext):
     return soltypes.FunctionType(
-        parsers060.params_to_types(parser.make(function_type.arguments, default=[])),
+        parsers060.input_params_to_types(parser.make(function_type.arguments, default=[])),
         parsers060.params_to_types(parser.make(function_type.returnParameters, default=[])),
         parser.make_all_rules(function_type.visibility()) + parser.make_all_rules(function_type.stateMutability())
     )

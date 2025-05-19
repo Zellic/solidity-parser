@@ -127,6 +127,15 @@ class NodeList(list[T]):
         super().__init__(seq)
         self.parent = parent
 
+    # shims so the NodeDataclass decorator can generate a hash for this list
+    def get_children(self) -> Generator['Node', None, None]:
+        yield from list(self)
+
+    def get_all_children(self) -> Generator['Node', None, None]:
+        for direct_child in self.get_children():
+            yield direct_child
+            yield from direct_child.get_all_children()
+
     def __str__(self):
         return list.__str__(self)
 
@@ -143,12 +152,12 @@ class NodeList(list[T]):
         self._set_dirty(key, None)
 
     def __setslice__(self, i, j, sequence):
-        raise NotImplemented
+        raise NotImplementedError()
 
     def __eq__(self, other):
         if isinstance(other, list):
             return super().__eq__(other)
-        raise NotImplemented
+        raise NotImplementedError(f"Can't compare NodeList to {other}")
 
     def append(self, __object):
         ret = super().append(__object)

@@ -52,7 +52,7 @@ class LibSolidityTestBase(unittest.TestCase):
         self.vfs_options = vfs_options
 
         if 'compiler_version' not in self.vfs_options:
-            self.vfs_options['compiler_version'] = Version(0, 8, 22)
+            self.vfs_options['compiler_version'] = Version(0, 8, 24)
 
     def setUp(self) -> None:
         self.vfs = filesys.VirtualFileSystem(**self.vfs_options)

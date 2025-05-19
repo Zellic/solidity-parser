@@ -1,6 +1,7 @@
 import typing
 from dataclasses import dataclass
 from typing import List, Union, Dict, Deque, cast, Optional
+from types import UnionType
 from collections import deque, defaultdict
 from copy import deepcopy
 
@@ -12,9 +13,7 @@ import functools
 
 from solidity_parser.ast.mro_helper import c3_linearise
 from solidity_parser import errors
-
-
-
+from solidity_parser.ast.solnodes import ModifierDefinition, FunctionDefinition, ErrorDefinition, EventDefinition
 
 T = typing.TypeVar('T')
 
@@ -164,6 +163,26 @@ class TypeHelper:
         """ Returns the ResolvedUserType the given node is declared in """
         return self.get_contract_type(self.builder.get_declaring_contract_scope(node))
 
+    def deduplicate_func_types(self, ttypes: list[soltypes.Type]):
+        # unfortunately not this simple because the functions can look different but be the "same" for our purposes here.
+        # e.g. the weird edge case where we have B extends A, B.f(X) external and A.f(X) public. The function visibility
+        # can be "widened"/made less restrictive by the overriding function. In this case the AST nodes will have different
+        # hash/eq so list(set(...)) won't deduplicate them
+        # n^2 check, shouldn't be too bad in practice
+        ftype = [t.is_function() for t in ttypes]
+        keep = [True] * len(ttypes)
+        for i in range(len(ttypes)):
+            if not ftype[i] or not keep[i]:
+                continue
+            for j in range(i + 1, len(ttypes)):
+                if not ftype[j] or not keep[j]:
+                    continue
+                # f1 and f2 are guaranteed to be functions at this point
+                f1, f2 = cast(soltypes.FunctionType, ttypes[i]), cast(soltypes.FunctionType, ttypes[j])
+                if f1.can_implicitly_cast_from(f2):
+                    keep[j] = False
+        return [ttypes[i] for i in range(len(ttypes)) if keep[i]]
+
     def get_expr_type(self, expr: solnodes1.Expr | soltypes.Type, allow_multiple=False, force_tuple=False, function_callee=False) -> typing.Union[solnodes2.Types, list[solnodes2.Types]]:
         """
         Main helper function that computes the AST2 type of the given AST1 expression
@@ -199,16 +218,23 @@ class TypeHelper:
                 if allow_multiple:
                     # return all matching symbol types
                     symbols = expr.scope.find(text)
-                    any_or_all_funcs = self.any_or_all([isinstance(s.value, symtab.ModFunErrEvtScope) for s in symbols])
-                    self.error_handler.assert_error('Expected any or all function callees', any_or_all_funcs)
+                    self.error_handler.assert_error('Expected any or all function callees', self.any_or_all([isinstance(s.value, symtab.ModFunErrEvtScope) for s in symbols]))
+                    any_funcs = any([isinstance(s, symtab.ModFunErrEvtScope) for s in symbols])
 
-                    if function_callee and any_or_all_funcs:
+                    if function_callee and any_funcs:
                         function_chain = self.builder.is_declaration_chain(symbols)
                         if function_chain:
                             # less sophisticated way compared to refine_expr: we need to get the function at the top
                             # of the hierarchy (symtab returns them all), i.e. the one that overrides all the others
+                            # ah crap, imagine f(X),f(Y) in contract A, contract A extends B, B has f(X),f(Y)
+                            # i.e. two override chains with the same function name. function_chain would be False and the
                             return [self.symbol_to_ast2_type(symbols[0], function_callee=function_callee)]
 
+                        # deduplicate
+                        func_types = [self.symbol_to_ast2_type(s, function_callee=function_callee) for s in symbols]
+                        return self.deduplicate_func_types(func_types)
+
+                    # non function case
                     return [self.symbol_to_ast2_type(s, function_callee=function_callee) for s in symbols]
                 else:
                     inheritable_predicate = symtab.ACCEPT_INHERITABLE(expr.scope)
@@ -486,7 +512,27 @@ class TypeHelper:
                 return soltypes.FixedLengthArrayType(arg_types[0], len(expr.elements))
         return self.error_handler.todo(expr)
 
-    def get_function_expr_type(self, expr, allow_multiple=False, return_target_symbol=False):
+    def check_func_type_inputs(self, ttype: soltypes.FunctionType, expr: solnodes1.CallFunction):
+        named_args = {a.name.text: self.get_expr_type(a.value) for a in expr.args if isinstance(a, solnodes1.NamedArg)}
+
+        if len(named_args) > 0:
+            func_params = {p.name.text: p.ttype for p in ttype.input_params}
+
+            if set(func_params.keys()) != set(named_args.keys()):
+                return False
+
+            f_types, c_types = [], []
+
+            for k, v in named_args.items():
+                f_types.append(func_params[k])
+                c_types.append(v)
+        else:
+            f_types = [self.map_type(x.ttype) for x in ttype.input_params]
+            c_types = [self.get_expr_type(a) for a in expr.args]
+
+        return soltypes.Type.are_matching_types(f_types, c_types)
+
+    def get_function_expr_type(self, expr: solnodes1.CallFunction, allow_multiple=False, return_target_symbol=False):
         callee = expr.callee
         if isinstance(callee, soltypes.Type):
             if callee.is_address():
@@ -502,8 +548,6 @@ class TypeHelper:
             return self.map_type(callee)
         elif isinstance(callee, solnodes1.Ident) and callee.text == 'address':
             return soltypes.AddressType(is_payable=False)
-
-        arg_types = [self.get_expr_type(arg) for arg in expr.args]
 
         callable_ttypes = self.get_expr_type(callee, allow_multiple=True, function_callee=True)
 
@@ -540,22 +584,38 @@ class TypeHelper:
         callable_calls = [ft.is_function() or ft.is_mapping() for ft in callable_ttypes]
         self.error_handler.assert_error(f'Non cast call must be callables: {callable_calls}', all(callable_calls))
 
+        self.error_handler.assert_error('Not allowed to mix positional and named args', self.any_or_all([isinstance(a, solnodes1.NamedArg) for a in expr.args]))
+
+        has_named_args = len(expr.args) > 0 and isinstance(expr.args[0], solnodes1.NamedArg)
+
+        if not has_named_args:
+            # FIXME: bit of a hack, when the deduplication happens it ignores parameter names and only considers types
+            #  so if no named args are provided and we are doing positional type checks only, then we can potentially
+            #  fix duplicate callees early here
+            callable_ttypes = self.deduplicate_func_types(callable_ttypes)
+
         candidates = []
         for ttype in callable_ttypes:
             if ttype.is_function():
                 ttype: soltypes.FunctionType
-                # None is a sentinel, do NOT do 'if ft.inputs:'
-                if ttype.inputs is not None:
+                # None is a sentinel, do NOT do 'if ft.input_params:'
+                if ttype.input_params is not None:
                     # match input types
-                    if len(ttype.inputs) == len(arg_types):
-                        if all([targ.can_implicitly_cast_from(actual) for targ, actual in zip(ttype.inputs, arg_types)]):
+                    if has_named_args:
+                        if self.check_func_type_inputs(ttype, expr):
                             candidates.append(ttype.outputs)
+                    else:
+                        arg_types = [self.get_expr_type(arg) for arg in expr.args]
+                        if len(ttype.input_params) == len(arg_types):
+                            if all([param.ttype.can_implicitly_cast_from(actual) for param, actual in zip(ttype.input_params, arg_types)]):
+                                candidates.append(ttype.outputs)
                 else:
                     # input types == None => polymorphic builtin function. This isn't the same as a no arg function,
                     # where input types == []
                     candidates.append(ttype.outputs)
                     continue
             elif ttype.is_mapping():
+                arg_types = [self.get_expr_type(arg) for arg in expr.args]
                 ttype: soltypes.MappingType
                 flattened_types = ttype.flatten()
 
@@ -583,7 +643,7 @@ class TypeHelper:
                 self.error_handler.assert_error(f'Polymorphic abi.decode => {output_types}', output_types is None)
                 # drop the first argument type so output types are t1, t2...
                 #  abi.decode(bytes memory encodedData, (t1, t2...)) returns (t1, t2...)
-                output_types = arg_types[1:]
+                output_types = [self.get_expr_type(arg) for arg in expr.args][1:]
 
         if allow_multiple:
             return output_types
@@ -653,6 +713,11 @@ class TypeHelper:
             return []
         return [self.map_type(p.var_type) for p in ps]
 
+    def map_input_params(self, func: ModifierDefinition | FunctionDefinition | ErrorDefinition | EventDefinition) -> list[soltypes.FunctionParameter]:
+        # mapping fp to fp just ensures that any AST1 child nodes are translated into AST2 nodes
+        ps = func.parameters
+        return [soltypes.FunctionParameter(self.builder.ident(p.var_name), self.map_type(p.var_type)) for p in ps] if ps else []
+
     def symbol_to_ast2_type(self, symbol, function_callee=False) -> solnodes2.Types:
         """
         Computes the AST2 type of the given symtab Symbol
@@ -663,13 +728,14 @@ class TypeHelper:
             # 'MyErrors.sol' file and'ErrorX' is a free function/error in that file
             return self.get_contract_type(symbol)
         elif isinstance(symbol, symtab.UsingFunctionSymbol):
-            # need an unresolved symbol for this as called res_syms_single on a UsingFunctionSymbol gives the base
-            # ModFunErrEvt symbol
+            # need to do this check against the unresolved symbol as calling res_syms_single below on a
+            # UsingFunctionSymbol gives the base ModFunErrEvt symbol, but we need to differentiate whether this value
+            # came from a using statement
 
             # cast for type checker, could be further refined as just FunctionDefinition
-            value = cast(solnodes1.ModFunErrEvt, symbol.value)
-            # X.abc(), remove the type of X to the start of the input types
-            return soltypes.FunctionType(self.param_types(value.parameters)[1:],
+            value: ModifierDefinition | FunctionDefinition | ErrorDefinition | EventDefinition = cast(solnodes1.ModFunErrEvt, symbol.value)
+            # X.abc(1) === abc(X,1), remove the type of X from the start of the input types
+            return soltypes.FunctionType(self.map_input_params(symbol.value)[1:],
                                          self.param_types(value.returns),
                                          self.builder.modifiers(value))
 
@@ -690,7 +756,7 @@ class TypeHelper:
             # might be empty lists (meaning no inputs or outputs in the function) whereas 'None' indicates that the
             # function accepts any parameter types there (fully polymorphic).
             #  At the moment 'None' output_types is only used for abi.decode
-            input_types = [self.map_type(ttype) for ttype in symbol.input_types] if symbol.input_types is not None else None
+            input_types = [soltypes.FunctionParameter(self.builder.no_ident(), self.map_type(t)) for t in symbol.input_types] if symbol.input_types is not None else None
             output_types = [self.map_type(ttype) for ttype in symbol.output_types] if symbol.output_types is not None else None
             return soltypes.FunctionType(input_types, output_types, [])
         elif isinstance(symbol, symtab.BuiltinValue):
@@ -705,14 +771,18 @@ class TypeHelper:
         elif isinstance(value, (solnodes1.Parameter, solnodes1.Var)):
             return self.map_type(value.var_type)
         elif isinstance(value, solnodes1.FunctionDefinition):
-            return soltypes.FunctionType(self.param_types(value.parameters), self.param_types(value.returns), self.builder.modifiers(value))
+            return soltypes.FunctionType(self.map_input_params(value), self.param_types(value.returns), self.builder.modifiers(value))
         elif isinstance(value, solnodes1.ErrorDefinition):
-            # AFAIK this is only used for MyError.selector
-            return soltypes.FunctionType(self.param_types(value.parameters), [], [])
+            if function_callee:
+                # error initialised like callable eg MyError(1,2), I believe this is only passed to require() in 0.8.26
+                return solnodes2.UserDefinedErrorType(nodebase.Ref(value))
+            else:
+                # AFAIK this is only used for MyError.selector
+                return soltypes.FunctionType(self.map_input_params(value), [], [])
         elif isinstance(value, solnodes1.EventDefinition):
             # This can happen with old solidity contracts before the 'emit' keyword was created. In this case, an
             # event is triggered by a function call e.g. MyEvent() instead of emit MyEvent()
-            return soltypes.FunctionType(self.param_types(value.parameters), [], [])
+            return soltypes.FunctionType(self.map_input_params(value), [], [])
         elif isinstance(value, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration)):
             # Mappings are stored as fields but have mapping types
             field_type = self.map_type(value.var_type)
@@ -722,9 +792,9 @@ class TypeHelper:
                              solnodes2.MutabilityModifier(solnodes1.MutabilityModifierKind.VIEW)]
                 if field_type.is_mapping():
                     flattened_types = field_type.flatten()
-                    return soltypes.FunctionType(flattened_types[:-1], flattened_types[-1:], modifiers)
+                    return soltypes.FunctionType([soltypes.FunctionParameter(self.builder.no_ident(), t) for t in flattened_types[:-1]], flattened_types[-1:], modifiers)
                 elif field_type.is_array() and not field_type.is_byte_array_underlying():
-                    return soltypes.FunctionType([soltypes.UIntType()], [field_type.base_type], modifiers)
+                    return soltypes.FunctionType([soltypes.FunctionParameter(self.builder.no_ident(), soltypes.UIntType())], [field_type.base_type], modifiers)
                 else:
                     return soltypes.FunctionType([], [field_type], modifiers)
             return field_type
@@ -737,7 +807,7 @@ class TypeHelper:
                                            isinstance(value.scope, symtab.EnumScope))
                 return self.symbol_to_ast2_type(value.scope)
         elif isinstance(value, solnodes1.ModifierDefinition):
-            return soltypes.FunctionType(self.param_types(value.parameters), [], self.builder.modifiers(value))
+            return soltypes.FunctionType(self.map_input_params(value), [], self.builder.modifiers(value))
         assert False, f'{type(value)}'
 
     def scopes_for_type(self, node: solnodes1.AST1Node, ttype: solnodes2.Types, use_encoded_type_key=True) -> List[symtab.Scope]:
@@ -800,13 +870,21 @@ class TypeHelper:
         assert isinstance(scope, symtab.Scope), f'{type(scope)}'
         return [scope]
 
-    def map_type(self, ttype: soltypes.Type) -> solnodes2.Types:
+    def map_function_param(self, param: soltypes.FunctionParameter) -> soltypes.FunctionParameter:
+        return soltypes.FunctionParameter(
+            self.builder.ident(param.name),
+            self.map_type(param.ttype)
+        )
 
+    def map_type(self, ttype: soltypes.Type) -> solnodes2.Types:
         if isinstance(ttype, solnodes2.Types) and not isinstance(ttype, solnodes1.Types):
             # AST2 specific type, doesn't need checking below
-            return ttype
+            # TODO: does it need copying though?
+            return cast(solnodes2.Types, ttype)
 
-        if isinstance(ttype, soltypes.UserType):
+        if isinstance(ttype, soltypes.ErrorType):
+            return soltypes.ErrorType()
+        elif isinstance(ttype, soltypes.UserType):
             return self.get_user_type(ttype)
         # string and bytes have to go before the base Array cases below
         elif isinstance(ttype, soltypes.BytesType):
@@ -843,7 +921,7 @@ class TypeHelper:
                                         self.builder.ident(ttype.src_name), self.builder.ident(ttype.dst_name))
         elif isinstance(ttype, soltypes.FunctionType):
             # TODO: fix the cases for polymorphic types where inputs or outputs is set to None
-            return soltypes.FunctionType([self.map_type(t) for t in ttype.inputs] if ttype.inputs is not None else None,
+            return soltypes.FunctionType([self.map_function_param(p) for p in ttype.input_params] if ttype.input_params is not None else None,
                                          [self.map_type(t) for t in ttype.outputs] if ttype.outputs is not None else None,
                                          self.builder.modifiers(ttype))
 
@@ -1118,10 +1196,9 @@ class Builder:
         elif isinstance(node, solnodes1.Continue):
             return solnodes2.Continue()
         elif isinstance(node, solnodes1.Revert):
-            # Special case of refine_call_function
-            error_def, new_args = self.refine_call_function(node.call, allow_error=True)
-            assert isinstance(error_def, solnodes2.ErrorDefinition)
-            return solnodes2.RevertWithError(nodebase.Ref(error_def), new_args)
+            err_create = self.refine_call_function(node.call, allow_error=True)
+            assert isinstance(err_create, solnodes2.CreateError)
+            return solnodes2.RevertWithError(err_create)
         self.error_handler.todo(node)
 
     def get_declaring_contract_scope(self, node: solnodes1.AST1Node) -> Union[
@@ -1158,7 +1235,9 @@ class Builder:
         def create_new_args():
             results = []
             for ast1_arg in expr.args:
-                ast2_arg = self.refine_expr(ast1_arg, is_argument=True)
+                # technically we should check hasattr(expr.callee, 'name') and str(expr.callee.name) == 'require'
+                # but don't want to hardcode it
+                ast2_arg = self.refine_expr(ast1_arg, is_argument=True, allow_error=True)
                 if isinstance(ast2_arg, list):
                     # this currently only happens for tuples of exprs (not tuples of types) in the 2nd arg of
                     # abi.encodeCall calls
@@ -1299,15 +1378,17 @@ class Builder:
 
                 if t.is_function():
                     t: soltypes.FunctionType
-                    # None is a sentinel, do NOT do 'if ft.inputs:'
-                    if t.inputs is None:
+                    # None is a sentinel, do NOT do 'if ft.input_params:'
+                    if t.input_params is None:
                         # input types == None => polymorphic builtin function. This isn't the same as a no arg function,
                         # where input types == []
                         bucket_candidates.append((s, t, is_synthetic))
                         continue
                     else:
                         # match input types
-                        input_types = t.inputs
+                        if self.type_helper.check_func_type_inputs(t, expr):
+                            bucket_candidates.append((s, t, is_synthetic))
+                        continue
                 elif t.is_mapping():
                     t: soltypes.MappingType
                     # MappingType, these can look like function calls but are mapping loads. A mapping type can be
@@ -1331,7 +1412,9 @@ class Builder:
 
                 # check for each parameter of the target, check if the arg can be passed to it
                 if len(input_types) == len(arg_types):
-                    if all([targ.can_implicitly_cast_from(actual) for targ, actual in zip(input_types, arg_types)]):
+                    if all([
+                        targ.can_implicitly_cast_from(actual)
+                        for targ, actual in zip(input_types, arg_types)]):
                         bucket_candidates.append((s, t, is_synthetic))
 
             if len(bucket_candidates) > 1:
@@ -1402,7 +1485,8 @@ class Builder:
                     if len(new_args) == 1:
                         return solnodes2.Require(new_args[0], None)
                     elif len(new_args) == 2:
-                        assert new_args[1].type_of().is_string()
+                        reason_ttype = new_args[1].type_of()
+                        assert reason_ttype.is_string() or reason_ttype.is_user_error()
                         return solnodes2.Require(new_args[0], new_args[1])
                     self.error_handler.todo(expr)
                 elif sym.aliases[0] == 'revert':
@@ -1489,7 +1573,11 @@ class Builder:
             assert allow_error
             assert len(special_call_options) == 0
             self.load_non_top_level_if_required(sym.value)
-            return sym.value.ast2_node, new_args
+            assert isinstance(sym.value.ast2_node, solnodes2.ErrorDefinition)
+            return solnodes2.CreateError(
+                solnodes2.UserDefinedErrorType(nodebase.Ref(sym.value.ast2_node)),
+                new_args
+            )
         elif isinstance(sym.value, solnodes1.EventDefinition):
             # old style event Emit that looks like a function call: we convert this to an Emit Stmt in AST2
             assert allow_event
@@ -1612,7 +1700,7 @@ class Builder:
     @link_with_ast1
     def refine_expr(self, expr: solnodes1.Expr, is_function_callee=False, allow_type=False, allow_tuple_exprs=False,
                     allow_multiple_exprs=False, allow_none=True, allow_stmt=False, is_argument=False,
-                    is_assign_rhs=False, allow_event=False):
+                    is_assign_rhs=False, allow_event=False, allow_error=False):
         if expr is None:
             assert allow_none
             return None
@@ -1814,7 +1902,7 @@ class Builder:
             else:
                 self.error_handler.todo(ident_target)
         elif isinstance(expr, solnodes1.CallFunction):
-            return self.refine_call_function(expr, allow_stmt=allow_stmt, allow_event=allow_event)
+            return self.refine_call_function(expr, allow_stmt=allow_stmt, allow_event=allow_event, allow_error=allow_error)
         elif isinstance(expr, solnodes1.GetMember):
             base = expr.obj_base
             mname = expr.name.text
@@ -2069,11 +2157,14 @@ class Builder:
         return solnodes2.Parameter(self.var(node))
 
     def error_parameter(self, node: solnodes1.ErrorParameter):
-        name = solnodes2.Ident(node.name.text if node.name else None)
+        name = solnodes2.Ident(node.var_name.text if node.var_name else None)
         return solnodes2.ErrorParameter(self.type_helper.map_type(node.var_type), name)
 
-    def ident(self, node: solnodes1.Ident):
+    def ident(self, node: solnodes1.Ident, name: str = None):
         return solnodes2.Ident(node.text) if node else None
+
+    def no_ident(self):
+        return solnodes2.Ident('')
 
     def modifiers(self, node_with_modifiers):
         if not hasattr(node_with_modifiers, 'modifiers'):
@@ -2311,7 +2402,7 @@ class Builder:
             ast2_node.ttype = self.type_helper.map_type(ast1_node.var_type)
 
         if isinstance(ast1_node, solnodes1.EventDefinition):
-            ast2_node.inputs = [solnodes2.EventParameter(solnodes2.Ident(p.name.text if p.name else f'<unnamed:{i}'), self.type_helper.map_type(p.var_type), p.is_indexed)
+            ast2_node.inputs = [solnodes2.EventParameter(solnodes2.Ident(p.var_name.text if p.var_name else f'<unnamed:{i}'), self.type_helper.map_type(p.var_type), p.is_indexed)
                                 for i,p in enumerate(ast1_node.parameters)]
 
         if isinstance(ast1_node, solnodes1.ModifierDefinition):

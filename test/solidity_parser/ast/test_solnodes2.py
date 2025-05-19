@@ -2,7 +2,7 @@ import unittest
 from mock import patch, Mock, MagicMock
 
 from solidity_parser.ast.nodebase import Node, NodeList
-from solidity_parser.ast.types import VoidType, BoolType, TupleType
+from solidity_parser.ast.types import VoidType, BoolType, TupleType, StringType, IntType
 
 
 class TestNodeDataclass(unittest.TestCase):
@@ -41,8 +41,6 @@ class TestNodeDataclass(unittest.TestCase):
         self.assertEqual(p_hash_mock.call_count, 2)
 
     def test_child_list_equals(self):
-        # comments here are NodeLists, not lists
-
         n1 = TupleType([])
         c1 = BoolType()
         n1.ttypes.append(c1)
@@ -60,7 +58,14 @@ class TestNodeDataclass(unittest.TestCase):
         self.assertEqual(n1.ttypes, n2.ttypes)
         self.assertEqual(n1, n2)
 
+    def test_list_hashes_children(self):
+        a = StringType() # has Node child in the form of "base"
+        print(hash(tuple(a.get_all_children())))
+        nl = NodeList(None, [a])
+        print(hash(nl))
     def test_list_item_propagates_to_grandparent(self):
+        # comments here are NodeLists, not lists
+
         g = Node()
         p = Node()
         c = Node()
