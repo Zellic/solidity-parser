@@ -2002,6 +2002,9 @@ class Builder:
             if isinstance(sym, symtab.BuiltinValue):
                 if isinstance(base_type, soltypes.BuiltinType):
                     # e.g. msg.gas, where the base is a builtin object
+                    # TODO: should we use the given mname here or should we use the canonical name tagged to the
+                    #  BuiltinValue? In most cases it's the same but not all, e.g. aliased symbols: block.prevrandao and
+                    #  block.difficulty
                     return solnodes2.GlobalValue(f'{base_type.name}.{mname}', self.type_helper.map_type(sym.ttype))
                 else:
                     # e.g. myarray.length, 'length' is builtin to the array type(i.e. not a concrete field)

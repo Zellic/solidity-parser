@@ -628,7 +628,7 @@ class BuiltinFunction(Symbol):
 
 
 class BuiltinValue(Symbol):
-    def __init__(self, name: str, ttype: soltypes.Type):
+    def __init__(self, name: Aliases, ttype: soltypes.Type):
         ScopeAndSymbol.__init__(self, name, None)
         self.ttype = ttype
 
@@ -707,7 +707,7 @@ class RootScope(Scope):
         block_object.add(BuiltinValue('basefee', uint()))
         block_object.add(BuiltinValue('chainid', uint()))
         block_object.add(BuiltinValue('coinbase', soltypes.AddressType(True)))
-        block_object.add(BuiltinValue('difficulty', uint()))
+        block_object.add(BuiltinValue(['difficulty', 'prevrandao'], uint()))
         block_object.add(BuiltinValue('gaslimit', uint()))
         block_object.add(BuiltinValue('number', uint()))
         # Add blobbasefee only for Solidity 0.8.24 and above
