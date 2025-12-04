@@ -2496,7 +2496,8 @@ class Builder:
             if hasattr(ast1_node, 'modifiers'):
                 ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
             if ast1_node.initial_value:
-                ast2_node.initial_value = self.refine_expr(ast1_node.initial_value, is_assign_rhs=True)
+                self.error_handler.assert_error("expected type with 'value' field", isinstance(ast2_node, (solnodes2.ConstantVariableDeclaration, solnodes2.StateVariableDeclaration)))
+                ast2_node.value = self.refine_expr(ast1_node.initial_value, is_assign_rhs=True)
             return refine_node(ast2_node)
 
         if isinstance(ast1_node, solnodes1.EventDefinition):
