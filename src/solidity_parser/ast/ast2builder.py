@@ -36,7 +36,7 @@ class ErrorHandler:
 
         # whether to throw a caught error immediately or store it in the caught_errors list for a client to consume
         # later, this is used for testing where fast errors can be caught and fail the test quickly
-        self.quiet_errors = quiet_errors
+        self.quiet_errors = False
         self.caught_errors = []
         # current state of the builder
         self.state = None
@@ -200,6 +200,7 @@ class TypeHelper:
                                 a function callee
         :return: The AST2 type of the expression or a list of types if allow_multiple is True
         """
+
 
         if isinstance(expr, soltypes.Type):
             # already have a type, either return it or resolve it to make sure it's AST2 and not AST1 only
@@ -893,17 +894,29 @@ class TypeHelper:
             return soltypes.StringType()
         elif isinstance(ttype, soltypes.VariableLengthArrayType):
             base_type = self.map_type(ttype.base_type)
-            size_type = self.get_expr_type(ttype.size)
+            if isinstance(ttype.size, solnodes2.Expr):
+                size_type = ttype.size.type_of()
+            elif isinstance(ttype.size, solnodes2.Types):
+                size_type = ttype.size
+            else:
+                size_type = self.get_expr_type(ttype.size)
+
             # Fix for some weird grammar parsing issues where a fixed length array type is parsed as a variable length
             # array type with a literal passed as the size expr, so here we change it to a fixed one
             # Check for isinstance(ttype.size, solnodes1.Literal) as a compile time constant expr, e.g. Record[2**253]
             # is a fixed sized but FixedLengthArrayType needs an int not an expr that computes an int.
-            if size_type.is_int() and size_type.is_literal_type() and isinstance(ttype.size, solnodes1.Literal):
+            is_const_int = size_type.is_int() and size_type.is_literal_type() and isinstance(ttype.size, solnodes1.Literal)
+
+            if is_const_int:
                 size = ttype.size.value
                 assert isinstance(size, int)
                 return soltypes.FixedLengthArrayType(base_type, size)
             else:
-                return soltypes.VariableLengthArrayType(base_type, self.builder.refine_expr(ttype.size))
+                if isinstance(ttype.size, solnodes2.Expr):
+                    size = deepcopy(ttype.size)
+                else:
+                    size = self.builder.refine_expr(ttype.size)
+                return soltypes.VariableLengthArrayType(base_type, size)
         elif isinstance(ttype, soltypes.FixedLengthArrayType):
             return soltypes.FixedLengthArrayType(self.map_type(ttype.base_type), ttype.size)
         elif isinstance(ttype, soltypes.ArrayType):
@@ -2002,6 +2015,9 @@ class Builder:
             if isinstance(sym, symtab.BuiltinValue):
                 if isinstance(base_type, soltypes.BuiltinType):
                     # e.g. msg.gas, where the base is a builtin object
+                    # TODO: should we use the given mname here or should we use the canonical name tagged to the
+                    #  BuiltinValue? In most cases it's the same but not all, e.g. aliased symbols: block.prevrandao and
+                    #  block.difficulty
                     return solnodes2.GlobalValue(f'{base_type.name}.{mname}', self.type_helper.map_type(sym.ttype))
                 else:
                     # e.g. myarray.length, 'length' is builtin to the array type(i.e. not a concrete field)
@@ -2399,7 +2415,10 @@ class Builder:
             ast2_node.values = [solnodes2.EnumMember(solnodes2.Ident(n.text)) for n in ast1_node.values]
 
         if isinstance(ast1_node, (solnodes1.StateVariableDeclaration, solnodes1.ConstantVariableDeclaration)):
-            ast2_node.ttype = self.type_helper.map_type(ast1_node.var_type)
+            ast2_node.ttype = (
+                self.type_helper.get_expr_type(ast1_node.initial_value) if ast1_node.initial_value
+                else self.type_helper.map_type(ast1_node.var_type)
+            )
 
         if isinstance(ast1_node, solnodes1.EventDefinition):
             ast2_node.inputs = [solnodes2.EventParameter(solnodes2.Ident(p.var_name.text if p.var_name else f'<unnamed:{i}'), self.type_helper.map_type(p.var_type), p.is_indexed)
@@ -2493,7 +2512,8 @@ class Builder:
             if hasattr(ast1_node, 'modifiers'):
                 ast2_node.modifiers = [self.modifier(x) for x in ast1_node.modifiers]
             if ast1_node.initial_value:
-                ast2_node.initial_value = self.refine_expr(ast1_node.initial_value, is_assign_rhs=True)
+                self.error_handler.assert_error("expected type with 'value' field", isinstance(ast2_node, (solnodes2.ConstantVariableDeclaration, solnodes2.StateVariableDeclaration)))
+                ast2_node.value = self.refine_expr(ast1_node.initial_value, is_assign_rhs=True)
             return refine_node(ast2_node)
 
         if isinstance(ast1_node, solnodes1.EventDefinition):

@@ -165,7 +165,13 @@ snapshots['TestSolidityTypeHelper::test_get_expr_type 1'] = [
     "CallFunction(callee=New(type_name=UserType(name=Ident(text='AllTypesExample'))), special_call_options=[], args=[]) :: ResolvedUserType(AllTypesExample)",
     "New(type_name=UserType(name=Ident(text='AllTypesExample'))) :: ResolvedUserType(AllTypesExample)",
     "CallFunction(callee=New(type_name=UserType(name=Ident(text='AllTypesExample'))), special_call_options=[], args=[]) :: ResolvedUserType(AllTypesExample)",
-    "New(type_name=UserType(name=Ident(text='AllTypesExample'))) :: ResolvedUserType(AllTypesExample)"
+    "New(type_name=UserType(name=Ident(text='AllTypesExample'))) :: ResolvedUserType(AllTypesExample)",
+    "GetMember(obj_base=Ident(text='block'), name=Ident(text='prevrandao')) :: [IntType(is_signed=False, size=256)]",
+    "GetMember(obj_base=Ident(text='block'), name=Ident(text='difficulty')) :: [IntType(is_signed=False, size=256)]",
+    "BinaryOp(left=Ident(text='x'), right=Ident(text='y'), op=<BinaryOpCode.ADD: '+'>) :: uint256",
+    "GetMember(obj_base=Ident(text='block'), name=Ident(text='prevrandao')) :: [IntType(is_signed=False, size=256)]",
+    "GetMember(obj_base=Ident(text='block'), name=Ident(text='difficulty')) :: [IntType(is_signed=False, size=256)]",
+    "BinaryOp(left=Ident(text='x'), right=Ident(text='y'), op=<BinaryOpCode.ADD: '+'>) :: uint256"
 ]
 
 snapshots['TestSolidityTypeHelper::test_get_function_expr_type 1'] = [

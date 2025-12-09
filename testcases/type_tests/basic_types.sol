@@ -137,4 +137,10 @@ contract AllTypesExample {
     function new_deploy_contract() {
         AllTypesExample e = new AllTypesExample();
     }
+
+    function blockDifficultyAndPrevRandaoAlias() public returns (uint) {
+        uint x = block.prevrandao;
+        uint y = block.difficulty;
+        return x + y;
+    }
 }
